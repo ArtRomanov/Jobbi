@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m pip install -e .)",
+      "Bash(python3 -c \"from app.main import app; print\\(''App imported successfully''\\)\")",
+      "Bash(python3 -c \"import structlog; print\\(dir\\(structlog\\)\\)\")",
+      "Bash(python3:*)",
+      "Bash(mkdir -p src/pages src/features src/entities src/shared/ui src/shared/api)",
+      "Bash(touch src/pages/.gitkeep src/features/.gitkeep src/entities/.gitkeep src/shared/ui/.gitkeep src/shared/api/.gitkeep)",
+      "Bash(pnpm install:*)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "awos-recruitment"
+  ]
+}
