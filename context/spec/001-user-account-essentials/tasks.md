@@ -11,15 +11,15 @@
 
 ---
 
-- [ ] **Slice 2: User can register via API**
-  - [ ] Set up SQLAlchemy async engine, session factory, and Alembic configuration. Create initial migration with `users` table (all columns per tech spec). **[Agent: database-expert]**
-  - [ ] Create Pydantic schemas: `RegisterRequest` (email, password, full_name, preferences), `AuthResponse` (access_token, token_type, user), `UserRead`. **[Agent: python-backend]**
-  - [ ] Implement `core/security.py`: bcrypt password hashing, JWT token creation/verification. **[Agent: python-backend]**
-  - [ ] Implement `core/config.py`: Pydantic Settings loading SECRET_KEY, DATABASE_URL, ACCESS_TOKEN_EXPIRE_DAYS from env. **[Agent: python-backend]**
-  - [ ] Implement `core/deps.py`: `get_db` session dependency, `get_current_user` dependency (JWT → User). **[Agent: python-backend]**
-  - [ ] Implement `services/auth_service.py`: `create_user()` (hash password, insert, return user), `authenticate_user()` (verify email + password). **[Agent: python-backend]**
-  - [ ] Implement `POST /api/v1/auth/register` endpoint: validate input, check duplicate email (409), create user, return JWT + user. **[Agent: python-backend]**
-  - [ ] Verify: `curl -X POST localhost:8000/api/v1/auth/register` with valid payload returns 201 + token. Duplicate email returns 409. Invalid payload returns 422. **[Agent: qa-tester]**
+- [x] **Slice 2: User can register via API**
+  - [x] Set up SQLAlchemy async engine, session factory, and Alembic configuration. Create initial migration with `users` table (all columns per tech spec). **[Agent: database-expert]**
+  - [x] Create Pydantic schemas: `RegisterRequest` (email, password, full_name, preferences), `AuthResponse` (access_token, token_type, user), `UserRead`. **[Agent: python-backend]**
+  - [x] Implement `core/security.py`: bcrypt password hashing, JWT token creation/verification. **[Agent: python-backend]**
+  - [x] Implement `core/config.py`: Pydantic Settings loading SECRET_KEY, DATABASE_URL, ACCESS_TOKEN_EXPIRE_DAYS from env. **[Agent: python-backend]**
+  - [x] Implement `core/deps.py`: `get_db` session dependency, `get_current_user` dependency (JWT → User). **[Agent: python-backend]**
+  - [x] Implement `services/auth_service.py`: `create_user()` (hash password, insert, return user), `authenticate_user()` (verify email + password). **[Agent: python-backend]**
+  - [x] Implement `POST /api/v1/auth/register` endpoint: validate input, check duplicate email (409), create user, return JWT + user. **[Agent: python-backend]**
+  - [x] Verify: `curl -X POST localhost:8000/api/v1/auth/register` with valid payload returns 201 + token. Duplicate email returns 409. Invalid payload returns 422. **[Agent: qa-tester]**
 
 ---
 

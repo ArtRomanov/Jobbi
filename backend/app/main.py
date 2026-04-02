@@ -6,10 +6,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import v1_router
+from app.core.config import get_settings
 
 
 def configure_logging() -> None:
-    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+    settings = get_settings()
+    log_level = settings.LOG_LEVEL.upper()
 
     structlog.configure(
         processors=[
@@ -30,7 +32,8 @@ def configure_logging() -> None:
 
 
 def init_sentry() -> None:
-    dsn = os.getenv("SENTRY_DSN")
+    settings = get_settings()
+    dsn = settings.SENTRY_DSN
     if not dsn:
         return
 
@@ -48,12 +51,12 @@ def create_app() -> FastAPI:
     configure_logging()
     init_sentry()
 
+    settings = get_settings()
     app = FastAPI(title="Jobbi", version="0.1.0")
 
-    # CORS — origins will be configured properly in a later task
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:3000").split(","),
+        allow_origins=settings.CORS_ORIGINS.split(","),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

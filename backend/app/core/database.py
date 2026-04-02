@@ -1,15 +1,10 @@
-import os
-
 from sqlalchemy import MetaData
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "sqlite+aiosqlite:///./data/jobbi.db",
-)
+from app.core.config import get_settings
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+engine = create_async_engine(get_settings().DATABASE_URL, echo=False)
 
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
