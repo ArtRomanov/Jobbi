@@ -15,6 +15,11 @@ class RegisterRequest(BaseModel):
     salary_currency: str | None = Field(default=None, max_length=3)
 
 
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
 class AuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

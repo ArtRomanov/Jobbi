@@ -23,17 +23,17 @@
 
 ---
 
-- [ ] **Slice 3: User can register and log in through the UI**
-  - [ ] Implement `POST /api/v1/auth/login` endpoint: verify credentials, return JWT + user, or 401 on failure. **[Agent: python-backend]**
-  - [ ] Implement CORS configuration in `main.py` (allow frontend origin). **[Agent: python-backend]**
-  - [ ] Create `shared/api/` fetch wrapper: base URL from env, auto-attach JWT header, JSON helper methods. **[Agent: typescript-frontend]**
-  - [ ] Create `shared/ui/` base components: FormInput, Button, Toast notification. **[Agent: typescript-frontend]**
-  - [ ] Create `features/auth/` Zustand store: `token`, `isAuthenticated`, `login()`, `logout()`, persist token to localStorage. **[Agent: typescript-frontend]**
-  - [ ] Create `pages/register/` page: sign-up form (React Hook Form + Zod), all fields per spec (name, email, password, preferences with optional fields). On success → store token → redirect to dashboard placeholder. **[Agent: typescript-frontend]**
-  - [ ] Create `pages/login/` page: email + password form (React Hook Form + Zod). On success → store token → redirect to dashboard. On error → show "Invalid email or password." **[Agent: typescript-frontend]**
-  - [ ] Create `app/router/`: routes for `/login`, `/register`, `/dashboard` (placeholder), `ProtectedRoute` wrapper (redirect to `/login` if not authed). **[Agent: typescript-frontend]**
-  - [ ] Code review: Review all new frontend code for React best practices, FSD compliance, Zustand patterns, and TypeScript quality. **[Agent: react-code-reviewer]**
-  - [ ] Verify: Open browser → register → auto-redirected to dashboard. Close browser → reopen → still logged in. Log out → go to `/login` → log in → dashboard. Wrong password → error shown. **[Agent: qa-tester]**
+- [x] **Slice 3: User can register and log in through the UI**
+  - [x] Implement `POST /api/v1/auth/login` endpoint: verify credentials, return JWT + user, or 401 on failure. **[Agent: python-backend]**
+  - [x] Implement CORS configuration in `main.py` (allow frontend origin). **[Agent: python-backend]**
+  - [x] Create `shared/api/` fetch wrapper: base URL from env, auto-attach JWT header, JSON helper methods. **[Agent: typescript-frontend]**
+  - [x] Create `shared/ui/` base components: FormInput, Button, Toast notification. **[Agent: typescript-frontend]**
+  - [x] Create `features/auth/` Zustand store: `token`, `isAuthenticated`, `login()`, `logout()`, persist token to localStorage. **[Agent: typescript-frontend]**
+  - [x] Create `pages/register/` page: sign-up form (React Hook Form + Zod), all fields per spec (name, email, password, preferences with optional fields). On success → store token → redirect to dashboard placeholder. **[Agent: typescript-frontend]**
+  - [x] Create `pages/login/` page: email + password form (React Hook Form + Zod). On success → store token → redirect to dashboard. On error → show "Invalid email or password." **[Agent: typescript-frontend]**
+  - [x] Create `app/router/`: routes for `/login`, `/register`, `/dashboard` (placeholder), `ProtectedRoute` wrapper (redirect to `/login` if not authed). **[Agent: typescript-frontend]**
+  - [x] Code review: Review all new frontend code for React best practices, FSD compliance, Zustand patterns, and TypeScript quality. **[Agent: react-code-reviewer]**
+  - [x] Verify: Open browser → register → auto-redirected to dashboard. Close browser → reopen → still logged in. Log out → go to `/login` → log in → dashboard. Wrong password → error shown. **[Agent: qa-tester]**
 
 ---
 

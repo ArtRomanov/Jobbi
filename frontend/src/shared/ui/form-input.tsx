@@ -1,0 +1,64 @@
+import { forwardRef, useId, type InputHTMLAttributes } from "react";
+
+interface FormInputProps extends InputHTMLAttributes<HTMLInputElement> {
+  label: string;
+  error?: string;
+}
+
+/**
+ * Reusable form input with label and error display.
+ * Accepts React Hook Form register spread via forwardRef.
+ */
+export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
+  function FormInput({ label, error, id: providedId, ...rest }, ref) {
+    const generatedId = useId();
+    const id = providedId ?? generatedId;
+    const errorId = `${id}-error`;
+
+    return (
+      <div style={{ marginBottom: "1rem" }}>
+        <label
+          htmlFor={id}
+          style={{
+            display: "block",
+            marginBottom: "0.25rem",
+            fontSize: "0.875rem",
+            fontWeight: 500,
+            color: "#374151",
+          }}
+        >
+          {label}
+        </label>
+        <input
+          ref={ref}
+          id={id}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? errorId : undefined}
+          style={{
+            width: "100%",
+            padding: "0.5rem 0.75rem",
+            border: `1px solid ${error ? "#ef4444" : "#d1d5db"}`,
+            borderRadius: "0.375rem",
+            fontSize: "0.875rem",
+            outline: "none",
+            boxSizing: "border-box",
+          }}
+          {...rest}
+        />
+        {error ? (
+          <p
+            id={errorId}
+            role="alert"
+            style={{
+              marginTop: "0.25rem",
+              fontSize: "0.75rem",
+              color: "#ef4444",
+            }}
+          >
+            {error}
+          </p>
+        ) : null}
+      </div>
+    );
+  },
+);
