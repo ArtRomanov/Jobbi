@@ -37,14 +37,14 @@
 
 ---
 
-- [ ] **Slice 4: User can view and edit their profile**
-  - [ ] Implement `GET /api/v1/users/me` endpoint: return current user data from JWT. **[Agent: python-backend]**
-  - [ ] Implement `PATCH /api/v1/users/me` endpoint: update name and preferences (not email). Return updated user. **[Agent: python-backend]**
-  - [ ] Create `entities/user/` slice: User type definitions, `getMe()` API call, user query hook. **[Agent: typescript-frontend]**
-  - [ ] Create `pages/settings/` page: profile form pre-filled with current user data (React Hook Form + Zod). Save button → `PATCH /users/me` → success toast "Profile updated." Email displayed read-only. **[Agent: typescript-frontend]**
-  - [ ] Add navigation: settings link in app header/sidebar, accessible when logged in. **[Agent: typescript-frontend]**
-  - [ ] Code review: Review settings page, user entity slice, and navigation for FSD compliance and React patterns. **[Agent: react-code-reviewer]**
-  - [ ] Verify: Log in → navigate to settings → see pre-filled profile → edit name → save → refresh → changes persisted. **[Agent: qa-tester]**
+- [x] **Slice 4: User can view and edit their profile**
+  - [x] Implement `GET /api/v1/users/me` endpoint: return current user data from JWT. **[Agent: python-backend]**
+  - [x] Implement `PATCH /api/v1/users/me` endpoint: update name and preferences (not email). Return updated user. **[Agent: python-backend]**
+  - [x] Create `entities/user/` slice: User type definitions, `getMe()` API call, user query hook. **[Agent: typescript-frontend]**
+  - [x] Create `pages/settings/` page: profile form pre-filled with current user data (React Hook Form + Zod). Save button → `PATCH /users/me` → success toast "Profile updated." Email displayed read-only. **[Agent: typescript-frontend]**
+  - [x] Add navigation: settings link in app header/sidebar, accessible when logged in. **[Agent: typescript-frontend]**
+  - [x] Code review: Review settings page, user entity slice, and navigation for FSD compliance and React patterns. **[Agent: react-code-reviewer]**
+  - [x] Verify: Log in → navigate to settings → see pre-filled profile → edit name → save → refresh → changes persisted. **[Agent: qa-tester]**
 
 ---
 
