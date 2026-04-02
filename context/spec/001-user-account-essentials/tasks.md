@@ -48,11 +48,11 @@
 
 ---
 
-- [ ] **Slice 5: User can change their password**
-  - [ ] Implement `POST /api/v1/users/me/change-password` endpoint: verify current password, update to new password, or 400 if wrong. **[Agent: python-backend]**
-  - [ ] Add "Change Password" section to `pages/settings/`: form with current password, new password (8+ chars). On success → toast "Password changed successfully." On error → "Current password is incorrect." **[Agent: typescript-frontend]**
-  - [ ] Code review: Review change password form integration for patterns and security. **[Agent: react-code-reviewer]**
-  - [ ] Verify: Log in → settings → change password with correct current → success. Try logging in with old password → fails. Log in with new password → succeeds. Try wrong current password → error shown. **[Agent: qa-tester]**
+- [x] **Slice 5: User can change their password**
+  - [x] Implement `POST /api/v1/users/me/change-password` endpoint: verify current password, update to new password, or 400 if wrong. **[Agent: python-backend]**
+  - [x] Add "Change Password" section to `pages/settings/`: form with current password, new password (8+ chars). On success → toast "Password changed successfully." On error → "Current password is incorrect." **[Agent: typescript-frontend]**
+  - [x] Code review: Review change password form integration for patterns and security. **[Agent: react-code-reviewer]**
+  - [x] Verify: Log in → settings → change password with correct current → success. Try logging in with old password → fails. Log in with new password → succeeds. Try wrong current password → error shown. **[Agent: qa-tester]**
 
 ---
 

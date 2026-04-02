@@ -26,3 +26,8 @@ class UserUpdate(BaseModel):
     salary_min: int | None = None
     salary_max: int | None = None
     salary_currency: str | None = Field(default=None, max_length=3)
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8)
