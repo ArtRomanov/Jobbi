@@ -1,7 +1,6 @@
 import { useDroppable } from "@dnd-kit/core";
-import type { Application } from "@/entities/application";
+import type { Application, StatusKey } from "@/entities/application";
 import { colors } from "@/shared/ui";
-import type { StatusKey } from "../lib/statuses";
 import { ApplicationCard } from "./application-card";
 
 interface KanbanColumnProps {

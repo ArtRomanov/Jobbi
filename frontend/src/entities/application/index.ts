@@ -14,3 +14,6 @@ export { getApplication } from "./api/get-application";
 export { updateApplication } from "./api/update-application";
 export { deleteApplication } from "./api/delete-application";
 export { getHistory } from "./api/get-history";
+
+export { STATUSES } from "./lib/statuses";
+export type { StatusKey } from "./lib/statuses";

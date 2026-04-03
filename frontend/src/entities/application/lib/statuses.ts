@@ -1,5 +1,7 @@
 /**
- * Kanban column definitions — ordered left-to-right on the board.
+ * Application status definitions — domain knowledge about which statuses
+ * exist and how they're labeled. Lives in `entities/application` because
+ * it describes the application domain, not a specific user interaction.
  */
 export const STATUSES = [
   { key: "researching", label: "Researching" },

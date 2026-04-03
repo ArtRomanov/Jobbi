@@ -12,12 +12,19 @@ import { Link } from "react-router-dom";
 import {
   listApplications,
   updateApplication,
+  STATUSES,
   type Application,
 } from "@/entities/application";
 import { Button, colors, useToast } from "@/shared/ui";
-import { STATUSES } from "../lib/statuses";
 import { ApplicationCard } from "./application-card";
 import { KanbanColumn } from "./kanban-column";
+
+interface KanbanBoardProps {
+  /** Called when a card is clicked — parent uses this to open the detail panel. */
+  onCardClick?: (id: string) => void;
+  /** Increment to trigger a data re-fetch (e.g., after panel save/delete). */
+  refreshKey?: number;
+}
 
 /**
  * Main kanban board — fetches applications and renders them in status columns.
@@ -26,7 +33,10 @@ import { KanbanColumn } from "./kanban-column";
  * This is a `feature/` because it encapsulates a user interaction (organizing
  * applications by status via drag-and-drop), not just a domain entity.
  */
-export function KanbanBoard() {
+export function KanbanBoard({
+  onCardClick: onCardClickProp,
+  refreshKey = 0,
+}: KanbanBoardProps) {
   const [applications, setApplications] = useState<Application[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +73,7 @@ export function KanbanBoard() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshKey]);
 
   // Group applications by status — one array per column
   const grouped = useMemo(() => {
@@ -130,9 +140,12 @@ export function KanbanBoard() {
     [showToast],
   );
 
-  const handleCardClick = useCallback((_id: string) => {
-    // No-op — side panel will be wired in Slice 5
-  }, []);
+  const handleCardClick = useCallback(
+    (id: string) => {
+      onCardClickProp?.(id);
+    },
+    [onCardClickProp],
+  );
 
   // --- Loading state ---
   if (isLoading) {

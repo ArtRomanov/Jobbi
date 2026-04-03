@@ -1,9 +1,8 @@
 import { useDraggable } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
-import type { Application } from "@/entities/application";
+import type { Application, StatusKey } from "@/entities/application";
 import { colors } from "@/shared/ui";
 import { formatTimeAgo } from "../lib/format-time-ago";
-import type { StatusKey } from "../lib/statuses";
 
 interface ApplicationCardProps {
   application: Application;

@@ -37,12 +37,12 @@
 
 ---
 
-- [ ] **Slice 5: Detail side panel with editing**
-  - [ ] Create `features/application-panel/` slice: `ApplicationPanel` drawer component. Fetches application detail (with status history) on open. Displays all fields, status history log. **[Agent: typescript-frontend]**
-  - [ ] Add inline editing: editable form fields, status dropdown, "Save" button (PATCH), "Delete" button with confirmation dialog. **[Agent: typescript-frontend]**
-  - [ ] Wire panel to kanban board: clicking a card opens the panel. Panel close on X or click outside. Board refreshes data after save/delete. **[Agent: typescript-frontend]**
-  - [ ] Code review: Review side panel for accessibility (focus trap, escape key), form patterns, and FSD compliance. **[Agent: react-code-reviewer]**
-  - [ ] Verify: Click card → panel opens with correct data. Edit a field → save → panel shows updated data. Change status via dropdown → history entry appears. Delete → card removed from board. **[Agent: qa-tester]**
+- [x] **Slice 5: Detail side panel with editing**
+  - [x] Create `features/application-panel/` slice: `ApplicationPanel` drawer component. Fetches application detail (with status history) on open. Displays all fields, status history log. **[Agent: typescript-frontend]**
+  - [x] Add inline editing: editable form fields, status dropdown, "Save" button (PATCH), "Delete" button with confirmation dialog. **[Agent: typescript-frontend]**
+  - [x] Wire panel to kanban board: clicking a card opens the panel. Panel close on X or click outside. Board refreshes data after save/delete. **[Agent: typescript-frontend]**
+  - [x] Code review: Review side panel for accessibility (focus trap, escape key), form patterns, and FSD compliance. **[Agent: react-code-reviewer]**
+  - [x] Verify: Click card → panel opens with correct data. Edit a field → save → panel shows updated data. Change status via dropdown → history entry appears. Delete → card removed from board. **[Agent: qa-tester]**
 
 ---
 
