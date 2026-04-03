@@ -9,12 +9,12 @@
 
 ---
 
-- [ ] **Slice 2: Application CRUD API**
-  - [ ] Create `Application` and `ApplicationStatusHistory` SQLAlchemy models. Create Alembic migration for both tables. **[Agent: database-expert]**
-  - [ ] Create Pydantic schemas: `ApplicationCreate`, `ApplicationUpdate`, `ApplicationRead`, `ApplicationDetailRead`, `StatusHistoryRead`, `StatusHistoryFeedRead`, `PaginatedResponse`. **[Agent: python-backend]**
-  - [ ] Implement `application_service.py`: list (paginated, searchable, filterable), create (with initial status history), get (with history), update (with status change detection → auto-log history), delete (cascade). **[Agent: python-backend]**
-  - [ ] Implement all application API routes: `GET /applications`, `POST /applications`, `GET /applications/{id}`, `PATCH /applications/{id}`, `DELETE /applications/{id}`, `GET /applications/history`. Mount in v1 router. **[Agent: python-backend]**
-  - [ ] Verify: curl all endpoints — create application (201), list with pagination (200), get with history (200), update status and verify history entry created, search by company name, delete (200). **[Agent: qa-tester]**
+- [x] **Slice 2: Application CRUD API**
+  - [x] Create `Application` and `ApplicationStatusHistory` SQLAlchemy models. Create Alembic migration for both tables. **[Agent: database-expert]**
+  - [x] Create Pydantic schemas: `ApplicationCreate`, `ApplicationUpdate`, `ApplicationRead`, `ApplicationDetailRead`, `StatusHistoryRead`, `StatusHistoryFeedRead`, `PaginatedResponse`. **[Agent: python-backend]**
+  - [x] Implement `application_service.py`: list (paginated, searchable, filterable), create (with initial status history), get (with history), update (with status change detection → auto-log history), delete (cascade). **[Agent: python-backend]**
+  - [x] Implement all application API routes: `GET /applications`, `POST /applications`, `GET /applications/{id}`, `PATCH /applications/{id}`, `DELETE /applications/{id}`, `GET /applications/history`. Mount in v1 router. **[Agent: python-backend]**
+  - [x] Verify: curl all endpoints — create application (201), list with pagination (200), get with history (200), update status and verify history entry created, search by company name, delete (200). **[Agent: qa-tester]**
 
 ---
 
