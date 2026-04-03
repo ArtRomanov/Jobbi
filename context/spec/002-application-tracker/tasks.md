@@ -27,13 +27,13 @@
 
 ---
 
-- [ ] **Slice 4: Kanban board with drag-and-drop**
-  - [ ] Install `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities`. **[Agent: typescript-frontend]**
-  - [ ] Create `features/kanban-board/` slice: `KanbanBoard` component (fetches all applications, groups by status), `KanbanColumn` (renders column header + cards), `ApplicationCard` (shows company, role, time since update). **[Agent: typescript-frontend]**
-  - [ ] Implement drag-and-drop: dragging a card between columns calls `PATCH /applications/{id}` with new status. Optimistic UI update — roll back on error with toast. **[Agent: typescript-frontend]**
-  - [ ] Replace dashboard placeholder with `KanbanBoard`. Show "New Application" button on the board. **[Agent: typescript-frontend]**
-  - [ ] Code review: Review kanban board for @dnd-kit patterns, optimistic updates, FSD compliance, and performance. **[Agent: react-code-reviewer]**
-  - [ ] Verify: Dashboard shows kanban board with 6 columns. Create an application → card appears in correct column. Drag card to new column → status updates (verify via curl). **[Agent: qa-tester]**
+- [x] **Slice 4: Kanban board with drag-and-drop**
+  - [x] Install `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities`. **[Agent: typescript-frontend]**
+  - [x] Create `features/kanban-board/` slice: `KanbanBoard` component (fetches all applications, groups by status), `KanbanColumn` (renders column header + cards), `ApplicationCard` (shows company, role, time since update). **[Agent: typescript-frontend]**
+  - [x] Implement drag-and-drop: dragging a card between columns calls `PATCH /applications/{id}` with new status. Optimistic UI update — roll back on error with toast. **[Agent: typescript-frontend]**
+  - [x] Replace dashboard placeholder with `KanbanBoard`. Show "New Application" button on the board. **[Agent: typescript-frontend]**
+  - [x] Code review: Review kanban board for @dnd-kit patterns, optimistic updates, FSD compliance, and performance. **[Agent: react-code-reviewer]**
+  - [x] Verify: Dashboard shows kanban board with 6 columns. Create an application → card appears in correct column. Drag card to new column → status updates (verify via curl). **[Agent: qa-tester]**
 
 ---
 

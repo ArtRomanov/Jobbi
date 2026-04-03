@@ -1,27 +1,20 @@
-import { colors } from "@/shared/ui";
+import { KanbanBoard } from "@/features/kanban-board";
 
 /**
- * Temporary dashboard placeholder.
- * Will be replaced with the real dashboard (kanban, metrics, etc.) later.
+ * Dashboard page — renders the kanban board for managing job applications.
+ * This is a `page/` because it maps to a route (/dashboard).
  */
 export function DashboardPage() {
   return (
     <div
       style={{
+        padding: "1.5rem",
+        height: "calc(100vh - 4rem)",
         display: "flex",
         flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        minHeight: "60vh",
-        color: colors.textPrimary,
       }}
     >
-      <h1 style={{ fontSize: "2rem", fontWeight: 700, marginBottom: "0.5rem" }}>
-        Welcome to Jobbi!
-      </h1>
-      <p style={{ fontSize: "1rem", color: colors.textMuted }}>
-        Your dashboard is coming soon.
-      </p>
+      <KanbanBoard />
     </div>
   );
 }
