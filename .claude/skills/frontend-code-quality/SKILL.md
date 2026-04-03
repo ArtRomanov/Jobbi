@@ -11,8 +11,8 @@ These rules apply to all React/TypeScript code in the Jobbi frontend (`frontend/
 
 Each `.tsx` file must define and export **only one React component** (a function returning JSX).
 
-- Helper functions, hooks, constants, and types within the same file are OK.
 - A second function that returns JSX is a **violation** — extract it to its own file.
+- Helper functions, constants, validators, and types must NOT live in UI component files — see Rule 5.
 
 **Bad:**
 ```tsx
@@ -61,7 +61,40 @@ import { handleApiError } from "@/shared/api";
 
 Do NOT copy-paste the `isApiError` check pattern across files.
 
-## Rule 4: DRY Layout Wrappers
+## Rule 4: FSD Segment Separation in UI Files
+
+UI component files (`ui/*.tsx`) must contain **only the React component and its JSX**. Everything else belongs in the appropriate FSD segment:
+
+- **Helper/transform functions** (e.g., `userToFormValues`, `formatPayload`) → `lib/` segment (e.g., `lib/helpers.ts`)
+- **Constants and config objects** (e.g., `REMOTE_OPTIONS`, `APPLICATION_STATUSES`) → `lib/` segment (e.g., `lib/constants.ts`)
+- **Zod schemas and validators** (e.g., `settingsSchema`, `loginSchema`) → `model/` segment (e.g., `model/schemas.ts`)
+- **Types and interfaces** → `model/` segment (e.g., `model/types.ts`)
+
+**Bad:**
+```tsx
+// pages/settings/ui/settings-page.tsx
+const REMOTE_OPTIONS = [...];                    // VIOLATION — constant in UI file
+const settingsSchema = z.object({...});          // VIOLATION — schema in UI file
+function userToFormValues(user: User) {...}       // VIOLATION — helper in UI file
+export function SettingsPage() { return <div>...</div>; }
+```
+
+**Good:**
+```
+pages/settings/
+├── lib/
+│   └── constants.ts        # REMOTE_OPTIONS
+│   └── helpers.ts          # userToFormValues
+├── model/
+│   └── schemas.ts          # settingsSchema
+├── ui/
+│   └── settings-page.tsx   # Only the component
+└── index.ts
+```
+
+This rule applies to all FSD layers: `pages/`, `features/`, `entities/`.
+
+## Rule 5: DRY Layout Wrappers
 
 Pages must use the shared layout components instead of inline wrapper divs:
 - Auth pages (login, register, forgot-password, reset-password) → `<AuthLayout>`

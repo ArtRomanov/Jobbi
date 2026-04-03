@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import { Link, useNavigate } from "react-router-dom";
 import { apiClient, handleApiError } from "@/shared/api";
 import {
@@ -15,39 +14,9 @@ import {
   Divider,
 } from "@/shared/ui";
 import { useAuthStore } from "@/features/auth";
-
-const registerSchema = z.object({
-  full_name: z.string().min(1, "Full name is required"),
-  email: z.string().email("Invalid email address"),
-  password: z.string().min(8, "Password must be at least 8 characters"),
-  desired_role: z.string().optional(),
-  desired_location: z.string().optional(),
-  remote_preference: z
-    .enum(["onsite", "remote", "hybrid"])
-    .optional(),
-  salary_min: z.string().optional(),
-  salary_max: z.string().optional(),
-  salary_currency: z.string().optional(),
-});
-
-type RegisterFormData = z.infer<typeof registerSchema>;
-
-interface RegisterResponse {
-  access_token: string;
-  token_type: string;
-  user: {
-    id: string;
-    email: string;
-    full_name: string;
-  };
-}
-
-const REMOTE_OPTIONS = [
-  { value: "", label: "Select..." },
-  { value: "onsite", label: "Onsite" },
-  { value: "remote", label: "Remote" },
-  { value: "hybrid", label: "Hybrid" },
-];
+import { registerSchema, type RegisterFormData } from "../model/schemas";
+import type { RegisterResponse } from "../model/types";
+import { REMOTE_OPTIONS } from "../lib/constants";
 
 export function RegisterPage() {
   const navigate = useNavigate();

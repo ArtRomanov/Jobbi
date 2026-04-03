@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import { useNavigate } from "react-router-dom";
 import { handleApiError } from "@/shared/api";
 import {
@@ -15,30 +14,8 @@ import {
   Divider,
 } from "@/shared/ui";
 import { createApplication } from "@/entities/application";
-
-const APPLICATION_STATUSES = [
-  { value: "researching", label: "Researching" },
-  { value: "applied", label: "Applied" },
-  { value: "interview", label: "Interview" },
-  { value: "offer", label: "Offer" },
-  { value: "rejected", label: "Rejected" },
-  { value: "withdrawn", label: "Withdrawn" },
-];
-
-const newApplicationSchema = z.object({
-  company_name: z.string().min(1, "Company name is required"),
-  role_title: z.string().min(1, "Role title is required"),
-  job_url: z.string().optional(),
-  salary_min: z.string().optional(),
-  salary_max: z.string().optional(),
-  salary_currency: z.string().optional(),
-  contact_name: z.string().optional(),
-  contact_email: z.string().optional(),
-  notes: z.string().optional(),
-  status: z.enum(["researching", "applied", "interview", "offer", "rejected", "withdrawn"]),
-});
-
-type NewApplicationFormData = z.infer<typeof newApplicationSchema>;
+import { newApplicationSchema, type NewApplicationFormData } from "../model/schemas";
+import { APPLICATION_STATUSES } from "../lib/constants";
 
 export function NewApplicationPage() {
   const navigate = useNavigate();

@@ -1,16 +1,10 @@
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import { Link } from "react-router-dom";
 import { apiClient, handleApiError } from "@/shared/api";
 import { FormInput, Button, useToast, colors, AuthLayout, PageHeader } from "@/shared/ui";
-
-const forgotPasswordSchema = z.object({
-  email: z.string().email("Invalid email address"),
-});
-
-type ForgotPasswordFormData = z.infer<typeof forgotPasswordSchema>;
+import { forgotPasswordSchema, type ForgotPasswordFormData } from "../model/schemas";
 
 /**
  * Forgot Password page — lets the user request a password reset link.

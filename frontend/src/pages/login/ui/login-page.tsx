@@ -1,28 +1,12 @@
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import { Link, useNavigate } from "react-router-dom";
 import { apiClient, handleApiError } from "@/shared/api";
 import { FormInput, Button, useToast, colors, AuthLayout, PageHeader } from "@/shared/ui";
 import { useAuthStore } from "@/features/auth";
-
-const loginSchema = z.object({
-  email: z.string().email("Invalid email address"),
-  password: z.string().min(1, "Password is required"),
-});
-
-type LoginFormData = z.infer<typeof loginSchema>;
-
-interface LoginResponse {
-  access_token: string;
-  token_type: string;
-  user: {
-    id: string;
-    email: string;
-    full_name: string;
-  };
-}
+import { loginSchema, type LoginFormData } from "../model/schemas";
+import type { LoginResponse } from "../model/types";
 
 export function LoginPage() {
   const navigate = useNavigate();

@@ -1,16 +1,9 @@
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import { apiClient, handleApiError } from "@/shared/api";
 import { FormInput, Button, useToast, colors } from "@/shared/ui";
-
-const changePasswordSchema = z.object({
-  current_password: z.string().min(1, "Current password is required"),
-  new_password: z.string().min(8, "New password must be at least 8 characters"),
-});
-
-type ChangePasswordFormData = z.infer<typeof changePasswordSchema>;
+import { changePasswordSchema, type ChangePasswordFormData } from "../model/schemas";
 
 export function ChangePasswordSection() {
   const { showToast } = useToast();

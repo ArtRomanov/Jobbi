@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
 import { handleApiError } from "@/shared/api";
 import {
   FormInput,
@@ -15,39 +14,10 @@ import {
 } from "@/shared/ui";
 import { getMe, updateMe } from "@/entities/user";
 import type { User } from "@/entities/user";
+import { settingsSchema, type SettingsFormData } from "../model/schemas";
+import { REMOTE_OPTIONS } from "../lib/constants";
+import { userToFormValues } from "../lib/helpers";
 import { ChangePasswordSection } from "./change-password-section";
-
-const settingsSchema = z.object({
-  full_name: z.string().min(1, "Full name is required"),
-  desired_role: z.string().optional(),
-  desired_location: z.string().optional(),
-  remote_preference: z.enum(["onsite", "remote", "hybrid", ""]).optional(),
-  salary_min: z.string().optional(),
-  salary_max: z.string().optional(),
-  salary_currency: z.string().optional(),
-});
-
-type SettingsFormData = z.infer<typeof settingsSchema>;
-
-const REMOTE_OPTIONS = [
-  { value: "", label: "Select..." },
-  { value: "onsite", label: "Onsite" },
-  { value: "remote", label: "Remote" },
-  { value: "hybrid", label: "Hybrid" },
-];
-
-/** Convert user API data to form field values. */
-function userToFormValues(user: User): SettingsFormData {
-  return {
-    full_name: user.full_name,
-    desired_role: user.desired_role ?? "",
-    desired_location: user.desired_location ?? "",
-    remote_preference: (user.remote_preference as SettingsFormData["remote_preference"]) ?? "",
-    salary_min: user.salary_min !== null ? String(user.salary_min) : "",
-    salary_max: user.salary_max !== null ? String(user.salary_max) : "",
-    salary_currency: user.salary_currency ?? "",
-  };
-}
 
 export function SettingsPage() {
   const { showToast } = useToast();
