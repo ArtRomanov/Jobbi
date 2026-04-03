@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { apiClient, isApiError } from "@/shared/api";
-import { FormInput, Button, useToast } from "@/shared/ui";
+import { FormInput, Button, useToast, colors } from "@/shared/ui";
 import { getMe, updateMe } from "@/entities/user";
 import type { User } from "@/entities/user";
 
@@ -127,7 +127,7 @@ export function SettingsPage() {
           alignItems: "center",
           justifyContent: "center",
           minHeight: "60vh",
-          color: "#6b7280",
+          color: colors.textMuted,
           fontSize: "0.875rem",
         }}
       >
@@ -145,7 +145,7 @@ export function SettingsPage() {
           alignItems: "center",
           justifyContent: "center",
           minHeight: "60vh",
-          color: "#ef4444",
+          color: colors.error,
           fontSize: "0.875rem",
         }}
       >
@@ -160,7 +160,7 @@ export function SettingsPage() {
         maxWidth: "480px",
         margin: "2rem auto",
         padding: "2rem",
-        backgroundColor: "#ffffff",
+        backgroundColor: colors.bgCard,
         borderRadius: "0.5rem",
         boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)",
       }}
@@ -170,7 +170,7 @@ export function SettingsPage() {
           fontSize: "1.5rem",
           fontWeight: 700,
           marginBottom: "0.25rem",
-          color: "#1a1a1a",
+          color: colors.textPrimary,
         }}
       >
         Profile Settings
@@ -178,7 +178,7 @@ export function SettingsPage() {
       <p
         style={{
           fontSize: "0.875rem",
-          color: "#6b7280",
+          color: colors.textMuted,
           marginBottom: "1.5rem",
         }}
       >
@@ -195,7 +195,7 @@ export function SettingsPage() {
               marginBottom: "0.25rem",
               fontSize: "0.875rem",
               fontWeight: 500,
-              color: "#374151",
+              color: colors.textSecondary,
             }}
           >
             Email
@@ -208,11 +208,11 @@ export function SettingsPage() {
             style={{
               width: "100%",
               padding: "0.5rem 0.75rem",
-              border: "1px solid #d1d5db",
+              border: `1px solid ${colors.border}`,
               borderRadius: "0.375rem",
               fontSize: "0.875rem",
-              backgroundColor: "#f3f4f6",
-              color: "#6b7280",
+              backgroundColor: colors.bgDisabled,
+              color: colors.textMuted,
               boxSizing: "border-box",
               cursor: "not-allowed",
             }}
@@ -229,14 +229,14 @@ export function SettingsPage() {
         <hr
           style={{
             border: "none",
-            borderTop: "1px solid #e5e7eb",
+            borderTop: `1px solid ${colors.borderLight}`,
             margin: "1.5rem 0",
           }}
         />
         <p
           style={{
             fontSize: "0.75rem",
-            color: "#9ca3af",
+            color: colors.textPlaceholder,
             marginBottom: "1rem",
           }}
         >
@@ -266,7 +266,7 @@ export function SettingsPage() {
               marginBottom: "0.25rem",
               fontSize: "0.875rem",
               fontWeight: 500,
-              color: "#374151",
+              color: colors.textSecondary,
             }}
           >
             Remote Preference
@@ -276,10 +276,10 @@ export function SettingsPage() {
             style={{
               width: "100%",
               padding: "0.5rem 0.75rem",
-              border: "1px solid #d1d5db",
+              border: `1px solid ${colors.border}`,
               borderRadius: "0.375rem",
               fontSize: "0.875rem",
-              backgroundColor: "#ffffff",
+              backgroundColor: colors.bgCard,
               boxSizing: "border-box",
             }}
             {...register("remote_preference")}
@@ -370,7 +370,7 @@ function ChangePasswordSection() {
       <hr
         style={{
           border: "none",
-          borderTop: "1px solid #e5e7eb",
+          borderTop: `1px solid ${colors.borderLight}`,
           margin: "2rem 0",
         }}
       />
@@ -380,7 +380,7 @@ function ChangePasswordSection() {
           fontSize: "1.25rem",
           fontWeight: 700,
           marginBottom: "0.25rem",
-          color: "#1a1a1a",
+          color: colors.textPrimary,
         }}
       >
         Change Password
@@ -388,7 +388,7 @@ function ChangePasswordSection() {
       <p
         style={{
           fontSize: "0.875rem",
-          color: "#6b7280",
+          color: colors.textMuted,
           marginBottom: "1.5rem",
         }}
       >

@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Link } from "react-router-dom";
 import { apiClient, isApiError } from "@/shared/api";
-import { FormInput, Button, useToast } from "@/shared/ui";
+import { FormInput, Button, useToast, colors, fonts } from "@/shared/ui";
 
 const forgotPasswordSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -54,9 +54,8 @@ export function ForgotPasswordPage() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: "#fafafa",
-        fontFamily:
-          "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        backgroundColor: colors.bgPage,
+        fontFamily: fonts.base,
       }}
     >
       <div
@@ -64,7 +63,7 @@ export function ForgotPasswordPage() {
           width: "100%",
           maxWidth: "400px",
           padding: "2rem",
-          backgroundColor: "#ffffff",
+          backgroundColor: colors.bgCard,
           borderRadius: "0.5rem",
           boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)",
         }}
@@ -74,7 +73,7 @@ export function ForgotPasswordPage() {
             fontSize: "1.5rem",
             fontWeight: 700,
             marginBottom: "0.25rem",
-            color: "#1a1a1a",
+            color: colors.textPrimary,
           }}
         >
           Forgot password
@@ -82,7 +81,7 @@ export function ForgotPasswordPage() {
         <p
           style={{
             fontSize: "0.875rem",
-            color: "#6b7280",
+            color: colors.textMuted,
             marginBottom: "1.5rem",
           }}
         >
@@ -128,12 +127,12 @@ export function ForgotPasswordPage() {
             textAlign: "center",
             marginTop: "1.5rem",
             fontSize: "0.875rem",
-            color: "#6b7280",
+            color: colors.textMuted,
           }}
         >
           <Link
             to="/login"
-            style={{ color: "#2563eb", textDecoration: "none" }}
+            style={{ color: colors.primary, textDecoration: "none" }}
           >
             Back to login
           </Link>

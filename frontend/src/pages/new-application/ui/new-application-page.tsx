@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useNavigate } from "react-router-dom";
 import { isApiError } from "@/shared/api";
-import { FormInput, Button, useToast } from "@/shared/ui";
+import { FormInput, Button, useToast, colors } from "@/shared/ui";
 import { createApplication } from "@/entities/application";
 
 const APPLICATION_STATUSES = [
@@ -84,7 +84,7 @@ export function NewApplicationPage() {
         maxWidth: "560px",
         margin: "2rem auto",
         padding: "2rem",
-        backgroundColor: "#ffffff",
+        backgroundColor: colors.bgCard,
         borderRadius: "0.5rem",
         boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)",
       }}
@@ -94,7 +94,7 @@ export function NewApplicationPage() {
           fontSize: "1.5rem",
           fontWeight: 700,
           marginBottom: "0.25rem",
-          color: "#1a1a1a",
+          color: colors.textPrimary,
         }}
       >
         New Application
@@ -102,7 +102,7 @@ export function NewApplicationPage() {
       <p
         style={{
           fontSize: "0.875rem",
-          color: "#6b7280",
+          color: colors.textMuted,
           marginBottom: "1.5rem",
         }}
       >
@@ -140,7 +140,7 @@ export function NewApplicationPage() {
               marginBottom: "0.25rem",
               fontSize: "0.875rem",
               fontWeight: 500,
-              color: "#374151",
+              color: colors.textSecondary,
             }}
           >
             Initial Status
@@ -150,10 +150,10 @@ export function NewApplicationPage() {
             style={{
               width: "100%",
               padding: "0.5rem 0.75rem",
-              border: "1px solid #d1d5db",
+              border: `1px solid ${colors.border}`,
               borderRadius: "0.375rem",
               fontSize: "0.875rem",
-              backgroundColor: "#ffffff",
+              backgroundColor: colors.bgCard,
               boxSizing: "border-box",
             }}
             {...register("status")}
@@ -169,14 +169,14 @@ export function NewApplicationPage() {
         <hr
           style={{
             border: "none",
-            borderTop: "1px solid #e5e7eb",
+            borderTop: `1px solid ${colors.borderLight}`,
             margin: "1.5rem 0",
           }}
         />
         <p
           style={{
             fontSize: "0.75rem",
-            color: "#9ca3af",
+            color: colors.textPlaceholder,
             marginBottom: "1rem",
           }}
         >
@@ -230,7 +230,7 @@ export function NewApplicationPage() {
               marginBottom: "0.25rem",
               fontSize: "0.875rem",
               fontWeight: 500,
-              color: "#374151",
+              color: colors.textSecondary,
             }}
           >
             Notes
@@ -242,7 +242,7 @@ export function NewApplicationPage() {
             style={{
               width: "100%",
               padding: "0.5rem 0.75rem",
-              border: "1px solid #d1d5db",
+              border: `1px solid ${colors.border}`,
               borderRadius: "0.375rem",
               fontSize: "0.875rem",
               resize: "vertical",

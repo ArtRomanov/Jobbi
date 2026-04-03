@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Link, useNavigate } from "react-router-dom";
 import { apiClient, isApiError } from "@/shared/api";
-import { FormInput, Button, useToast } from "@/shared/ui";
+import { FormInput, Button, useToast, colors, fonts } from "@/shared/ui";
 import { useAuthStore } from "@/features/auth";
 
 const RemotePreference = {
@@ -105,9 +105,8 @@ export function RegisterPage() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: "#fafafa",
-        fontFamily:
-          "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        backgroundColor: colors.bgPage,
+        fontFamily: fonts.base,
       }}
     >
       <div
@@ -115,7 +114,7 @@ export function RegisterPage() {
           width: "100%",
           maxWidth: "480px",
           padding: "2rem",
-          backgroundColor: "#ffffff",
+          backgroundColor: colors.bgCard,
           borderRadius: "0.5rem",
           boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)",
         }}
@@ -125,7 +124,7 @@ export function RegisterPage() {
             fontSize: "1.5rem",
             fontWeight: 700,
             marginBottom: "0.25rem",
-            color: "#1a1a1a",
+            color: colors.textPrimary,
           }}
         >
           Create your Jobbi account
@@ -133,7 +132,7 @@ export function RegisterPage() {
         <p
           style={{
             fontSize: "0.875rem",
-            color: "#6b7280",
+            color: colors.textMuted,
             marginBottom: "1.5rem",
           }}
         >
@@ -163,14 +162,14 @@ export function RegisterPage() {
           <hr
             style={{
               border: "none",
-              borderTop: "1px solid #e5e7eb",
+              borderTop: `1px solid ${colors.borderLight}`,
               margin: "1.5rem 0",
             }}
           />
           <p
             style={{
               fontSize: "0.75rem",
-              color: "#9ca3af",
+              color: colors.textPlaceholder,
               marginBottom: "1rem",
             }}
           >
@@ -199,7 +198,7 @@ export function RegisterPage() {
                 marginBottom: "0.25rem",
                 fontSize: "0.875rem",
                 fontWeight: 500,
-                color: "#374151",
+                color: colors.textSecondary,
               }}
             >
               Remote Preference
@@ -208,10 +207,10 @@ export function RegisterPage() {
               style={{
                 width: "100%",
                 padding: "0.5rem 0.75rem",
-                border: "1px solid #d1d5db",
+                border: `1px solid ${colors.border}`,
                 borderRadius: "0.375rem",
                 fontSize: "0.875rem",
-                backgroundColor: "#ffffff",
+                backgroundColor: colors.bgCard,
                 boxSizing: "border-box",
               }}
               {...register("remote_preference")}
@@ -261,13 +260,13 @@ export function RegisterPage() {
             textAlign: "center",
             marginTop: "1.5rem",
             fontSize: "0.875rem",
-            color: "#6b7280",
+            color: colors.textMuted,
           }}
         >
           Already have an account?{" "}
           <Link
             to="/login"
-            style={{ color: "#2563eb", textDecoration: "none" }}
+            style={{ color: colors.primary, textDecoration: "none" }}
           >
             Log in
           </Link>

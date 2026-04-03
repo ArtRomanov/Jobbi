@@ -4,7 +4,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Link, useNavigate } from "react-router-dom";
 import { apiClient, isApiError } from "@/shared/api";
-import { FormInput, Button, useToast } from "@/shared/ui";
+import { FormInput, Button, useToast, colors, fonts } from "@/shared/ui";
 import { useAuthStore } from "@/features/auth";
 
 const loginSchema = z.object({
@@ -67,9 +67,8 @@ export function LoginPage() {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        backgroundColor: "#fafafa",
-        fontFamily:
-          "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        backgroundColor: colors.bgPage,
+        fontFamily: fonts.base,
       }}
     >
       <div
@@ -77,7 +76,7 @@ export function LoginPage() {
           width: "100%",
           maxWidth: "400px",
           padding: "2rem",
-          backgroundColor: "#ffffff",
+          backgroundColor: colors.bgCard,
           borderRadius: "0.5rem",
           boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)",
         }}
@@ -87,7 +86,7 @@ export function LoginPage() {
             fontSize: "1.5rem",
             fontWeight: 700,
             marginBottom: "0.25rem",
-            color: "#1a1a1a",
+            color: colors.textPrimary,
           }}
         >
           Welcome back
@@ -95,7 +94,7 @@ export function LoginPage() {
         <p
           style={{
             fontSize: "0.875rem",
-            color: "#6b7280",
+            color: colors.textMuted,
             marginBottom: "1.5rem",
           }}
         >
@@ -121,7 +120,7 @@ export function LoginPage() {
               to="/forgot-password"
               style={{
                 fontSize: "0.8125rem",
-                color: "#2563eb",
+                color: colors.primary,
                 textDecoration: "none",
               }}
             >
@@ -143,13 +142,13 @@ export function LoginPage() {
             textAlign: "center",
             marginTop: "1.5rem",
             fontSize: "0.875rem",
-            color: "#6b7280",
+            color: colors.textMuted,
           }}
         >
           Don't have an account?{" "}
           <Link
             to="/register"
-            style={{ color: "#2563eb", textDecoration: "none" }}
+            style={{ color: colors.primary, textDecoration: "none" }}
           >
             Sign up
           </Link>
