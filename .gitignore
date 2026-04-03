@@ -15,6 +15,9 @@ coverage/
 
 # Node
 node_modules/
+
+# Generated types
+schema.d.ts
 dist/
 build/
 .vite/

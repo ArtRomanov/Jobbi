@@ -2,10 +2,10 @@
 
 ---
 
-- [ ] **Slice 1: OpenAPI type generation pipeline**
-  - [ ] Install `openapi-typescript` as dev dependency. Add `pnpm generate:types` script that fetches `http://localhost:8000/openapi.json` and outputs `frontend/src/shared/api/schema.d.ts`. **[Agent: typescript-frontend]**
-  - [ ] Generate initial types from current API (auth + user endpoints). Migrate `entities/user/model/types.ts` to re-export from generated schema. **[Agent: typescript-frontend]**
-  - [ ] Verify: `pnpm generate:types` runs without errors, `pnpm run build` passes, existing user entity still works. **[Agent: qa-tester]**
+- [x] **Slice 1: OpenAPI type generation pipeline**
+  - [x] Install `openapi-typescript` as dev dependency. Add `pnpm generate:types` script that fetches `http://localhost:8000/openapi.json` and outputs `frontend/src/shared/api/schema.d.ts`. **[Agent: typescript-frontend]**
+  - [x] Generate initial types from current API (auth + user endpoints). Migrate `entities/user/model/types.ts` to re-export from generated schema. **[Agent: typescript-frontend]**
+  - [x] Verify: `pnpm generate:types` runs without errors, `pnpm run build` passes, existing user entity still works. **[Agent: qa-tester]**
 
 ---
 
