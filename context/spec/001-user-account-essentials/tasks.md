@@ -76,12 +76,12 @@
 
 ---
 
-- [ ] **Slice 8: Backend test suite**
-  - [ ] Set up pytest with async fixtures, test database (in-memory SQLite), test client. **[Agent: python-backend]**
-  - [ ] Unit tests for `security.py`: password hashing roundtrip, JWT creation/decode, token expiry. **[Agent: python-backend]**
-  - [ ] Integration tests for auth endpoints: register (success, duplicate, validation), login (success, wrong creds), forgot password, reset password (success, expired, reused). **[Agent: python-backend]**
-  - [ ] Integration tests for user endpoints: get profile, update profile, change password (success, wrong current password). **[Agent: python-backend]**
-  - [ ] Verify: `pytest` runs all tests — 100% pass rate. **[Agent: qa-tester]**
+- [x] **Slice 8: Backend test suite**
+  - [x] Set up pytest with async fixtures, test database (in-memory SQLite), test client. **[Agent: python-backend]**
+  - [x] Unit tests for `security.py`: password hashing roundtrip, JWT creation/decode, token expiry. **[Agent: python-backend]**
+  - [x] Integration tests for auth endpoints: register (success, duplicate, validation), login (success, wrong creds), forgot password, reset password (success, expired, reused). **[Agent: python-backend]**
+  - [x] Integration tests for user endpoints: get profile, update profile, change password (success, wrong current password). **[Agent: python-backend]**
+  - [x] Verify: `pytest` runs all tests — 100% pass rate. **[Agent: qa-tester]**
 
 ---
 
