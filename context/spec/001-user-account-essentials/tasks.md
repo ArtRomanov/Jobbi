@@ -85,11 +85,11 @@
 
 ---
 
-- [ ] **Slice 9: Frontend test suite**
-  - [ ] Set up Vitest with Happy-DOM, Testing Library, MSW v2 handlers for all API endpoints. **[Agent: typescript-frontend]**
-  - [ ] Component tests: login form (validation, submit, error display), register form (validation, optional fields, submit). **[Agent: typescript-frontend]**
-  - [ ] Component tests: settings page (pre-filled data, save, change password). **[Agent: typescript-frontend]**
-  - [ ] Auth store tests: login stores token, logout clears token, isAuthenticated reflects state. **[Agent: typescript-frontend]**
-  - [ ] Protected route test: unauthenticated user redirected to `/login`. **[Agent: typescript-frontend]**
-  - [ ] Code review: Review all test code for testing best practices, query selection philosophy, and proper async patterns. **[Agent: react-code-reviewer]**
-  - [ ] Verify: `npx vitest run` — 100% pass rate. **[Agent: qa-tester]**
+- [x] **Slice 9: Frontend test suite**
+  - [x] Set up Vitest with Happy-DOM, Testing Library, MSW v2 handlers for all API endpoints. **[Agent: typescript-frontend]**
+  - [x] Component tests: login form (validation, submit, error display), register form (validation, optional fields, submit). **[Agent: typescript-frontend]**
+  - [x] Component tests: settings page (pre-filled data, save, change password). **[Agent: typescript-frontend]**
+  - [x] Auth store tests: login stores token, logout clears token, isAuthenticated reflects state. **[Agent: typescript-frontend]**
+  - [x] Protected route test: unauthenticated user redirected to `/login`. **[Agent: typescript-frontend]**
+  - [x] Code review: Review all test code for testing best practices, query selection philosophy, and proper async patterns. **[Agent: react-code-reviewer]**
+  - [x] Verify: `npx vitest run` — 100% pass rate. **[Agent: qa-tester]**

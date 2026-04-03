@@ -21,6 +21,9 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
 
+    /* Test */
+    "types": ["vitest/globals"],
+
     /* Path aliases */
     "baseUrl": ".",
     "paths": {
