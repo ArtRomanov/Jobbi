@@ -31,7 +31,7 @@ async def register(
     if existing is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Email already registered",
+            detail="Email already registered.",
         )
 
     user = await create_user(db, body)

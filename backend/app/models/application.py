@@ -4,6 +4,7 @@ from datetime import datetime
 from sqlalchemy import ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.constants import DEFAULT_APPLICATION_STATUS
 from app.core.database import Base
 
 
@@ -31,7 +32,7 @@ class Application(Base):
     contact_email: Mapped[str | None] = mapped_column(String(255))
     notes: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="researching"
+        String(20), nullable=False, default=DEFAULT_APPLICATION_STATUS
     )
     created_at: Mapped[datetime] = mapped_column(
         nullable=False, server_default=func.now()

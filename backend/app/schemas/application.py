@@ -3,6 +3,8 @@ from typing import Generic, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.constants import DEFAULT_APPLICATION_STATUS
+
 T = TypeVar("T")
 
 
@@ -16,7 +18,7 @@ class ApplicationCreate(BaseModel):
     contact_name: str | None = None
     contact_email: str | None = None
     notes: str | None = None
-    status: str = "researching"
+    status: str = DEFAULT_APPLICATION_STATUS
 
 
 class ApplicationUpdate(BaseModel):

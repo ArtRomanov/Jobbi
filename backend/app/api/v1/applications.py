@@ -1,9 +1,10 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, get_db
+from app.core.exceptions import not_found
 from app.models.user import User
 from app.schemas.application import (
     ApplicationCreate,
@@ -81,10 +82,7 @@ async def get_app(
 ) -> ApplicationDetailRead:
     application = await get_application(db, current_user.id, application_id)
     if application is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Application not found.",
-        )
+        not_found("Application")
     return ApplicationDetailRead.model_validate(application)
 
 
@@ -99,10 +97,7 @@ async def update_app(
         db, current_user.id, application_id, body
     )
     if application is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Application not found.",
-        )
+        not_found("Application")
     return ApplicationDetailRead.model_validate(application)
 
 
@@ -114,8 +109,5 @@ async def delete_app(
 ) -> dict[str, str]:
     deleted = await delete_application(db, current_user.id, application_id)
     if not deleted:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Application not found.",
-        )
+        not_found("Application")
     return {"message": "Application deleted."}

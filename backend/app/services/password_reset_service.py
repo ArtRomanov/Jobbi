@@ -15,13 +15,17 @@ logger = structlog.get_logger()
 TOKEN_EXPIRY_HOURS = 1
 
 
+def _hash_token(raw_token: str) -> str:
+    return hashlib.sha256(raw_token.encode()).hexdigest()
+
+
 def generate_reset_token() -> tuple[str, str]:
     """Generate a random token and its SHA-256 hash.
 
     Returns (raw_token, token_hash).
     """
     raw_token = secrets.token_urlsafe(32)
-    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    token_hash = _hash_token(raw_token)
     return raw_token, token_hash
 
 
@@ -51,7 +55,7 @@ async def verify_and_use_reset_token(
 
     Returns True on success, False if the token is invalid/expired/used.
     """
-    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    token_hash = _hash_token(raw_token)
 
     result = await db.execute(
         select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash)

@@ -1,7 +1,8 @@
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.pagination import paginate
 from app.models.application import Application, ApplicationStatusHistory
 from app.schemas.application import ApplicationCreate, ApplicationUpdate
 
@@ -28,21 +29,12 @@ async def list_applications(
             )
         )
 
-    # Count total before pagination
-    count_query = select(func.count()).select_from(query.subquery())
-    total = (await db.execute(count_query)).scalar_one()
-
-    # Paginate and load
     query = (
         query.options(selectinload(Application.status_history))
         .order_by(Application.updated_at.desc())
-        .offset((page - 1) * per_page)
-        .limit(per_page)
     )
-    result = await db.execute(query)
-    applications = list(result.scalars().all())
 
-    return applications, total
+    return await paginate(db, query, page, per_page)
 
 
 async def create_application(
@@ -155,20 +147,10 @@ async def get_status_history_feed(
         )
         .join(Application, ApplicationStatusHistory.application_id == Application.id)
         .where(Application.user_id == user_id)
+        .order_by(ApplicationStatusHistory.changed_at.desc())
     )
 
-    # Count total
-    count_query = select(func.count()).select_from(base_query.subquery())
-    total = (await db.execute(count_query)).scalar_one()
-
-    # Paginate
-    query = (
-        base_query.order_by(ApplicationStatusHistory.changed_at.desc())
-        .offset((page - 1) * per_page)
-        .limit(per_page)
-    )
-    result = await db.execute(query)
-    rows = result.all()
+    rows, total = await paginate(db, base_query, page, per_page, scalars=False)
 
     items = [
         {
