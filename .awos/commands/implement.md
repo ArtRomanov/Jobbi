@@ -84,7 +84,18 @@ Follow this process precisely.
 4.  Save the modified content back to the `tasks.md` file.
 5.  **Announce Completion:** Conclude this step with a status update. Example: "The task has been successfully completed by the subagent. I have updated `tasks.md` to reflect this."
 
-### Step 6: Announce Status
+### Step 6: Commit and Push (Requires Approval)
+
+When an entire **Slice** (top-level task with all its sub-tasks) is marked complete, you must commit and push the changes. **Always ask the user for approval before executing.**
+
+1.  **Stage relevant files:** Add only the files changed during the slice implementation. Do not stage unrelated files, secrets (`.env`), or generated artifacts that are gitignored.
+2.  **Commit with a descriptive message:** Use a concise commit message summarizing the slice. End with the `Co-Authored-By` trailer. Use a HEREDOC for the message.
+3.  **Push to remote:** Run `git push` after a successful commit.
+4.  **Announce:** Confirm the commit hash and that the push succeeded.
+
+If the slice only completed sub-tasks but not the full parent slice, **skip this step** — only commit when a full slice is done.
+
+### Step 7: Announce Status
 
 Count completed `[x]` and total tasks, calculate percentage.
 
