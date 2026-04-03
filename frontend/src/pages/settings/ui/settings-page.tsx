@@ -2,17 +2,20 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { apiClient, isApiError } from "@/shared/api";
-import { FormInput, Button, useToast, colors } from "@/shared/ui";
+import { handleApiError } from "@/shared/api";
+import {
+  FormInput,
+  FormSelect,
+  Button,
+  useToast,
+  colors,
+  PageCard,
+  PageHeader,
+  Divider,
+} from "@/shared/ui";
 import { getMe, updateMe } from "@/entities/user";
 import type { User } from "@/entities/user";
-
-const changePasswordSchema = z.object({
-  current_password: z.string().min(1, "Current password is required"),
-  new_password: z.string().min(8, "New password must be at least 8 characters"),
-});
-
-type ChangePasswordFormData = z.infer<typeof changePasswordSchema>;
+import { ChangePasswordSection } from "./change-password-section";
 
 const settingsSchema = z.object({
   full_name: z.string().min(1, "Full name is required"),
@@ -25,6 +28,13 @@ const settingsSchema = z.object({
 });
 
 type SettingsFormData = z.infer<typeof settingsSchema>;
+
+const REMOTE_OPTIONS = [
+  { value: "", label: "Select..." },
+  { value: "onsite", label: "Onsite" },
+  { value: "remote", label: "Remote" },
+  { value: "hybrid", label: "Hybrid" },
+];
 
 /** Convert user API data to form field values. */
 function userToFormValues(user: User): SettingsFormData {
@@ -65,11 +75,7 @@ export function SettingsPage() {
         reset(userToFormValues(data));
       } catch (error: unknown) {
         if (cancelled) return;
-        if (isApiError(error)) {
-          showToast("Failed to load profile.", "error");
-        } else {
-          showToast("Network error. Check your connection.", "error");
-        }
+        handleApiError(error, showToast);
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -105,13 +111,9 @@ export function SettingsPage() {
       reset(userToFormValues(updated));
       showToast("Profile updated.", "success");
     } catch (error: unknown) {
-      if (isApiError(error) && error.status === 422) {
-        showToast("Please check your input and try again.", "error");
-      } else if (isApiError(error)) {
-        showToast("Failed to save changes.", "error");
-      } else {
-        showToast("Network error. Check your connection.", "error");
-      }
+      handleApiError(error, showToast, {
+        422: "Please check your input and try again.",
+      });
     } finally {
       setIsSaving(false);
     }
@@ -155,35 +157,8 @@ export function SettingsPage() {
   }
 
   return (
-    <div
-      style={{
-        maxWidth: "480px",
-        margin: "2rem auto",
-        padding: "2rem",
-        backgroundColor: colors.bgCard,
-        borderRadius: "0.5rem",
-        boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)",
-      }}
-    >
-      <h1
-        style={{
-          fontSize: "1.5rem",
-          fontWeight: 700,
-          marginBottom: "0.25rem",
-          color: colors.textPrimary,
-        }}
-      >
-        Profile Settings
-      </h1>
-      <p
-        style={{
-          fontSize: "0.875rem",
-          color: colors.textMuted,
-          marginBottom: "1.5rem",
-        }}
-      >
-        Update your profile information
-      </p>
+    <PageCard>
+      <PageHeader title="Profile Settings" subtitle="Update your profile information" />
 
       <form onSubmit={handleSubmit(onSubmit)}>
         {/* Email is read-only — displayed but not editable */}
@@ -226,22 +201,7 @@ export function SettingsPage() {
           {...register("full_name")}
         />
 
-        <hr
-          style={{
-            border: "none",
-            borderTop: `1px solid ${colors.borderLight}`,
-            margin: "1.5rem 0",
-          }}
-        />
-        <p
-          style={{
-            fontSize: "0.75rem",
-            color: colors.textPlaceholder,
-            marginBottom: "1rem",
-          }}
-        >
-          Job preferences
-        </p>
+        <Divider label="Job preferences" />
 
         <FormInput
           label="Desired Role"
@@ -258,38 +218,11 @@ export function SettingsPage() {
           {...register("desired_location")}
         />
 
-        <div style={{ marginBottom: "1rem" }}>
-          <label
-            htmlFor="settings-remote-preference"
-            style={{
-              display: "block",
-              marginBottom: "0.25rem",
-              fontSize: "0.875rem",
-              fontWeight: 500,
-              color: colors.textSecondary,
-            }}
-          >
-            Remote Preference
-          </label>
-          <select
-            id="settings-remote-preference"
-            style={{
-              width: "100%",
-              padding: "0.5rem 0.75rem",
-              border: `1px solid ${colors.border}`,
-              borderRadius: "0.375rem",
-              fontSize: "0.875rem",
-              backgroundColor: colors.bgCard,
-              boxSizing: "border-box",
-            }}
-            {...register("remote_preference")}
-          >
-            <option value="">Select...</option>
-            <option value="onsite">Onsite</option>
-            <option value="remote">Remote</option>
-            <option value="hybrid">Hybrid</option>
-          </select>
-        </div>
+        <FormSelect
+          label="Remote Preference"
+          options={REMOTE_OPTIONS}
+          {...register("remote_preference")}
+        />
 
         <div style={{ display: "flex", gap: "0.75rem" }}>
           <FormInput
@@ -325,100 +258,6 @@ export function SettingsPage() {
       </form>
 
       <ChangePasswordSection />
-    </div>
-  );
-}
-
-function ChangePasswordSection() {
-  const { showToast } = useToast();
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const {
-    register,
-    handleSubmit,
-    reset,
-    formState: { errors },
-  } = useForm<ChangePasswordFormData>({
-    resolver: zodResolver(changePasswordSchema),
-  });
-
-  const onSubmit = async (data: ChangePasswordFormData) => {
-    if (isSubmitting) return;
-    setIsSubmitting(true);
-    try {
-      await apiClient.post("/api/v1/users/me/change-password", {
-        current_password: data.current_password,
-        new_password: data.new_password,
-      });
-      showToast("Password changed successfully.", "success");
-      reset();
-    } catch (error: unknown) {
-      if (isApiError(error) && error.status === 400) {
-        showToast("Current password is incorrect.", "error");
-      } else if (isApiError(error)) {
-        showToast("Something went wrong. Please try again.", "error");
-      } else {
-        showToast("Network error. Check your connection.", "error");
-      }
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  return (
-    <>
-      <hr
-        style={{
-          border: "none",
-          borderTop: `1px solid ${colors.borderLight}`,
-          margin: "2rem 0",
-        }}
-      />
-
-      <h2
-        style={{
-          fontSize: "1.25rem",
-          fontWeight: 700,
-          marginBottom: "0.25rem",
-          color: colors.textPrimary,
-        }}
-      >
-        Change Password
-      </h2>
-      <p
-        style={{
-          fontSize: "0.875rem",
-          color: colors.textMuted,
-          marginBottom: "1.5rem",
-        }}
-      >
-        Update your account password
-      </p>
-
-      <form onSubmit={handleSubmit(onSubmit)}>
-        <FormInput
-          label="Current Password *"
-          type="password"
-          autoComplete="current-password"
-          error={errors.current_password?.message}
-          {...register("current_password")}
-        />
-        <FormInput
-          label="New Password *"
-          type="password"
-          autoComplete="new-password"
-          error={errors.new_password?.message}
-          {...register("new_password")}
-        />
-
-        <Button
-          type="submit"
-          loading={isSubmitting}
-          style={{ width: "100%", marginTop: "0.5rem" }}
-        >
-          Change Password
-        </Button>
-      </form>
-    </>
+    </PageCard>
   );
 }

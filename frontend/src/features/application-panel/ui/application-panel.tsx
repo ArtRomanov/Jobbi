@@ -9,7 +9,8 @@ import {
   type ApplicationUpdate,
   type StatusHistory,
 } from "@/entities/application";
-import { Button, FormInput, colors, useToast } from "@/shared/ui";
+import { Button, FormInput, FormSelect, FormTextarea, colors, useToast } from "@/shared/ui";
+import { handleApiError } from "@/shared/api";
 
 /**
  * Form values mirror the editable fields of an application.
@@ -34,6 +35,8 @@ interface ApplicationPanelProps {
   onClose: () => void;
   onUpdate: () => void;
 }
+
+const STATUS_OPTIONS = STATUSES.map((s) => ({ value: s.key, label: s.label }));
 
 function toFormValues(detail: ApplicationDetail): FormValues {
   return {
@@ -181,10 +184,7 @@ export function ApplicationPanel({
         showToast("Application updated.", "success");
         onUpdate();
       } catch (err: unknown) {
-        showToast(
-          err instanceof Error ? err.message : "Failed to update application",
-          "error",
-        );
+        handleApiError(err, showToast);
       } finally {
         setIsSaving(false);
       }
@@ -202,10 +202,7 @@ export function ApplicationPanel({
       onUpdate();
       onClose();
     } catch (err: unknown) {
-      showToast(
-        err instanceof Error ? err.message : "Failed to delete application",
-        "error",
-      );
+      handleApiError(err, showToast);
     } finally {
       setIsDeleting(false);
     }
@@ -394,72 +391,17 @@ export function ApplicationPanel({
                 {...register("contact_email")}
               />
 
-              {/* Status dropdown */}
-              <div style={{ marginBottom: "1rem" }}>
-                <label
-                  htmlFor="panel-status"
-                  style={{
-                    display: "block",
-                    marginBottom: "0.25rem",
-                    fontSize: "0.875rem",
-                    fontWeight: 500,
-                    color: colors.textSecondary,
-                  }}
-                >
-                  Status
-                </label>
-                <select
-                  id="panel-status"
-                  {...register("status")}
-                  style={{
-                    width: "100%",
-                    padding: "0.5rem 0.75rem",
-                    border: `1px solid ${colors.border}`,
-                    borderRadius: "0.375rem",
-                    fontSize: "0.875rem",
-                    backgroundColor: colors.bgCard,
-                    color: colors.textPrimary,
-                    boxSizing: "border-box",
-                  }}
-                >
-                  {STATUSES.map((s) => (
-                    <option key={s.key} value={s.key}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              <FormSelect
+                label="Status"
+                options={STATUS_OPTIONS}
+                {...register("status")}
+              />
 
-              {/* Notes textarea */}
-              <div style={{ marginBottom: "1rem" }}>
-                <label
-                  htmlFor="panel-notes"
-                  style={{
-                    display: "block",
-                    marginBottom: "0.25rem",
-                    fontSize: "0.875rem",
-                    fontWeight: 500,
-                    color: colors.textSecondary,
-                  }}
-                >
-                  Notes
-                </label>
-                <textarea
-                  id="panel-notes"
-                  rows={4}
-                  {...register("notes")}
-                  style={{
-                    width: "100%",
-                    padding: "0.5rem 0.75rem",
-                    border: `1px solid ${colors.border}`,
-                    borderRadius: "0.375rem",
-                    fontSize: "0.875rem",
-                    resize: "vertical",
-                    boxSizing: "border-box",
-                    fontFamily: "inherit",
-                  }}
-                />
-              </div>
+              <FormTextarea
+                label="Notes"
+                rows={4}
+                {...register("notes")}
+              />
 
               {/* Created date (read-only) */}
               <div style={{ marginBottom: "1.5rem" }}>

@@ -3,8 +3,17 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useNavigate } from "react-router-dom";
-import { isApiError } from "@/shared/api";
-import { FormInput, Button, useToast, colors } from "@/shared/ui";
+import { handleApiError } from "@/shared/api";
+import {
+  FormInput,
+  FormSelect,
+  FormTextarea,
+  Button,
+  useToast,
+  PageCard,
+  PageHeader,
+  Divider,
+} from "@/shared/ui";
 import { createApplication } from "@/entities/application";
 
 const APPLICATION_STATUSES = [
@@ -14,7 +23,7 @@ const APPLICATION_STATUSES = [
   { value: "offer", label: "Offer" },
   { value: "rejected", label: "Rejected" },
   { value: "withdrawn", label: "Withdrawn" },
-] as const;
+];
 
 const newApplicationSchema = z.object({
   company_name: z.string().min(1, "Company name is required"),
@@ -68,46 +77,15 @@ export function NewApplicationPage() {
       showToast("Application created!", "success");
       navigate("/dashboard");
     } catch (error: unknown) {
-      if (isApiError(error)) {
-        showToast("Failed to create application. Please try again.", "error");
-      } else {
-        showToast("Network error. Check your connection.", "error");
-      }
+      handleApiError(error, showToast);
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div
-      style={{
-        maxWidth: "560px",
-        margin: "2rem auto",
-        padding: "2rem",
-        backgroundColor: colors.bgCard,
-        borderRadius: "0.5rem",
-        boxShadow: "0 1px 3px rgba(0, 0, 0, 0.1)",
-      }}
-    >
-      <h1
-        style={{
-          fontSize: "1.5rem",
-          fontWeight: 700,
-          marginBottom: "0.25rem",
-          color: colors.textPrimary,
-        }}
-      >
-        New Application
-      </h1>
-      <p
-        style={{
-          fontSize: "0.875rem",
-          color: colors.textMuted,
-          marginBottom: "1.5rem",
-        }}
-      >
-        Track a new job opportunity
-      </p>
+    <PageCard maxWidth="560px">
+      <PageHeader title="New Application" subtitle="Track a new job opportunity" />
 
       <form onSubmit={handleSubmit(onSubmit)}>
         <FormInput
@@ -132,56 +110,14 @@ export function NewApplicationPage() {
           {...register("job_url")}
         />
 
-        <div style={{ marginBottom: "1rem" }}>
-          <label
-            htmlFor="new-app-status"
-            style={{
-              display: "block",
-              marginBottom: "0.25rem",
-              fontSize: "0.875rem",
-              fontWeight: 500,
-              color: colors.textSecondary,
-            }}
-          >
-            Initial Status
-          </label>
-          <select
-            id="new-app-status"
-            style={{
-              width: "100%",
-              padding: "0.5rem 0.75rem",
-              border: `1px solid ${colors.border}`,
-              borderRadius: "0.375rem",
-              fontSize: "0.875rem",
-              backgroundColor: colors.bgCard,
-              boxSizing: "border-box",
-            }}
-            {...register("status")}
-          >
-            {APPLICATION_STATUSES.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <hr
-          style={{
-            border: "none",
-            borderTop: `1px solid ${colors.borderLight}`,
-            margin: "1.5rem 0",
-          }}
+        <FormSelect
+          label="Initial Status"
+          options={APPLICATION_STATUSES}
+          error={errors.status?.message}
+          {...register("status")}
         />
-        <p
-          style={{
-            fontSize: "0.75rem",
-            color: colors.textPlaceholder,
-            marginBottom: "1rem",
-          }}
-        >
-          Optional details
-        </p>
+
+        <Divider label="Optional details" />
 
         <div style={{ display: "flex", gap: "0.75rem" }}>
           <FormInput
@@ -222,36 +158,13 @@ export function NewApplicationPage() {
           {...register("contact_email")}
         />
 
-        <div style={{ marginBottom: "1rem" }}>
-          <label
-            htmlFor="new-app-notes"
-            style={{
-              display: "block",
-              marginBottom: "0.25rem",
-              fontSize: "0.875rem",
-              fontWeight: 500,
-              color: colors.textSecondary,
-            }}
-          >
-            Notes
-          </label>
-          <textarea
-            id="new-app-notes"
-            rows={3}
-            placeholder="Any initial notes about this opportunity..."
-            style={{
-              width: "100%",
-              padding: "0.5rem 0.75rem",
-              border: `1px solid ${colors.border}`,
-              borderRadius: "0.375rem",
-              fontSize: "0.875rem",
-              resize: "vertical",
-              boxSizing: "border-box",
-              fontFamily: "inherit",
-            }}
-            {...register("notes")}
-          />
-        </div>
+        <FormTextarea
+          label="Notes"
+          rows={3}
+          placeholder="Any initial notes about this opportunity..."
+          error={errors.notes?.message}
+          {...register("notes")}
+        />
 
         <Button
           type="submit"
@@ -261,6 +174,6 @@ export function NewApplicationPage() {
           Create Application
         </Button>
       </form>
-    </div>
+    </PageCard>
   );
 }
