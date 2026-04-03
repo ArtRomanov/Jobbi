@@ -91,3 +91,10 @@ async def reset_password(
         )
 
     return {"message": "Password reset successfully."}
+
+
+@router.post("/logout")
+async def logout() -> dict[str, str]:
+    # Client-side token clearing handles the actual logout.
+    # This endpoint exists for future server-side token invalidation.
+    return {"message": "Logged out."}

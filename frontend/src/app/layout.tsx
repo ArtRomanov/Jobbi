@@ -1,5 +1,6 @@
 import { Link, Outlet, useNavigate } from "react-router-dom";
 import { useAuthStore } from "@/features/auth";
+import { apiClient } from "@/shared/api";
 import { useCallback } from "react";
 
 /**
@@ -11,7 +12,12 @@ export function Layout() {
   const logout = useAuthStore((s) => s.logout);
   const navigate = useNavigate();
 
-  const handleLogout = useCallback(() => {
+  const handleLogout = useCallback(async () => {
+    try {
+      await apiClient.post("/api/v1/auth/logout", {});
+    } catch {
+      // Proceed with client-side logout even if the API call fails
+    }
     logout();
     navigate("/login");
   }, [logout, navigate]);

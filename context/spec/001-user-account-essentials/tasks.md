@@ -68,11 +68,11 @@
 
 ---
 
-- [ ] **Slice 7: User can log out**
-  - [ ] Implement `POST /api/v1/auth/logout` endpoint: returns 200 (placeholder for future server-side invalidation). **[Agent: python-backend]**
-  - [ ] Add "Log Out" button to navigation/header. On click → call logout endpoint → clear token from Zustand + localStorage → redirect to `/login`. **[Agent: typescript-frontend]**
-  - [ ] Code review: Review logout integration and navigation updates. **[Agent: react-code-reviewer]**
-  - [ ] Verify: Log in → click logout → redirected to login → visiting `/dashboard` redirects to login → JWT cleared from localStorage. **[Agent: qa-tester]**
+- [x] **Slice 7: User can log out**
+  - [x] Implement `POST /api/v1/auth/logout` endpoint: returns 200 (placeholder for future server-side invalidation). **[Agent: python-backend]**
+  - [x] Add "Log Out" button to navigation/header. On click → call logout endpoint → clear token from Zustand + localStorage → redirect to `/login`. **[Agent: typescript-frontend]**
+  - [x] Code review: Review logout integration and navigation updates. **[Agent: react-code-reviewer]**
+  - [x] Verify: Log in → click logout → redirected to login → visiting `/dashboard` redirects to login → JWT cleared from localStorage. **[Agent: qa-tester]**
 
 ---
 
