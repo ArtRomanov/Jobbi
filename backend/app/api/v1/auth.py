@@ -5,9 +5,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
 from app.core.security import create_access_token
-from app.schemas.auth import AuthResponse, LoginRequest, RegisterRequest
+from app.schemas.auth import (
+    AuthResponse,
+    ForgotPasswordRequest,
+    LoginRequest,
+    RegisterRequest,
+    ResetPasswordRequest,
+)
 from app.schemas.user import UserRead
 from app.services.auth_service import authenticate_user, create_user, get_user_by_email
+from app.services.password_reset_service import (
+    create_password_reset,
+    verify_and_use_reset_token,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -51,3 +61,33 @@ async def login(
         access_token=token,
         user=UserRead.model_validate(user),
     )
+
+
+@router.post("/forgot-password")
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, str]:
+    # Always return the same response regardless of whether the email exists
+    user = await get_user_by_email(db, body.email)
+    if user is not None:
+        await create_password_reset(db, user)
+
+    return {
+        "message": "If an account with that email exists, we've sent a password reset link."
+    }
+
+
+@router.post("/reset-password")
+async def reset_password(
+    body: ResetPasswordRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> dict[str, str]:
+    success = await verify_and_use_reset_token(db, body.token, body.new_password)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This reset link has expired. Please request a new one.",
+        )
+
+    return {"message": "Password reset successfully."}

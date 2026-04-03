@@ -2,55 +2,42 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { apiClient, isApiError } from "@/shared/api";
 import { FormInput, Button, useToast } from "@/shared/ui";
-import { useAuthStore } from "@/features/auth";
 
-const loginSchema = z.object({
+const forgotPasswordSchema = z.object({
   email: z.string().email("Invalid email address"),
-  password: z.string().min(1, "Password is required"),
 });
 
-type LoginFormData = z.infer<typeof loginSchema>;
+type ForgotPasswordFormData = z.infer<typeof forgotPasswordSchema>;
 
-interface LoginResponse {
-  access_token: string;
-  token_type: string;
-  user: {
-    id: string;
-    email: string;
-    full_name: string;
-  };
-}
-
-export function LoginPage() {
-  const navigate = useNavigate();
-  const login = useAuthStore((s) => s.login);
+/**
+ * Forgot Password page — lets the user request a password reset link.
+ * This is a public route (no auth required).
+ */
+export function ForgotPasswordPage() {
   const { showToast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSubmitted, setIsSubmitted] = useState(false);
 
   const {
     register,
     handleSubmit,
     formState: { errors },
-  } = useForm<LoginFormData>({
-    resolver: zodResolver(loginSchema),
+  } = useForm<ForgotPasswordFormData>({
+    resolver: zodResolver(forgotPasswordSchema),
   });
 
-  const onSubmit = async (data: LoginFormData) => {
+  const onSubmit = async (data: ForgotPasswordFormData) => {
     setIsSubmitting(true);
     try {
-      const response = await apiClient.post<LoginResponse>(
-        "/api/v1/auth/login",
-        data,
-      );
-      login(response.access_token);
-      navigate("/dashboard");
+      await apiClient.post("/api/v1/auth/forgot-password", {
+        email: data.email,
+      });
+      setIsSubmitted(true);
     } catch (error: unknown) {
-      if (isApiError(error) && error.status === 401) {
-        showToast("Invalid email or password.", "error");
-      } else if (isApiError(error)) {
+      if (isApiError(error)) {
         showToast("Something went wrong. Please try again.", "error");
       } else {
         showToast("Network error. Check your connection.", "error");
@@ -90,7 +77,7 @@ export function LoginPage() {
             color: "#1a1a1a",
           }}
         >
-          Welcome back
+          Forgot password
         </h1>
         <p
           style={{
@@ -99,44 +86,42 @@ export function LoginPage() {
             marginBottom: "1.5rem",
           }}
         >
-          Sign in to your Jobbi account
+          Enter your email and we'll send you a reset link.
         </p>
 
-        <form onSubmit={handleSubmit(onSubmit)}>
-          <FormInput
-            label="Email"
-            type="email"
-            error={errors.email?.message}
-            {...register("email")}
-          />
-          <FormInput
-            label="Password"
-            type="password"
-            error={errors.password?.message}
-            {...register("password")}
-          />
-
-          <div style={{ textAlign: "right", marginBottom: "0.5rem" }}>
-            <Link
-              to="/forgot-password"
-              style={{
-                fontSize: "0.8125rem",
-                color: "#2563eb",
-                textDecoration: "none",
-              }}
-            >
-              Forgot password?
-            </Link>
-          </div>
-
-          <Button
-            type="submit"
-            loading={isSubmitting}
-            style={{ width: "100%", marginTop: "0.5rem" }}
+        {isSubmitted ? (
+          <div
+            style={{
+              padding: "1rem",
+              backgroundColor: "#f0fdf4",
+              border: "1px solid #bbf7d0",
+              borderRadius: "0.375rem",
+              fontSize: "0.875rem",
+              color: "#166534",
+              lineHeight: 1.5,
+            }}
           >
-            Sign In
-          </Button>
-        </form>
+            If an account with that email exists, we've sent a password reset
+            link.
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit(onSubmit)}>
+            <FormInput
+              label="Email"
+              type="email"
+              error={errors.email?.message}
+              {...register("email")}
+            />
+
+            <Button
+              type="submit"
+              loading={isSubmitting}
+              style={{ width: "100%", marginTop: "0.5rem" }}
+            >
+              Send Reset Link
+            </Button>
+          </form>
+        )}
 
         <p
           style={{
@@ -146,12 +131,11 @@ export function LoginPage() {
             color: "#6b7280",
           }}
         >
-          Don't have an account?{" "}
           <Link
-            to="/register"
+            to="/login"
             style={{ color: "#2563eb", textDecoration: "none" }}
           >
-            Sign up
+            Back to login
           </Link>
         </p>
       </div>

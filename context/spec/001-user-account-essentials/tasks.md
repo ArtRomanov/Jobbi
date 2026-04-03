@@ -56,15 +56,15 @@
 
 ---
 
-- [ ] **Slice 6: User can reset a forgotten password**
-  - [ ] Create `password_reset_tokens` table via Alembic migration (all columns per tech spec). **[Agent: database-expert]**
-  - [ ] Implement `POST /api/v1/auth/forgot-password` endpoint: generate crypto-random token, hash with SHA-256, store in DB, log reset link to console. Always return 200 with generic message. **[Agent: python-backend]**
-  - [ ] Implement `POST /api/v1/auth/reset-password` endpoint: hash submitted token, look up in DB, check expiry and used_at, update password, mark token used. 400 if expired/used. **[Agent: python-backend]**
-  - [ ] Create `pages/forgot-password/` page: email input form. On submit → show "If an account with that email exists, we've sent a password reset link." **[Agent: typescript-frontend]**
-  - [ ] Create `pages/reset-password/` page: reads `token` from URL query param. New password + confirm password form. On success → redirect to `/login` with success message. On error (expired) → show "This reset link has expired." **[Agent: typescript-frontend]**
-  - [ ] Add "Forgot Password?" link to the login page. **[Agent: typescript-frontend]**
-  - [ ] Code review: Review forgot/reset password pages for form handling, error states, and FSD compliance. **[Agent: react-code-reviewer]**
-  - [ ] Verify: Go to forgot password → submit email → check backend console for reset link → open link → set new password → redirect to login → log in with new password. Also test: expired token → error shown. Reuse same token → error shown. **[Agent: qa-tester]**
+- [x] **Slice 6: User can reset a forgotten password**
+  - [x] Create `password_reset_tokens` table via Alembic migration (all columns per tech spec). **[Agent: database-expert]**
+  - [x] Implement `POST /api/v1/auth/forgot-password` endpoint: generate crypto-random token, hash with SHA-256, store in DB, log reset link to console. Always return 200 with generic message. **[Agent: python-backend]**
+  - [x] Implement `POST /api/v1/auth/reset-password` endpoint: hash submitted token, look up in DB, check expiry and used_at, update password, mark token used. 400 if expired/used. **[Agent: python-backend]**
+  - [x] Create `pages/forgot-password/` page: email input form. On submit → show "If an account with that email exists, we've sent a password reset link." **[Agent: typescript-frontend]**
+  - [x] Create `pages/reset-password/` page: reads `token` from URL query param. New password + confirm password form. On success → redirect to `/login` with success message. On error (expired) → show "This reset link has expired." **[Agent: typescript-frontend]**
+  - [x] Add "Forgot Password?" link to the login page. **[Agent: typescript-frontend]**
+  - [x] Code review: Review forgot/reset password pages for form handling, error states, and FSD compliance. **[Agent: react-code-reviewer]**
+  - [x] Verify: Go to forgot password → submit email → check backend console for reset link → open link → set new password → redirect to login → log in with new password. Also test: expired token → error shown. Reuse same token → error shown. **[Agent: qa-tester]**
 
 ---
 
