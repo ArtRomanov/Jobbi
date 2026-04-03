@@ -1,4 +1,5 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { colors } from "./theme";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   children: ReactNode;
@@ -11,14 +12,14 @@ const variantStyles: Record<
   Record<string, string>
 > = {
   primary: {
-    backgroundColor: "#2563eb",
+    backgroundColor: colors.primary,
     color: "#ffffff",
     border: "none",
   },
   secondary: {
-    backgroundColor: "#ffffff",
-    color: "#374151",
-    border: "1px solid #d1d5db",
+    backgroundColor: colors.bgCard,
+    color: colors.textSecondary,
+    border: `1px solid ${colors.border}`,
   },
 };
 

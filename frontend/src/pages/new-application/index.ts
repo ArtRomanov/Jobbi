@@ -1,0 +1,1 @@
+export { NewApplicationPage } from "./ui/new-application-page";

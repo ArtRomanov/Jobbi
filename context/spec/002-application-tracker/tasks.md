@@ -18,12 +18,12 @@
 
 ---
 
-- [ ] **Slice 3: Create application via dedicated page**
-  - [ ] Regenerate OpenAPI types to include new application schemas. Create `entities/application/` slice with types re-exported from generated schema, API calls (list, create, get, update, delete, history). **[Agent: typescript-frontend]**
-  - [ ] Create `pages/new-application/` page: form with company name, role title, URL, salary, contact, notes, initial status dropdown. React Hook Form + Zod. On success → redirect to dashboard. **[Agent: typescript-frontend]**
-  - [ ] Add `/new-application` route (protected) to router. Add "New Application" link to navigation. **[Agent: typescript-frontend]**
-  - [ ] Code review: Review application entity and creation page for FSD compliance, form patterns, and type usage. **[Agent: react-code-reviewer]**
-  - [ ] Verify: Navigate to new application page → fill form → submit → application created (verify via curl GET). **[Agent: qa-tester]**
+- [x] **Slice 3: Create application via dedicated page**
+  - [x] Regenerate OpenAPI types to include new application schemas. Create `entities/application/` slice with types re-exported from generated schema, API calls (list, create, get, update, delete, history). **[Agent: typescript-frontend]**
+  - [x] Create `pages/new-application/` page: form with company name, role title, URL, salary, contact, notes, initial status dropdown. React Hook Form + Zod. On success → redirect to dashboard. **[Agent: typescript-frontend]**
+  - [x] Add `/new-application` route (protected) to router. Add "New Application" link to navigation. **[Agent: typescript-frontend]**
+  - [x] Code review: Review application entity and creation page for FSD compliance, form patterns, and type usage. **[Agent: react-code-reviewer]**
+  - [x] Verify: Navigate to new application page → fill form → submit → application created (verify via curl GET). **[Agent: qa-tester]**
 
 ---
 

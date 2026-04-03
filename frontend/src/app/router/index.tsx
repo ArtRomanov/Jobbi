@@ -5,6 +5,7 @@ import { RegisterPage } from "@/pages/register";
 import { ForgotPasswordPage } from "@/pages/forgot-password";
 import { ResetPasswordPage } from "@/pages/reset-password";
 import { DashboardPage } from "@/pages/dashboard";
+import { NewApplicationPage } from "@/pages/new-application";
 import { SettingsPage } from "@/pages/settings";
 import { Layout } from "@/app/layout";
 import type { ReactNode } from "react";
@@ -36,6 +37,7 @@ export function AppRouter() {
         }
       >
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/new-application" element={<NewApplicationPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
 

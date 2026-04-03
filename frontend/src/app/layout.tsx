@@ -1,6 +1,7 @@
 import { Link, Outlet, useNavigate } from "react-router-dom";
 import { useAuthStore } from "@/features/auth";
 import { apiClient } from "@/shared/api";
+import { colors, fonts } from "@/shared/ui";
 import { useCallback } from "react";
 
 /**
@@ -26,15 +27,14 @@ export function Layout() {
     <div
       style={{
         minHeight: "100vh",
-        backgroundColor: "#fafafa",
-        fontFamily:
-          "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        backgroundColor: colors.bgPage,
+        fontFamily: fonts.base,
       }}
     >
       <header
         style={{
-          backgroundColor: "#ffffff",
-          borderBottom: "1px solid #e5e7eb",
+          backgroundColor: colors.bgCard,
+          borderBottom: `1px solid ${colors.borderLight}`,
           padding: "0 1.5rem",
         }}
       >
@@ -53,7 +53,7 @@ export function Layout() {
             style={{
               fontSize: "1.125rem",
               fontWeight: 700,
-              color: "#1a1a1a",
+              color: colors.textPrimary,
               textDecoration: "none",
               marginRight: "auto",
             }}
@@ -62,10 +62,22 @@ export function Layout() {
           </Link>
 
           <Link
+            to="/new-application"
+            style={{
+              fontSize: "0.875rem",
+              color: colors.primary,
+              textDecoration: "none",
+              fontWeight: 500,
+            }}
+          >
+            + New Application
+          </Link>
+
+          <Link
             to="/dashboard"
             style={{
               fontSize: "0.875rem",
-              color: "#374151",
+              color: colors.textSecondary,
               textDecoration: "none",
             }}
           >
@@ -76,7 +88,7 @@ export function Layout() {
             to="/settings"
             style={{
               fontSize: "0.875rem",
-              color: "#374151",
+              color: colors.textSecondary,
               textDecoration: "none",
             }}
           >
@@ -88,9 +100,9 @@ export function Layout() {
             style={{
               padding: "0.375rem 0.75rem",
               borderRadius: "0.375rem",
-              border: "1px solid #d1d5db",
-              backgroundColor: "#ffffff",
-              color: "#374151",
+              border: `1px solid ${colors.border}`,
+              backgroundColor: colors.bgCard,
+              color: colors.textSecondary,
               fontSize: "0.875rem",
               cursor: "pointer",
             }}

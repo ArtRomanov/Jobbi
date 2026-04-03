@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { colors } from "./theme";
 
 type ToastType = "success" | "error";
 
@@ -68,7 +69,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               color: "#ffffff",
               fontSize: "0.875rem",
               backgroundColor:
-                toast.type === "success" ? "#16a34a" : "#dc2626",
+                toast.type === "success" ? colors.success : colors.errorBg,
               boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
               minWidth: "250px",
             }}

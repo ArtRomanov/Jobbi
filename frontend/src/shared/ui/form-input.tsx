@@ -1,4 +1,5 @@
 import { forwardRef, useId, type InputHTMLAttributes } from "react";
+import { colors } from "./theme";
 
 interface FormInputProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string;
@@ -24,7 +25,7 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
             marginBottom: "0.25rem",
             fontSize: "0.875rem",
             fontWeight: 500,
-            color: "#374151",
+            color: colors.textSecondary,
           }}
         >
           {label}
@@ -37,7 +38,7 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
           style={{
             width: "100%",
             padding: "0.5rem 0.75rem",
-            border: `1px solid ${error ? "#ef4444" : "#d1d5db"}`,
+            border: `1px solid ${error ? colors.error : colors.border}`,
             borderRadius: "0.375rem",
             fontSize: "0.875rem",
             outline: "none",
@@ -52,7 +53,7 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
             style={{
               marginTop: "0.25rem",
               fontSize: "0.75rem",
-              color: "#ef4444",
+              color: colors.error,
             }}
           >
             {error}
