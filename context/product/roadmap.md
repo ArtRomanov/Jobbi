@@ -8,9 +8,9 @@ _This roadmap outlines our strategic direction based on user needs and product g
 
 _The core scaffolding: authentication and the application tracker that everything else builds on._
 
-- [ ] **User Account Essentials**
-  - [ ] **Sign-Up & Login:** Allow the user to create an account and sign in securely, providing a personal entry point to Jobbi.
-  - [ ] **Profile Management:** Enable the user to manage their name, email, and basic job search preferences.
+- [x] **User Account Essentials**
+  - [x] **Sign-Up & Login:** Allow the user to create an account and sign in securely, providing a personal entry point to Jobbi.
+  - [x] **Profile Management:** Enable the user to manage their name, email, and basic job search preferences.
 
 - [ ] **Application Tracker**
   - [ ] **Kanban Board View:** A drag-and-drop board with columns for each stage: Researching, Applied, Interview, Offer, Rejected, Withdrawn.
