@@ -24,6 +24,10 @@ interface KanbanBoardProps {
   onCardClick?: (id: string) => void;
   /** Increment to trigger a data re-fetch (e.g., after panel save/delete). */
   refreshKey?: number;
+  /** Server-side search query — filters applications by company or role. */
+  searchQuery?: string;
+  /** Status keys to hide from the board (column visibility control). */
+  hiddenStatuses?: readonly string[];
 }
 
 /**
@@ -36,6 +40,8 @@ interface KanbanBoardProps {
 export function KanbanBoard({
   onCardClick: onCardClickProp,
   refreshKey = 0,
+  searchQuery = "",
+  hiddenStatuses = [],
 }: KanbanBoardProps) {
   const [applications, setApplications] = useState<Application[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -54,7 +60,10 @@ export function KanbanBoard({
 
     async function fetchApplications(): Promise<void> {
       try {
-        const response = await listApplications({ per_page: 200 });
+        const response = await listApplications({
+          per_page: 200,
+          search: searchQuery || undefined,
+        });
         if (!cancelled) {
           setApplications(response.items);
           setIsLoading(false);
@@ -73,7 +82,7 @@ export function KanbanBoard({
     return () => {
       cancelled = true;
     };
-  }, [refreshKey]);
+  }, [refreshKey, searchQuery]);
 
   // Group applications by status — one array per column
   const grouped = useMemo(() => {
@@ -89,6 +98,12 @@ export function KanbanBoard({
     }
     return map;
   }, [applications]);
+
+  // Filter out hidden columns — controlled by the page-level toggle buttons
+  const visibleStatuses = useMemo(
+    () => STATUSES.filter((s) => !hiddenStatuses.includes(s.key)),
+    [hiddenStatuses],
+  );
 
   const activeApplication = useMemo(
     () => (activeId ? applications.find((a) => a.id === activeId) : undefined),
@@ -246,7 +261,7 @@ export function KanbanBoard({
             paddingBottom: "0.5rem",
           }}
         >
-          {STATUSES.map((s) => (
+          {visibleStatuses.map((s) => (
             <KanbanColumn
               key={s.key}
               status={s.key}

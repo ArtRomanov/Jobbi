@@ -46,11 +46,11 @@
 
 ---
 
-- [ ] **Slice 6: Search and column filter**
-  - [ ] Add search bar above the board: debounced input (300ms) that calls `GET /applications?search=...`. Board re-renders with filtered results. **[Agent: typescript-frontend]**
-  - [ ] Add column visibility toggles: checkboxes or toggle buttons to show/hide specific status columns. State is local (not persisted). **[Agent: typescript-frontend]**
-  - [ ] Code review: Review search debounce pattern, filter UX, and re-render performance. **[Agent: react-code-reviewer]**
-  - [ ] Verify: Type in search → board shows only matching cards. Toggle off "Rejected" column → column hidden. Refresh page → filters reset. **[Agent: qa-tester]**
+- [x] **Slice 6: Search and column filter**
+  - [x] Add search bar above the board: debounced input (300ms) that calls `GET /applications?search=...`. Board re-renders with filtered results. **[Agent: typescript-frontend]**
+  - [x] Add column visibility toggles: checkboxes or toggle buttons to show/hide specific status columns. State is local (not persisted). **[Agent: typescript-frontend]**
+  - [x] Code review: Review search debounce pattern, filter UX, and re-render performance. **[Agent: react-code-reviewer]**
+  - [x] Verify: Type in search → board shows only matching cards. Toggle off "Rejected" column → column hidden. Refresh page → filters reset. **[Agent: qa-tester]**
 
 ---
 
