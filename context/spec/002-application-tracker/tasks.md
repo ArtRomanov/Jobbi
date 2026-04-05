@@ -54,12 +54,12 @@
 
 ---
 
-- [ ] **Slice 7: Timeline view**
-  - [ ] Create `features/timeline-feed/` slice: `ActivityFeed` component (fetches `GET /applications/history`, renders chronological status change entries), `ApplicationList` component (filterable list of all applications sorted by last activity). **[Agent: typescript-frontend]**
-  - [ ] Add Board/Timeline tab toggle to the dashboard page. Timeline tab shows ActivityFeed + ApplicationList. **[Agent: typescript-frontend]**
-  - [ ] Wire timeline: clicking an application in the list opens the same detail side panel as the kanban board. **[Agent: typescript-frontend]**
-  - [ ] Code review: Review timeline components for pagination, FSD compliance, and shared panel reuse. **[Agent: react-code-reviewer]**
-  - [ ] Verify: Switch to Timeline tab → see status change feed. Click an application → panel opens. Create/update applications → timeline reflects changes. **[Agent: qa-tester]**
+- [x] **Slice 7: Timeline view**
+  - [x] Create `features/timeline-feed/` slice: `ActivityFeed` component (fetches `GET /applications/history`, renders chronological status change entries), `ApplicationList` component (filterable list of all applications sorted by last activity). **[Agent: typescript-frontend]**
+  - [x] Add Board/Timeline tab toggle to the dashboard page. Timeline tab shows ActivityFeed + ApplicationList. **[Agent: typescript-frontend]**
+  - [x] Wire timeline: clicking an application in the list opens the same detail side panel as the kanban board. **[Agent: typescript-frontend]**
+  - [x] Code review: Review timeline components for pagination, FSD compliance, and shared panel reuse. **[Agent: react-code-reviewer]**
+  - [x] Verify: Switch to Timeline tab → see status change feed. Click an application → panel opens. Create/update applications → timeline reflects changes. **[Agent: qa-tester]**
 
 ---
 

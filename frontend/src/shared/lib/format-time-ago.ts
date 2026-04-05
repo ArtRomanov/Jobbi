@@ -1,6 +1,9 @@
 /**
  * Formats a date string into a human-readable relative time (e.g., "2h ago", "3d ago").
  * Simple date math — no external library needed.
+ *
+ * Lives in `shared/lib` because it's a pure utility used by multiple features
+ * (kanban-board, timeline-feed).
  */
 export function formatTimeAgo(dateString: string): string {
   const now = Date.now();
