@@ -2,6 +2,63 @@ import { http, HttpResponse } from "msw";
 
 const BASE_URL = "http://localhost:8000";
 
+// ---------------------------------------------------------------------------
+// Application mock data
+// ---------------------------------------------------------------------------
+
+export const mockApplications = [
+  {
+    id: "app-1",
+    company_name: "Acme Corp",
+    role_title: "Senior Engineer",
+    status: "researching",
+    job_url: "https://acme.com/jobs/1",
+    salary_min: 100000,
+    salary_max: 150000,
+    salary_currency: "USD",
+    contact_name: "Alice HR",
+    contact_email: "alice@acme.com",
+    notes: "Great company culture",
+    created_at: "2026-01-15T10:00:00Z",
+    updated_at: "2026-02-01T12:00:00Z",
+  },
+  {
+    id: "app-2",
+    company_name: "TechStart",
+    role_title: "Frontend Dev",
+    status: "applied",
+    job_url: null,
+    salary_min: null,
+    salary_max: null,
+    salary_currency: null,
+    contact_name: null,
+    contact_email: null,
+    notes: null,
+    created_at: "2026-02-10T09:00:00Z",
+    updated_at: "2026-02-15T14:30:00Z",
+  },
+];
+
+export const mockApplicationDetail = {
+  ...mockApplications[0],
+  status_history: [
+    {
+      id: "sh-1",
+      status: "researching",
+      changed_at: "2026-01-15T10:00:00Z",
+    },
+    {
+      id: "sh-2",
+      status: "applied",
+      changed_at: "2026-01-20T11:00:00Z",
+    },
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// User mock data
+// ---------------------------------------------------------------------------
+
 const mockUser = {
   id: "user-1",
   email: "test@example.com",
@@ -102,5 +159,115 @@ export const handlers = [
   // POST /api/v1/auth/logout
   http.post(`${BASE_URL}/api/v1/auth/logout`, () => {
     return HttpResponse.json({ message: "Logged out" });
+  }),
+
+  // -------------------------------------------------------------------------
+  // Application endpoints
+  // -------------------------------------------------------------------------
+
+  // GET /api/v1/applications — paginated list with optional search filter
+  http.get(`${BASE_URL}/api/v1/applications`, ({ request }) => {
+    const url = new URL(request.url);
+    const search = url.searchParams.get("search")?.toLowerCase();
+
+    const filtered = search
+      ? mockApplications.filter(
+          (a) =>
+            a.company_name.toLowerCase().includes(search) ||
+            a.role_title.toLowerCase().includes(search),
+        )
+      : mockApplications;
+
+    return HttpResponse.json({
+      items: filtered,
+      total: filtered.length,
+      page: 1,
+      per_page: 200,
+    });
+  }),
+
+  // POST /api/v1/applications — create a new application
+  http.post(`${BASE_URL}/api/v1/applications`, async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    const newApp = {
+      id: "app-new",
+      company_name: body.company_name,
+      role_title: body.role_title,
+      status: body.status ?? "researching",
+      job_url: body.job_url ?? null,
+      salary_min: body.salary_min ?? null,
+      salary_max: body.salary_max ?? null,
+      salary_currency: body.salary_currency ?? null,
+      contact_name: body.contact_name ?? null,
+      contact_email: body.contact_email ?? null,
+      notes: body.notes ?? null,
+      created_at: "2026-03-01T10:00:00Z",
+      updated_at: "2026-03-01T10:00:00Z",
+      status_history: [
+        {
+          id: "sh-new",
+          status: body.status ?? "researching",
+          changed_at: "2026-03-01T10:00:00Z",
+        },
+      ],
+    };
+    return HttpResponse.json(newApp, { status: 201 });
+  }),
+
+  // GET /api/v1/applications/history — status history feed
+  http.get(`${BASE_URL}/api/v1/applications/history`, () => {
+    return HttpResponse.json({
+      items: [
+        {
+          id: "sh-1",
+          application_id: "app-1",
+          company_name: "Acme Corp",
+          role_title: "Senior Engineer",
+          status: "researching",
+          changed_at: "2026-01-15T10:00:00Z",
+        },
+      ],
+      total: 1,
+      page: 1,
+      per_page: 50,
+    });
+  }),
+
+  // GET /api/v1/applications/:id — single application detail
+  http.get(`${BASE_URL}/api/v1/applications/:id`, ({ params }) => {
+    const id = params.id as string;
+    const base = mockApplications.find((a) => a.id === id);
+    if (!base) {
+      return HttpResponse.json({ detail: "Not found" }, { status: 404 });
+    }
+    return HttpResponse.json({
+      ...base,
+      status_history:
+        id === "app-1" ? mockApplicationDetail.status_history : [],
+    });
+  }),
+
+  // PATCH /api/v1/applications/:id — update application
+  http.patch(
+    `${BASE_URL}/api/v1/applications/:id`,
+    async ({ params, request }) => {
+      const id = params.id as string;
+      const body = (await request.json()) as Record<string, unknown>;
+      const base = mockApplications.find((a) => a.id === id);
+      if (!base) {
+        return HttpResponse.json({ detail: "Not found" }, { status: 404 });
+      }
+      return HttpResponse.json({
+        ...base,
+        ...body,
+        status_history:
+          id === "app-1" ? mockApplicationDetail.status_history : [],
+      });
+    },
+  ),
+
+  // DELETE /api/v1/applications/:id
+  http.delete(`${BASE_URL}/api/v1/applications/:id`, () => {
+    return HttpResponse.json({ message: "Application deleted" });
   }),
 ];

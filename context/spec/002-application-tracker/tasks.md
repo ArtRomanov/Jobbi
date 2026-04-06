@@ -72,10 +72,10 @@
 
 ---
 
-- [ ] **Slice 9: Frontend test suite for application tracker**
-  - [ ] Add MSW handlers for all application API endpoints. **[Agent: typescript-frontend]**
-  - [ ] Kanban board tests: renders columns, cards in correct columns, drag-and-drop status change. **[Agent: typescript-frontend]**
-  - [ ] Application creation form tests: validation, successful submission. **[Agent: typescript-frontend]**
-  - [ ] Side panel tests: opens on card click, displays data, save and delete actions. **[Agent: typescript-frontend]**
-  - [ ] Code review: Review test code for testing best practices and proper async patterns. **[Agent: react-code-reviewer]**
-  - [ ] Verify: `pnpm test` runs all tests — 100% pass rate. **[Agent: qa-tester]**
+- [x] **Slice 9: Frontend test suite for application tracker**
+  - [x] Add MSW handlers for all application API endpoints. **[Agent: typescript-frontend]**
+  - [x] Kanban board tests: renders columns, cards in correct columns, drag-and-drop status change. **[Agent: typescript-frontend]**
+  - [x] Application creation form tests: validation, successful submission. **[Agent: typescript-frontend]**
+  - [x] Side panel tests: opens on card click, displays data, save and delete actions. **[Agent: typescript-frontend]**
+  - [x] Code review: Review test code for testing best practices and proper async patterns. **[Agent: react-code-reviewer]**
+  - [x] Verify: `pnpm test` runs all tests — 100% pass rate. **[Agent: qa-tester]**
