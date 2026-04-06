@@ -18,39 +18,39 @@
 
 ---
 
-- [ ] **Slice 3: CV list page**
-  - [ ] Regenerate OpenAPI types. Create `entities/cv/` slice with types from generated schema, API calls (list, create, get, update, delete, duplicate). **[Agent: typescript-frontend]**
-  - [ ] Create `pages/cvs/` page: list all CVs with name, last updated, linked app count. Actions: Edit, Duplicate, Download PDF (disabled for now), Delete with confirmation. **[Agent: typescript-frontend]**
-  - [ ] Add `/cvs` route (protected) to router. Add "CVs" link to navigation bar. **[Agent: typescript-frontend]**
-  - [ ] Code review: Review CV entity and list page for FSD compliance and patterns. **[Agent: react-code-reviewer]**
-  - [ ] Verify: Navigate to CVs page → see list. Create a CV via curl → appears in list. Duplicate → copy appears. Delete → removed. **[Agent: qa-tester]**
+- [x] **Slice 3: CV list page**
+  - [x] Regenerate OpenAPI types. Create `entities/cv/` slice with types from generated schema, API calls (list, create, get, update, delete, duplicate). **[Agent: typescript-frontend]**
+  - [x] Create `pages/cvs/` page: list all CVs with name, last updated, linked app count. Actions: Edit, Duplicate, Download PDF (disabled for now), Delete with confirmation. **[Agent: typescript-frontend]**
+  - [x] Add `/cvs` route (protected) to router. Add "CVs" link to navigation bar. **[Agent: typescript-frontend]**
+  - [x] Code review: Review CV entity and list page for FSD compliance and patterns. **[Agent: react-code-reviewer]**
+  - [x] Verify: Navigate to CVs page → see list. Create a CV via curl → appears in list. Duplicate → copy appears. Delete → removed. **[Agent: qa-tester]**
 
 ---
 
-- [ ] **Slice 4: CV builder/editor page**
-  - [ ] Create `features/cv-editor/` slice: `CvEditorForm` component with sections — name field, Personal Info (structured fields), Summary (textarea), Work Experience (dynamic add/remove entries), Education (dynamic add/remove), Skills (textarea), Languages (textarea). React Hook Form + Zod. **[Agent: typescript-frontend]**
-  - [ ] Create `pages/cv-editor/` page: wraps CvEditorForm. On create mode → POST /cvs → redirect to /cvs. On edit mode → loads existing CV → PATCH /cvs/{id} on save. **[Agent: typescript-frontend]**
-  - [ ] Add `/cvs/new` and `/cvs/:id/edit` routes (protected) to router. Wire "Create New CV" and "Edit" buttons from CV list page. **[Agent: typescript-frontend]**
-  - [ ] Code review: Review dynamic form arrays, FSD segment separation, and component structure. **[Agent: react-code-reviewer]**
-  - [ ] Verify: Create new CV → fill all sections including multiple experience entries → save → CV appears in list. Edit → modify → save → changes persisted. **[Agent: qa-tester]**
+- [x] **Slice 4: CV builder/editor page**
+  - [x] Create `features/cv-editor/` slice: `CvEditorForm` component with sections — name field, Personal Info (structured fields), Summary (textarea), Work Experience (dynamic add/remove entries), Education (dynamic add/remove), Skills (textarea), Languages (textarea). React Hook Form + Zod. **[Agent: typescript-frontend]**
+  - [x] Create `pages/cv-editor/` page: wraps CvEditorForm. On create mode → POST /cvs → redirect to /cvs. On edit mode → loads existing CV → PATCH /cvs/{id} on save. **[Agent: typescript-frontend]**
+  - [x] Add `/cvs/new` and `/cvs/:id/edit` routes (protected) to router. Wire "Create New CV" and "Edit" buttons from CV list page. **[Agent: typescript-frontend]**
+  - [x] Code review: Review dynamic form arrays, FSD segment separation, and component structure. **[Agent: react-code-reviewer]**
+  - [x] Verify: Create new CV → fill all sections including multiple experience entries → save → CV appears in list. Edit → modify → save → changes persisted. **[Agent: qa-tester]**
 
 ---
 
-- [ ] **Slice 5: Application-CV linking UI**
-  - [ ] Regenerate OpenAPI types to include updated application schemas with `cv_id`/`cv_name`. **[Agent: typescript-frontend]**
-  - [ ] Add CV section to `features/application-panel/`: display linked CV name (or "No CV linked"), "Link CV" dropdown (fetches CV list), "Duplicate & Customize" button. **[Agent: typescript-frontend]**
-  - [ ] Implement Duplicate & Customize: duplicates selected CV with name "[CV] — [Company] [Role]", links to application, navigates to CV editor. **[Agent: typescript-frontend]**
-  - [ ] Code review: Review CV linking UX, dropdown patterns, and navigation flow. **[Agent: react-code-reviewer]**
-  - [ ] Verify: Open application panel → link a CV → shows CV name. Duplicate & Customize → new CV created and linked → editor opens. Unlink → shows "No CV linked". **[Agent: qa-tester]**
+- [x] **Slice 5: Application-CV linking UI**
+  - [x] Regenerate OpenAPI types to include updated application schemas with `cv_id`/`cv_name`. **[Agent: typescript-frontend]**
+  - [x] Add CV section to `features/application-panel/`: display linked CV name (or "No CV linked"), "Link CV" dropdown (fetches CV list), "Duplicate & Customize" button. **[Agent: typescript-frontend]**
+  - [x] Implement Duplicate & Customize: duplicates selected CV with name "[CV] — [Company] [Role]", links to application, navigates to CV editor. **[Agent: typescript-frontend]**
+  - [x] Code review: Review CV linking UX, dropdown patterns, and navigation flow. **[Agent: react-code-reviewer]**
+  - [x] Verify: Open application panel → link a CV → shows CV name. Duplicate & Customize → new CV created and linked → editor opens. Unlink → shows "No CV linked". **[Agent: qa-tester]**
 
 ---
 
-- [ ] **Slice 6: PDF export**
-  - [ ] Install `@react-pdf/renderer`. Create `features/cv-pdf/` slice: `CvDocument` component that renders CV data as a styled PDF document (section headings, proper spacing, professional fonts). **[Agent: typescript-frontend]**
-  - [ ] Add `downloadCvPdf(cv)` utility that renders the CvDocument and triggers a browser download with filename "[CV name].pdf". **[Agent: typescript-frontend]**
-  - [ ] Wire "Download PDF" button on CV list page (row action) and CV editor page. Lazy-load the PDF feature to avoid bundle bloat. **[Agent: typescript-frontend]**
-  - [ ] Code review: Review PDF layout, lazy loading, and bundle impact. **[Agent: react-code-reviewer]**
-  - [ ] Verify: Click Download PDF → PDF file downloaded with correct content and formatting. All CV sections present in the PDF. **[Agent: qa-tester]**
+- [x] **Slice 6: PDF export**
+  - [x] Install `@react-pdf/renderer`. Create `features/cv-pdf/` slice: `CvDocument` component that renders CV data as a styled PDF document (section headings, proper spacing, professional fonts). **[Agent: typescript-frontend]**
+  - [x] Add `downloadCvPdf(cv)` utility that renders the CvDocument and triggers a browser download with filename "[CV name].pdf". **[Agent: typescript-frontend]**
+  - [x] Wire "Download PDF" button on CV list page (row action) and CV editor page. Lazy-load the PDF feature to avoid bundle bloat. **[Agent: typescript-frontend]**
+  - [x] Code review: Review PDF layout, lazy loading, and bundle impact. **[Agent: react-code-reviewer]**
+  - [x] Verify: Click Download PDF → PDF file downloaded with correct content and formatting. All CV sections present in the PDF. **[Agent: qa-tester]**
 
 ---
 

@@ -7,6 +7,8 @@ import { ResetPasswordPage } from "@/pages/reset-password";
 import { DashboardPage } from "@/pages/dashboard";
 import { NewApplicationPage } from "@/pages/new-application";
 import { SettingsPage } from "@/pages/settings";
+import { CvsPage } from "@/pages/cvs";
+import { CvEditorPage } from "@/pages/cv-editor";
 import { Layout } from "@/app/layout";
 import type { ReactNode } from "react";
 
@@ -38,6 +40,9 @@ export function AppRouter() {
       >
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/new-application" element={<NewApplicationPage />} />
+        <Route path="/cvs" element={<CvsPage />} />
+        <Route path="/cvs/new" element={<CvEditorPage />} />
+        <Route path="/cvs/:id/edit" element={<CvEditorPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
 

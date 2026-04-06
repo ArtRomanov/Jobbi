@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
+import { useNavigate } from "react-router-dom";
 import {
   getApplication,
   updateApplication,
@@ -7,6 +8,7 @@ import {
   type ApplicationDetail,
   type StatusHistory,
 } from "@/entities/application";
+import { listCvs, duplicateCv, type Cv } from "@/entities/cv";
 import { Button, FormInput, FormSelect, FormTextarea, colors, useToast } from "@/shared/ui";
 import { handleApiError } from "@/shared/api";
 import type { FormValues } from "../model/types";
@@ -36,7 +38,14 @@ export function ApplicationPanel({
   const [isDeleting, setIsDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  // CV linking state
+  const [cvList, setCvList] = useState<Cv[]>([]);
+  const [isCvListLoading, setIsCvListLoading] = useState(false);
+  const [isLinkingCv, setIsLinkingCv] = useState(false);
+  const [isDuplicating, setIsDuplicating] = useState(false);
+
   const { showToast } = useToast();
+  const navigate = useNavigate();
 
   const {
     register,
@@ -79,6 +88,19 @@ export function ApplicationPanel({
       cancelled = true;
     };
   }, [applicationId, reset]);
+
+  // Fetch CV list when panel opens (for linking)
+  useEffect(() => {
+    if (!applicationId) return;
+
+    setIsCvListLoading(true);
+    listCvs()
+      .then((data) => setCvList(data))
+      .catch(() => {
+        // Silently fail — CV linking is optional
+      })
+      .finally(() => setIsCvListLoading(false));
+  }, [applicationId]);
 
   // Close on Escape key
   useEffect(() => {
@@ -132,6 +154,53 @@ export function ApplicationPanel({
       setIsDeleting(false);
     }
   }, [applicationId, showToast, onUpdate, onClose]);
+
+  const handleLinkCv = useCallback(
+    async (cvId: string | null): Promise<void> => {
+      if (!applicationId) return;
+
+      setIsLinkingCv(true);
+      try {
+        const updated = await updateApplication(applicationId, {
+          cv_id: cvId,
+        });
+        setDetail(updated);
+        reset(toFormValues(updated));
+        showToast(cvId ? "CV linked." : "CV unlinked.", "success");
+        onUpdate();
+      } catch (err: unknown) {
+        handleApiError(err, showToast);
+      } finally {
+        setIsLinkingCv(false);
+      }
+    },
+    [applicationId, reset, showToast, onUpdate],
+  );
+
+  const handleDuplicateAndCustomize = useCallback(async (): Promise<void> => {
+    if (!applicationId || !detail?.cv_id) return;
+
+    setIsDuplicating(true);
+    try {
+      const duplicateName = `${detail.cv_name ?? "CV"} \u2014 ${detail.company_name} ${detail.role_title}`;
+      const duplicated = await duplicateCv(detail.cv_id, duplicateName);
+
+      // Link the duplicate to this application
+      const updated = await updateApplication(applicationId, {
+        cv_id: duplicated.id,
+      });
+      setDetail(updated);
+      reset(toFormValues(updated));
+      onUpdate();
+
+      showToast("CV duplicated and linked.", "success");
+      navigate(`/cvs/${duplicated.id}/edit`);
+    } catch (err: unknown) {
+      handleApiError(err, showToast);
+    } finally {
+      setIsDuplicating(false);
+    }
+  }, [applicationId, detail, reset, showToast, onUpdate, navigate]);
 
   const handleOverlayClick = useCallback(() => {
     onClose();
@@ -327,6 +396,93 @@ export function ApplicationPanel({
                 rows={4}
                 {...register("notes")}
               />
+
+              {/* CV Section */}
+              <div
+                style={{
+                  marginBottom: "1.5rem",
+                  padding: "1rem",
+                  backgroundColor: colors.bgPage,
+                  borderRadius: "0.375rem",
+                  border: `1px solid ${colors.borderLight}`,
+                }}
+              >
+                <h3
+                  style={{
+                    fontSize: "0.875rem",
+                    fontWeight: 600,
+                    color: colors.textPrimary,
+                    marginBottom: "0.75rem",
+                    marginTop: 0,
+                  }}
+                >
+                  CV
+                </h3>
+
+                <div
+                  style={{
+                    fontSize: "0.8125rem",
+                    color: detail.cv_name
+                      ? colors.textPrimary
+                      : colors.textMuted,
+                    marginBottom: "0.75rem",
+                  }}
+                >
+                  {detail.cv_name
+                    ? `Linked: ${detail.cv_name}`
+                    : "No CV linked"}
+                </div>
+
+                <div style={{ marginBottom: "0.5rem" }}>
+                  <label
+                    style={{
+                      display: "block",
+                      marginBottom: "0.25rem",
+                      fontSize: "0.8125rem",
+                      fontWeight: 500,
+                      color: colors.textSecondary,
+                    }}
+                  >
+                    Link CV
+                  </label>
+                  <select
+                    value={detail.cv_id ?? ""}
+                    disabled={isLinkingCv || isCvListLoading}
+                    onChange={(e) => {
+                      const value = e.target.value || null;
+                      void handleLinkCv(value);
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "0.5rem 0.75rem",
+                      border: `1px solid ${colors.border}`,
+                      borderRadius: "0.375rem",
+                      fontSize: "0.875rem",
+                      backgroundColor: colors.bgCard,
+                      boxSizing: "border-box",
+                    }}
+                  >
+                    <option value="">None</option>
+                    {cvList.map((cv) => (
+                      <option key={cv.id} value={cv.id}>
+                        {cv.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {detail.cv_id && (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    loading={isDuplicating}
+                    onClick={() => void handleDuplicateAndCustomize()}
+                    style={{ marginTop: "0.5rem" }}
+                  >
+                    Duplicate &amp; Customize
+                  </Button>
+                )}
+              </div>
 
               {/* Created date (read-only) */}
               <div style={{ marginBottom: "1.5rem" }}>
