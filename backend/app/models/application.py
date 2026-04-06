@@ -22,6 +22,12 @@ class Application(Base):
         nullable=False,
         index=True,
     )
+    cv_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("cvs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     company_name: Mapped[str] = mapped_column(String(255), nullable=False)
     role_title: Mapped[str] = mapped_column(String(255), nullable=False)
     job_url: Mapped[str | None] = mapped_column(String(2048))

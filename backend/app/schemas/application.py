@@ -32,6 +32,7 @@ class ApplicationUpdate(BaseModel):
     contact_email: str | None = None
     notes: str | None = None
     status: str | None = None
+    cv_id: str | None = None
 
 
 class StatusHistoryRead(BaseModel):
@@ -54,6 +55,8 @@ class ApplicationRead(BaseModel):
     contact_email: str | None
     notes: str | None
     status: str
+    cv_id: str | None = None
+    cv_name: str | None = None
     created_at: datetime
     updated_at: datetime
 

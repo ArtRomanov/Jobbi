@@ -2,19 +2,19 @@
 
 ---
 
-- [ ] **Slice 1: CV CRUD API**
-  - [ ] Create `Cv` SQLAlchemy model with JSON columns. Create Alembic migration for `cvs` table. **[Agent: database-expert]**
-  - [ ] Create Pydantic schemas: `PersonalInfo`, `WorkExperienceEntry`, `EducationEntry`, `CvCreate`, `CvUpdate`, `CvRead`. **[Agent: python-backend]**
-  - [ ] Implement `cv_service.py`: list, create, get, update, delete, duplicate. **[Agent: python-backend]**
-  - [ ] Implement CV API routes: `GET /cvs`, `POST /cvs`, `GET /cvs/{id}`, `PATCH /cvs/{id}`, `DELETE /cvs/{id}`, `POST /cvs/{id}/duplicate`. Mount in v1 router. **[Agent: python-backend]**
-  - [ ] Verify: curl all endpoints — create CV (201), list (200), get (200), update (200), duplicate (201), delete (200). **[Agent: qa-tester]**
+- [x] **Slice 1: CV CRUD API**
+  - [x] Create `Cv` SQLAlchemy model with JSON columns. Create Alembic migration for `cvs` table. **[Agent: database-expert]**
+  - [x] Create Pydantic schemas: `PersonalInfo`, `WorkExperienceEntry`, `EducationEntry`, `CvCreate`, `CvUpdate`, `CvRead`. **[Agent: python-backend]**
+  - [x] Implement `cv_service.py`: list, create, get, update, delete, duplicate. **[Agent: python-backend]**
+  - [x] Implement CV API routes: `GET /cvs`, `POST /cvs`, `GET /cvs/{id}`, `PATCH /cvs/{id}`, `DELETE /cvs/{id}`, `POST /cvs/{id}/duplicate`. Mount in v1 router. **[Agent: python-backend]**
+  - [x] Verify: curl all endpoints — create CV (201), list (200), get (200), update (200), duplicate (201), delete (200). **[Agent: qa-tester]**
 
 ---
 
-- [ ] **Slice 2: Link CVs to applications**
-  - [ ] Add `cv_id` nullable FK column to `applications` table via Alembic migration. Add relationship to Application model. SET NULL on CV delete. **[Agent: database-expert]**
-  - [ ] Update Application schemas: add `cv_id` and `cv_name` to read schemas, `cv_id` to update schema. Update service to include CV name in responses. **[Agent: python-backend]**
-  - [ ] Verify: PATCH application with `cv_id` → links CV. GET application → shows `cv_id` and `cv_name`. Delete CV → application's `cv_id` becomes null. **[Agent: qa-tester]**
+- [x] **Slice 2: Link CVs to applications**
+  - [x] Add `cv_id` nullable FK column to `applications` table via Alembic migration. Add relationship to Application model. SET NULL on CV delete. **[Agent: database-expert]**
+  - [x] Update Application schemas: add `cv_id` and `cv_name` to read schemas, `cv_id` to update schema. Update service to include CV name in responses. **[Agent: python-backend]**
+  - [x] Verify: PATCH application with `cv_id` → links CV. GET application → shows `cv_id` and `cv_name`. Delete CV → application's `cv_id` becomes null. **[Agent: qa-tester]**
 
 ---
 

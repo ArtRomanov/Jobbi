@@ -1,10 +1,13 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, get_db
 from app.core.exceptions import not_found
+from app.models.application import Application
+from app.models.cv import Cv
 from app.models.user import User
 from app.schemas.application import (
     ApplicationCreate,
@@ -26,6 +29,16 @@ from app.services.application_service import (
 router = APIRouter(prefix="/applications", tags=["applications"])
 
 
+async def _enrich_with_cv_name(db: AsyncSession, app: Application) -> dict:
+    """Build a dict from the application model, adding cv_name if cv_id is set."""
+    data = {c.key: getattr(app, c.key) for c in Application.__table__.columns}
+    data["cv_name"] = None
+    if app.cv_id:
+        result = await db.execute(select(Cv.name).where(Cv.id == app.cv_id))
+        data["cv_name"] = result.scalar_one_or_none()
+    return data
+
+
 @router.get("", response_model=PaginatedResponse[ApplicationRead])
 async def list_apps(
     current_user: Annotated[User, Depends(get_current_user)],
@@ -38,8 +51,12 @@ async def list_apps(
     applications, total = await list_applications(
         db, current_user.id, page, per_page, status_filter, search
     )
+    items = []
+    for app in applications:
+        enriched = await _enrich_with_cv_name(db, app)
+        items.append(ApplicationRead(**enriched))
     return PaginatedResponse(
-        items=[ApplicationRead.model_validate(app) for app in applications],
+        items=items,
         total=total,
         page=page,
         per_page=per_page,
@@ -71,7 +88,9 @@ async def create_app(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ApplicationDetailRead:
     application = await create_application(db, current_user.id, body)
-    return ApplicationDetailRead.model_validate(application)
+    enriched = await _enrich_with_cv_name(db, application)
+    enriched["status_history"] = application.status_history
+    return ApplicationDetailRead(**enriched)
 
 
 @router.get("/{application_id}", response_model=ApplicationDetailRead)
@@ -83,7 +102,9 @@ async def get_app(
     application = await get_application(db, current_user.id, application_id)
     if application is None:
         not_found("Application")
-    return ApplicationDetailRead.model_validate(application)
+    enriched = await _enrich_with_cv_name(db, application)
+    enriched["status_history"] = application.status_history
+    return ApplicationDetailRead(**enriched)
 
 
 @router.patch("/{application_id}", response_model=ApplicationDetailRead)
@@ -98,7 +119,9 @@ async def update_app(
     )
     if application is None:
         not_found("Application")
-    return ApplicationDetailRead.model_validate(application)
+    enriched = await _enrich_with_cv_name(db, application)
+    enriched["status_history"] = application.status_history
+    return ApplicationDetailRead(**enriched)
 
 
 @router.delete("/{application_id}")
