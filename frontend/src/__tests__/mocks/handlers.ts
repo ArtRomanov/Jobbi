@@ -3,6 +3,65 @@ import { http, HttpResponse } from "msw";
 const BASE_URL = "http://localhost:8000";
 
 // ---------------------------------------------------------------------------
+// CV mock data
+// ---------------------------------------------------------------------------
+
+export const mockCvs = [
+  {
+    id: "cv-1",
+    name: "Software Engineer CV",
+    personal_info: {
+      full_name: "Test User",
+      email: "test@example.com",
+      phone: "+1234567890",
+      location: "Berlin, Germany",
+      linkedin_url: "https://linkedin.com/in/testuser",
+    },
+    summary: "Experienced software engineer.",
+    work_experience: [
+      {
+        company: "Acme Corp",
+        role: "Senior Engineer",
+        start_date: "2022-01",
+        end_date: "",
+        is_current: true,
+        description: "Building products.",
+      },
+    ],
+    education: [
+      {
+        institution: "MIT",
+        degree: "BSc",
+        field_of_study: "Computer Science",
+        start_year: "2016",
+        end_year: "2020",
+        description: "",
+      },
+    ],
+    skills: "TypeScript, React",
+    languages: "English (Native)",
+    linked_applications_count: 1,
+    created_at: "2026-01-10T08:00:00Z",
+    updated_at: "2026-02-20T10:00:00Z",
+  },
+  {
+    id: "cv-2",
+    name: "Frontend Developer CV",
+    personal_info: null,
+    summary: null,
+    work_experience: null,
+    education: null,
+    skills: null,
+    languages: null,
+    linked_applications_count: 0,
+    created_at: "2026-02-15T09:00:00Z",
+    updated_at: "2026-03-01T12:00:00Z",
+  },
+];
+
+export const mockCvDetail = { ...mockCvs[0] };
+
+// ---------------------------------------------------------------------------
 // Application mock data
 // ---------------------------------------------------------------------------
 
@@ -269,5 +328,80 @@ export const handlers = [
   // DELETE /api/v1/applications/:id
   http.delete(`${BASE_URL}/api/v1/applications/:id`, () => {
     return HttpResponse.json({ message: "Application deleted" });
+  }),
+
+  // -------------------------------------------------------------------------
+  // CV endpoints
+  // -------------------------------------------------------------------------
+
+  // GET /api/v1/cvs — list all CVs
+  http.get(`${BASE_URL}/api/v1/cvs`, () => {
+    return HttpResponse.json(mockCvs);
+  }),
+
+  // POST /api/v1/cvs — create a new CV
+  http.post(`${BASE_URL}/api/v1/cvs`, async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
+    const newCv = {
+      id: "cv-new",
+      name: body.name ?? "Untitled CV",
+      personal_info: body.personal_info ?? null,
+      summary: body.summary ?? null,
+      work_experience: body.work_experience ?? null,
+      education: body.education ?? null,
+      skills: body.skills ?? null,
+      languages: body.languages ?? null,
+      linked_applications_count: 0,
+      created_at: "2026-03-10T10:00:00Z",
+      updated_at: "2026-03-10T10:00:00Z",
+    };
+    return HttpResponse.json(newCv, { status: 201 });
+  }),
+
+  // GET /api/v1/cvs/:id — single CV detail
+  http.get(`${BASE_URL}/api/v1/cvs/:id`, ({ params }) => {
+    const id = params.id as string;
+    const cv = mockCvs.find((c) => c.id === id);
+    if (!cv) {
+      return HttpResponse.json({ detail: "Not found" }, { status: 404 });
+    }
+    return HttpResponse.json(cv);
+  }),
+
+  // PATCH /api/v1/cvs/:id — update CV
+  http.patch(`${BASE_URL}/api/v1/cvs/:id`, async ({ params, request }) => {
+    const id = params.id as string;
+    const body = (await request.json()) as Record<string, unknown>;
+    const cv = mockCvs.find((c) => c.id === id);
+    if (!cv) {
+      return HttpResponse.json({ detail: "Not found" }, { status: 404 });
+    }
+    return HttpResponse.json({ ...cv, ...body });
+  }),
+
+  // DELETE /api/v1/cvs/:id — delete CV
+  http.delete(`${BASE_URL}/api/v1/cvs/:id`, () => {
+    return HttpResponse.json({ message: "CV deleted" });
+  }),
+
+  // POST /api/v1/cvs/:id/duplicate — duplicate CV
+  http.post(`${BASE_URL}/api/v1/cvs/:id/duplicate`, async ({ params, request }) => {
+    const id = params.id as string;
+    const body = (await request.json()) as Record<string, unknown>;
+    const original = mockCvs.find((c) => c.id === id);
+    if (!original) {
+      return HttpResponse.json({ detail: "Not found" }, { status: 404 });
+    }
+    return HttpResponse.json(
+      {
+        ...original,
+        id: "cv-duplicated",
+        name: (body.name as string) ?? `${original.name} (copy)`,
+        linked_applications_count: 0,
+        created_at: "2026-03-10T10:00:00Z",
+        updated_at: "2026-03-10T10:00:00Z",
+      },
+      { status: 201 },
+    );
   }),
 ];

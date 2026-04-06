@@ -54,19 +54,19 @@
 
 ---
 
-- [ ] **Slice 7: Backend test suite for CV constructor**
-  - [ ] Integration tests for CV CRUD: create, list, get, update, delete, duplicate. **[Agent: python-backend]**
-  - [ ] Tests for JSON column validation: valid/invalid work_experience and education structures. **[Agent: python-backend]**
-  - [ ] Tests for application-CV linking: link, unlink, cv_name in response, SET NULL on CV delete. **[Agent: python-backend]**
-  - [ ] Authorization tests: user can't access other user's CVs. **[Agent: python-backend]**
-  - [ ] Verify: `pytest` runs all tests — 100% pass rate. **[Agent: qa-tester]**
+- [x] **Slice 7: Backend test suite for CV constructor**
+  - [x] Integration tests for CV CRUD: create, list, get, update, delete, duplicate. **[Agent: python-backend]**
+  - [x] Tests for JSON column validation: valid/invalid work_experience and education structures. **[Agent: python-backend]**
+  - [x] Tests for application-CV linking: link, unlink, cv_name in response, SET NULL on CV delete. **[Agent: python-backend]**
+  - [x] Authorization tests: user can't access other user's CVs. **[Agent: python-backend]**
+  - [x] Verify: `pytest` runs all tests — 100% pass rate. **[Agent: qa-tester]**
 
 ---
 
-- [ ] **Slice 8: Frontend test suite for CV constructor**
-  - [ ] Add MSW handlers for all CV API endpoints. **[Agent: typescript-frontend]**
-  - [ ] CV list page tests: renders CVs, duplicate, delete. **[Agent: typescript-frontend]**
-  - [ ] CV editor tests: form rendering, add/remove experience entries, save. **[Agent: typescript-frontend]**
-  - [ ] Application panel CV section tests: link dropdown, duplicate & customize button. **[Agent: typescript-frontend]**
-  - [ ] Code review: Review test patterns and async handling. **[Agent: react-code-reviewer]**
-  - [ ] Verify: `pnpm test` runs all tests — 100% pass rate. **[Agent: qa-tester]**
+- [x] **Slice 8: Frontend test suite for CV constructor**
+  - [x] Add MSW handlers for all CV API endpoints. **[Agent: typescript-frontend]**
+  - [x] CV list page tests: renders CVs, duplicate, delete. **[Agent: typescript-frontend]**
+  - [x] CV editor tests: form rendering, add/remove experience entries, save. **[Agent: typescript-frontend]**
+  - [x] Application panel CV section tests: link dropdown, duplicate & customize button. **[Agent: typescript-frontend]**
+  - [x] Code review: Review test patterns and async handling. **[Agent: react-code-reviewer]**
+  - [x] Verify: `pnpm test` runs all tests — 100% pass rate. **[Agent: qa-tester]**
