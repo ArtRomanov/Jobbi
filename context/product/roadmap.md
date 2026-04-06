@@ -23,10 +23,10 @@ _The core scaffolding: authentication and the application tracker that everythin
 
 _With tracking in place, add the tools that make each application stronger._
 
-- [ ] **CV Constructor**
-  - [ ] **CV Builder:** Create and edit CVs within Jobbi using a structured form/editor.
-  - [ ] **Multiple Versions:** Store multiple CV versions and link specific versions to specific job applications.
-  - [ ] **Tailoring per Role:** Quickly duplicate and adjust a base CV to match a specific job's requirements.
+- [x] **CV Constructor**
+  - [x] **CV Builder:** Create and edit CVs within Jobbi using a structured form/editor.
+  - [x] **Multiple Versions:** Store multiple CV versions and link specific versions to specific job applications.
+  - [x] **Tailoring per Role:** Quickly duplicate and adjust a base CV to match a specific job's requirements.
 
 - [ ] **Claude Chat Integration**
   - [ ] **CV Refinement Assistant:** Use Claude to review and improve CV content — wording, structure, keyword optimization.

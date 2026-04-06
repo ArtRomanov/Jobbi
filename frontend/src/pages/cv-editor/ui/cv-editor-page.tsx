@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { createCv, getCv, updateCv, type Cv } from "@/entities/cv";
 import { CvEditorForm, type CvFormValues } from "@/features/cv-editor";
 import { downloadCvPdf } from "@/features/cv-pdf";
@@ -71,10 +72,10 @@ export function CvEditorPage() {
 
         if (id) {
           await updateCv(id, payload);
-          showToast("CV updated.", "success");
+          showToast("CV saved.", "success");
         } else {
           await createCv({ ...payload, name: values.name });
-          showToast("CV created.", "success");
+          showToast("CV saved.", "success");
         }
         navigate("/cvs");
       } catch (err: unknown) {
@@ -97,6 +98,18 @@ export function CvEditorPage() {
 
   return (
     <PageCard maxWidth="640px">
+      <Link
+        to="/cvs"
+        style={{
+          fontSize: "0.875rem",
+          color: colors.primary,
+          textDecoration: "none",
+          display: "inline-block",
+          marginBottom: "1rem",
+        }}
+      >
+        ← Back to CVs
+      </Link>
       <div
         style={{
           display: "flex",

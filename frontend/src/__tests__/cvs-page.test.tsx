@@ -44,7 +44,8 @@ describe("CvsPage", () => {
     });
 
     const deleteButtons = screen.getAllByRole("button", { name: /delete/i });
-    await user.click(deleteButtons[0]);
+    const firstDeleteButton = deleteButtons[0]!;
+    await user.click(firstDeleteButton);
 
     expect(confirmMock).toHaveBeenCalledWith(
       expect.stringContaining("Software Engineer CV"),

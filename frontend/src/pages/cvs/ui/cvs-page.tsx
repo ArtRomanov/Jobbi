@@ -40,7 +40,7 @@ export function CvsPage() {
 
   const handleDelete = useCallback(
     async (cv: Cv) => {
-      if (!window.confirm(`Delete "${cv.name}"? This cannot be undone.`)) {
+      if (!window.confirm(`Are you sure you want to delete "${cv.name}"? Applications linked to it will be unlinked. This action cannot be undone.`)) {
         return;
       }
       setDeletingId(cv.id);
