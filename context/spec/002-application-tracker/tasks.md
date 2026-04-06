@@ -63,12 +63,12 @@
 
 ---
 
-- [ ] **Slice 8: Backend test suite for application tracker**
-  - [ ] Integration tests for application CRUD: create, list (paginated), get with history, update, delete (cascade). **[Agent: python-backend]**
-  - [ ] Tests for status history: auto-created on create, auto-logged on status change, included in detail response. **[Agent: python-backend]**
-  - [ ] Tests for search and filter: search by company/role, filter by status, pagination params. **[Agent: python-backend]**
-  - [ ] Authorization tests: user can't access/modify another user's applications (404). **[Agent: python-backend]**
-  - [ ] Verify: `pytest` runs all tests — 100% pass rate. **[Agent: qa-tester]**
+- [x] **Slice 8: Backend test suite for application tracker**
+  - [x] Integration tests for application CRUD: create, list (paginated), get with history, update, delete (cascade). **[Agent: python-backend]**
+  - [x] Tests for status history: auto-created on create, auto-logged on status change, included in detail response. **[Agent: python-backend]**
+  - [x] Tests for search and filter: search by company/role, filter by status, pagination params. **[Agent: python-backend]**
+  - [x] Authorization tests: user can't access/modify another user's applications (404). **[Agent: python-backend]**
+  - [x] Verify: `pytest` runs all tests — 100% pass rate. **[Agent: qa-tester]**
 
 ---
 
