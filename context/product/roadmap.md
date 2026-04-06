@@ -12,10 +12,10 @@ _The core scaffolding: authentication and the application tracker that everythin
   - [x] **Sign-Up & Login:** Allow the user to create an account and sign in securely, providing a personal entry point to Jobbi.
   - [x] **Profile Management:** Enable the user to manage their name, email, and basic job search preferences.
 
-- [ ] **Application Tracker**
-  - [ ] **Kanban Board View:** A drag-and-drop board with columns for each stage: Researching, Applied, Interview, Offer, Rejected, Withdrawn.
-  - [ ] **Timeline View:** A chronological timeline showing all applications and their status changes over time.
-  - [ ] **Application Details:** Each application card stores company name, role, link to posting, notes, and status history.
+- [x] **Application Tracker**
+  - [x] **Kanban Board View:** A drag-and-drop board with columns for each stage: Researching, Applied, Interview, Offer, Rejected, Withdrawn.
+  - [x] **Timeline View:** A chronological timeline showing all applications and their status changes over time.
+  - [x] **Application Details:** Each application card stores company name, role, link to posting, notes, and status history.
 
 ---
 
