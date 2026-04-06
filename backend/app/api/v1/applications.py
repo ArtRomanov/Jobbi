@@ -44,7 +44,7 @@ async def list_apps(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
     page: int = Query(default=1, ge=1),
-    per_page: int = Query(default=50, ge=1, le=100),
+    per_page: int = Query(default=50, ge=1, le=500),
     status_filter: str | None = Query(default=None, alias="status"),
     search: str | None = Query(default=None),
 ) -> PaginatedResponse[ApplicationRead]:
@@ -68,7 +68,7 @@ async def history_feed(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
     page: int = Query(default=1, ge=1),
-    per_page: int = Query(default=50, ge=1, le=100),
+    per_page: int = Query(default=50, ge=1, le=500),
 ) -> PaginatedResponse[StatusHistoryFeedRead]:
     items, total = await get_status_history_feed(
         db, current_user.id, page, per_page
