@@ -62,6 +62,28 @@ export const mockCvs = [
 export const mockCvDetail = { ...mockCvs[0] };
 
 // ---------------------------------------------------------------------------
+// Chat mock data
+// ---------------------------------------------------------------------------
+
+export const mockChatMessages = [
+  {
+    id: "msg-1",
+    application_id: "app-1",
+    role: "user",
+    content: "Help me prepare for my interview at Acme Corp.",
+    created_at: "2026-03-01T10:00:00Z",
+  },
+  {
+    id: "msg-2",
+    application_id: "app-1",
+    role: "assistant",
+    content:
+      "I'd be happy to help you prepare for your interview at Acme Corp! Let's start with some common questions.",
+    created_at: "2026-03-01T10:01:00Z",
+  },
+];
+
+// ---------------------------------------------------------------------------
 // Application mock data
 // ---------------------------------------------------------------------------
 
@@ -382,6 +404,20 @@ export const handlers = [
   // DELETE /api/v1/cvs/:id — delete CV
   http.delete(`${BASE_URL}/api/v1/cvs/:id`, () => {
     return HttpResponse.json({ message: "CV deleted" });
+  }),
+
+  // -------------------------------------------------------------------------
+  // Chat endpoints
+  // -------------------------------------------------------------------------
+
+  // GET /api/v1/applications/:id/chat — chat message history
+  http.get(`${BASE_URL}/api/v1/applications/:id/chat`, () => {
+    return HttpResponse.json(mockChatMessages);
+  }),
+
+  // DELETE /api/v1/applications/:id/chat — clear chat history
+  http.delete(`${BASE_URL}/api/v1/applications/:id/chat`, () => {
+    return HttpResponse.json({ message: "Chat history cleared" });
   }),
 
   // POST /api/v1/cvs/:id/duplicate — duplicate CV

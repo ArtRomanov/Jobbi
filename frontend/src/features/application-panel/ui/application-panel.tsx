@@ -484,6 +484,18 @@ export function ApplicationPanel({
                 )}
               </div>
 
+              {/* AI Assistant */}
+              <div style={{ marginBottom: "1.5rem" }}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => navigate(`/applications/${applicationId}/chat`)}
+                  style={{ width: "100%" }}
+                >
+                  AI Assistant
+                </Button>
+              </div>
+
               {/* Created date (read-only) */}
               <div style={{ marginBottom: "1.5rem" }}>
                 <span

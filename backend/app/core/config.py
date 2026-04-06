@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "http://localhost:5173"
     SENTRY_DSN: str = ""
     LOG_LEVEL: str = "INFO"
+    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_MODEL: str = "claude-sonnet-4-6-20250514"
 
 
 @lru_cache

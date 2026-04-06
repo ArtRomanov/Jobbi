@@ -9,6 +9,7 @@ import { NewApplicationPage } from "@/pages/new-application";
 import { SettingsPage } from "@/pages/settings";
 import { CvsPage } from "@/pages/cvs";
 import { CvEditorPage } from "@/pages/cv-editor";
+import { ChatPage } from "@/pages/chat";
 import { Layout } from "@/app/layout";
 import type { ReactNode } from "react";
 
@@ -44,6 +45,7 @@ export function AppRouter() {
         <Route path="/cvs/new" element={<CvEditorPage />} />
         <Route path="/cvs/:id/edit" element={<CvEditorPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/applications/:id/chat" element={<ChatPage />} />
       </Route>
 
       {/* Default: redirect to dashboard (which redirects to login if not authed) */}
