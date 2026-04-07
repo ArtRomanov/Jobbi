@@ -2,11 +2,11 @@
 
 ---
 
-- [ ] **Slice 1: Metrics aggregation API**
-  - [ ] Create Pydantic schemas: `KpiData`, `PipelineEntry`, `TrendPoint`, `TrendData`, `MetricsResponse`. **[Agent: python-backend]**
-  - [ ] Create `metrics_service.py`: date range resolution, KPI calculation (total, active, response rate via status_history join, interviews), pipeline aggregation by status (zero-fill all 6 statuses), trend bucketing with adaptive granularity (daily/weekly/monthly). **[Agent: python-backend]**
-  - [ ] Create `GET /api/v1/metrics?range=7d|30d|90d|all` route. Mount in v1 router. **[Agent: python-backend]**
-  - [ ] Verify: curl with each range — returns kpis, pipeline (6 statuses), trend points. Empty state returns zeros. **[Agent: qa-tester]**
+- [x] **Slice 1: Metrics aggregation API**
+  - [x] Create Pydantic schemas: `KpiData`, `PipelineEntry`, `TrendPoint`, `TrendData`, `MetricsResponse`. **[Agent: python-backend]**
+  - [x] Create `metrics_service.py`: date range resolution, KPI calculation (total, active, response rate via status_history join, interviews), pipeline aggregation by status (zero-fill all 6 statuses), trend bucketing with adaptive granularity (daily/weekly/monthly). **[Agent: python-backend]**
+  - [x] Create `GET /api/v1/metrics?range=7d|30d|90d|all` route. Mount in v1 router. **[Agent: python-backend]**
+  - [x] Verify: curl with each range — returns kpis, pipeline (6 statuses), trend points. Empty state returns zeros. **[Agent: qa-tester]**
 
 ---
 
