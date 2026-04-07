@@ -85,6 +85,17 @@ export function Layout() {
           </Link>
 
           <Link
+            to="/metrics"
+            style={{
+              fontSize: "0.875rem",
+              color: colors.textSecondary,
+              textDecoration: "none",
+            }}
+          >
+            Metrics
+          </Link>
+
+          <Link
             to="/dashboard"
             style={{
               fontSize: "0.875rem",

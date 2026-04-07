@@ -10,13 +10,13 @@
 
 ---
 
-- [ ] **Slice 2: Metrics dashboard UI**
-  - [ ] Install `recharts`. Regenerate OpenAPI types. Create `entities/metrics/` slice: types from generated schema, `getMetrics(range)` API call. **[Agent: typescript-frontend]**
-  - [ ] Create `features/metrics-dashboard/` slice: `DateRangeSelector` (4 preset buttons), `KpiCards` (4 cards), `PipelineOverview` (status bars with theme colors), `TrendChart` (Recharts line chart). FSD-compliant — constants in `lib/`, no logic in UI files. **[Agent: typescript-frontend]**
-  - [ ] Create `pages/metrics/` page: composes all sections, manages selected range state, fetches metrics on range change, shows loading and empty states. **[Agent: typescript-frontend]**
-  - [ ] Add `/metrics` route (protected) to router. Add "Metrics" link to navigation. **[Agent: typescript-frontend]**
-  - [ ] Code review: Review chart integration, FSD compliance, and theme usage. **[Agent: react-code-reviewer]**
-  - [ ] Verify: Navigate to /metrics → see KPIs, pipeline, trend chart. Switch date range → all metrics update. Empty state shown when no data. **[Agent: qa-tester]**
+- [x] **Slice 2: Metrics dashboard UI**
+  - [x] Install `recharts`. Regenerate OpenAPI types. Create `entities/metrics/` slice: types from generated schema, `getMetrics(range)` API call. **[Agent: typescript-frontend]**
+  - [x] Create `features/metrics-dashboard/` slice: `DateRangeSelector` (4 preset buttons), `KpiCards` (4 cards), `PipelineOverview` (status bars with theme colors), `TrendChart` (Recharts line chart). FSD-compliant — constants in `lib/`, no logic in UI files. **[Agent: typescript-frontend]**
+  - [x] Create `pages/metrics/` page: composes all sections, manages selected range state, fetches metrics on range change, shows loading and empty states. **[Agent: typescript-frontend]**
+  - [x] Add `/metrics` route (protected) to router. Add "Metrics" link to navigation. **[Agent: typescript-frontend]**
+  - [x] Code review: Review chart integration, FSD compliance, and theme usage. **[Agent: react-code-reviewer]**
+  - [x] Verify: Navigate to /metrics → see KPIs, pipeline, trend chart. Switch date range → all metrics update. Empty state shown when no data. **[Agent: qa-tester]**
 
 ---
 
