@@ -137,6 +137,38 @@ export const mockApplicationDetail = {
 };
 
 // ---------------------------------------------------------------------------
+// Metrics mock data
+// ---------------------------------------------------------------------------
+
+export const mockMetrics = {
+  range: "30d",
+  from_date: "2026-03-08",
+  to_date: "2026-04-07",
+  kpis: {
+    total_applications: 12,
+    active: 8,
+    response_rate: 0.5,
+    interviews: 4,
+  },
+  pipeline: [
+    { status: "researching", count: 2 },
+    { status: "applied", count: 4 },
+    { status: "interview", count: 3 },
+    { status: "offer", count: 1 },
+    { status: "rejected", count: 2 },
+    { status: "withdrawn", count: 0 },
+  ],
+  trend: {
+    granularity: "daily",
+    points: [
+      { date: "2026-04-05", count: 2 },
+      { date: "2026-04-06", count: 1 },
+      { date: "2026-04-07", count: 3 },
+    ],
+  },
+};
+
+// ---------------------------------------------------------------------------
 // User mock data
 // ---------------------------------------------------------------------------
 
@@ -418,6 +450,14 @@ export const handlers = [
   // DELETE /api/v1/applications/:id/chat — clear chat history
   http.delete(`${BASE_URL}/api/v1/applications/:id/chat`, () => {
     return HttpResponse.json({ message: "Chat history cleared" });
+  }),
+
+  // -------------------------------------------------------------------------
+  // Metrics endpoints
+  // -------------------------------------------------------------------------
+
+  http.get(`${BASE_URL}/api/v1/metrics`, () => {
+    return HttpResponse.json(mockMetrics);
   }),
 
   // POST /api/v1/cvs/:id/duplicate — duplicate CV

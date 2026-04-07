@@ -31,10 +31,10 @@
 
 ---
 
-- [ ] **Slice 4: Frontend test suite for metrics**
-  - [ ] Add MSW handler for `GET /metrics` returning mock data. **[Agent: typescript-frontend]**
-  - [ ] Metrics page tests: renders KPI values, renders all 6 pipeline statuses. **[Agent: typescript-frontend]**
-  - [ ] Date range selector tests: 4 buttons, click changes active state, triggers re-fetch. **[Agent: typescript-frontend]**
-  - [ ] Empty state test: zero data → empty message displayed. **[Agent: typescript-frontend]**
-  - [ ] Code review: Review test patterns and chart mocking. **[Agent: react-code-reviewer]**
-  - [ ] Verify: `pnpm test` runs all tests — 100% pass rate. **[Agent: qa-tester]**
+- [x] **Slice 4: Frontend test suite for metrics**
+  - [x] Add MSW handler for `GET /metrics` returning mock data. **[Agent: typescript-frontend]**
+  - [x] Metrics page tests: renders KPI values, renders all 6 pipeline statuses. **[Agent: typescript-frontend]**
+  - [x] Date range selector tests: 4 buttons, click changes active state, triggers re-fetch. **[Agent: typescript-frontend]**
+  - [x] Empty state test: zero data → empty message displayed. **[Agent: typescript-frontend]**
+  - [x] Code review: Review test patterns and chart mocking. **[Agent: react-code-reviewer]**
+  - [x] Verify: `pnpm test` runs all tests — 100% pass rate. **[Agent: qa-tester]**
