@@ -20,14 +20,14 @@
 
 ---
 
-- [ ] **Slice 3: Backend test suite for metrics**
-  - [ ] KPI calculation tests: total, active, interviews counts with seeded data. **[Agent: python-backend]**
-  - [ ] Response rate test: applications that reached Interview/Offer/Rejected counted; Withdrawn excluded. **[Agent: python-backend]**
-  - [ ] Pipeline aggregation test: all 6 statuses present even when count is 0. **[Agent: python-backend]**
-  - [ ] Trend granularity test: 7d→daily, 90d→weekly. Verify date bucketing. **[Agent: python-backend]**
-  - [ ] Date range filter test: applications outside range excluded. **[Agent: python-backend]**
-  - [ ] Authorization test: only the user's own applications counted. **[Agent: python-backend]**
-  - [ ] Verify: `pytest` runs all tests — 100% pass rate. **[Agent: qa-tester]**
+- [x] **Slice 3: Backend test suite for metrics**
+  - [x] KPI calculation tests: total, active, interviews counts with seeded data. **[Agent: python-backend]**
+  - [x] Response rate test: applications that reached Interview/Offer/Rejected counted; Withdrawn excluded. **[Agent: python-backend]**
+  - [x] Pipeline aggregation test: all 6 statuses present even when count is 0. **[Agent: python-backend]**
+  - [x] Trend granularity test: 7d→daily, 90d→weekly. Verify date bucketing. **[Agent: python-backend]**
+  - [x] Date range filter test: applications outside range excluded. **[Agent: python-backend]**
+  - [x] Authorization test: only the user's own applications counted. **[Agent: python-backend]**
+  - [x] Verify: `pytest` runs all tests — 100% pass rate. **[Agent: qa-tester]**
 
 ---
 
