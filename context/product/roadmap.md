@@ -39,10 +39,10 @@ _With tracking in place, add the tools that make each application stronger._
 
 _Turn tracked data into actionable visibility on the job search._
 
-- [ ] **Metrics Dashboard**
-  - [ ] **Pipeline Overview:** Visual summary of applications by stage — how many in each column at a glance.
-  - [ ] **Response Rate Tracking:** Track which applications got responses vs. silence, and the average time-to-response.
-  - [ ] **Trend Charts:** Show application activity and outcomes over time (weekly/monthly).
+- [x] **Metrics Dashboard**
+  - [x] **Pipeline Overview:** Visual summary of applications by stage — how many in each column at a glance.
+  - [x] **Response Rate Tracking:** Track which applications got responses vs. silence, and the average time-to-response.
+  - [x] **Trend Charts:** Show application activity and outcomes over time (weekly/monthly).
 
 ---
 
