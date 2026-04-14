@@ -11,12 +11,12 @@
 
 ---
 
-- [ ] **Slice 2: Bot linking and dialog**
-  - [ ] Add `python-telegram-bot[job-queue]>=21` to pyproject.toml. Add `TELEGRAM_BOT_TOKEN` and `JOBBI_PUBLIC_URL` to config.py Settings and .env.example. **[Agent: python-backend]**
-  - [ ] Create `app/bot/` package: `__main__.py` entry point, `db.py` async session factory, `handlers/start.py` (code verification → create link), `handlers/cancel.py` (clear conversation). **[Agent: python-backend]**
-  - [ ] Create `handlers/dialog.py`: message handler that starts/continues the create-application conversation, using the `telegram_conversations` table for state (awaiting_company → awaiting_role → awaiting_status → create application). **[Agent: python-backend]**
-  - [ ] Add `bot` service to `docker-compose.yml` (shares backend image, runs `python -m app.bot`, same .env). **[Agent: devops-infra]**
-  - [ ] Verify: Provide a real TELEGRAM_BOT_TOKEN, start bot service. Generate code via API, /start in Telegram, send code → bot confirms. Send a job URL → bot asks company → role → status → creates application. Verify application in DB. /cancel aborts dialog. **[Agent: qa-tester]**
+- [x] **Slice 2: Bot linking and dialog**
+  - [x] Add `python-telegram-bot[job-queue]>=21` to pyproject.toml. Add `TELEGRAM_BOT_TOKEN` and `JOBBI_PUBLIC_URL` to config.py Settings and .env.example. **[Agent: python-backend]**
+  - [x] Create `app/bot/` package: `__main__.py` entry point, `db.py` async session factory, `handlers/start.py` (code verification → create link), `handlers/cancel.py` (clear conversation). **[Agent: python-backend]**
+  - [x] Create `handlers/dialog.py`: message handler that starts/continues the create-application conversation, using the `telegram_conversations` table for state (awaiting_company → awaiting_role → awaiting_status → create application). **[Agent: python-backend]**
+  - [x] Add `bot` service to `docker-compose.yml` (shares backend image, runs `python -m app.bot`, same .env). **[Agent: devops-infra]**
+  - [x] Verify: Provide a real TELEGRAM_BOT_TOKEN, start bot service. Generate code via API, /start in Telegram, send code → bot confirms. Send a job URL → bot asks company → role → status → creates application. Verify application in DB. /cancel aborts dialog. **[Agent: qa-tester]**
 
 ---
 

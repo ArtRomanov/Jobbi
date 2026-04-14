@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_MODEL: str = "claude-sonnet-4-6-20250514"
+    TELEGRAM_BOT_TOKEN: str = ""
+    JOBBI_PUBLIC_URL: str = "http://localhost:5173"
 
 
 @lru_cache

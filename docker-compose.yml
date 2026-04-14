@@ -35,5 +35,19 @@ services:
       backend:
         condition: service_healthy
 
+  bot:
+    build:
+      context: ./backend
+      target: production
+    volumes:
+      - ./backend/app:/app/app
+      - backend-data:/app/data
+    command: python -m app.bot
+    env_file:
+      - .env
+    depends_on:
+      backend:
+        condition: service_healthy
+
 volumes:
   backend-data:
