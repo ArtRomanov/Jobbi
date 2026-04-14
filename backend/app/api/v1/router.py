@@ -6,6 +6,7 @@ from app.api.v1.chat import router as chat_router
 from app.api.v1.cvs import router as cvs_router
 from app.api.v1.health import router as health_router
 from app.api.v1.metrics import router as metrics_router
+from app.api.v1.telegram import router as telegram_router
 from app.api.v1.users import router as users_router
 
 v1_router = APIRouter(prefix="/api/v1")
@@ -16,3 +17,4 @@ v1_router.include_router(applications_router)
 v1_router.include_router(cvs_router)
 v1_router.include_router(chat_router)
 v1_router.include_router(metrics_router)
+v1_router.include_router(telegram_router)

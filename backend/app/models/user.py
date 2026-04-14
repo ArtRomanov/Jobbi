@@ -28,6 +28,11 @@ class User(Base):
     salary_max: Mapped[int | None] = mapped_column()
     salary_currency: Mapped[str | None] = mapped_column(String(3))
 
+    timezone: Mapped[str | None] = mapped_column(String(64))
+    summary_time: Mapped[str] = mapped_column(
+        String(5), nullable=False, default="10:00", server_default="10:00"
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         nullable=False, server_default=func.now()
     )

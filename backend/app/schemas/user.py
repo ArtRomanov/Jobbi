@@ -13,6 +13,8 @@ class UserRead(BaseModel):
     salary_min: int | None
     salary_max: int | None
     salary_currency: str | None
+    timezone: str | None
+    summary_time: str
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
@@ -26,6 +28,8 @@ class UserUpdate(BaseModel):
     salary_min: int | None = None
     salary_max: int | None = None
     salary_currency: str | None = Field(default=None, max_length=3)
+    timezone: str | None = Field(default=None, max_length=64)
+    summary_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
 
 
 class ChangePasswordRequest(BaseModel):

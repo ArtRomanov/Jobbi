@@ -2,12 +2,12 @@
 
 ---
 
-- [ ] **Slice 1: Telegram linking backend**
-  - [ ] Create 3 new SQLAlchemy models: `TelegramLink`, `TelegramConnectionCode`, `TelegramConversation`. Create Alembic migration. **[Agent: database-expert]**
-  - [ ] Add `timezone` and `summary_time` columns to the `User` model. Update `UserRead` and `UserUpdate` schemas. Create Alembic migration. **[Agent: database-expert]**
-  - [ ] Create `telegram_service.py`: generate_code (6-char alphanumeric, 10-min expiry, single prior invalidation), verify_code (marks used, creates link), get_status, delete_link. **[Agent: python-backend]**
-  - [ ] Create `app/schemas/telegram.py` and `app/api/v1/telegram.py` with: `POST /telegram/connection-code`, `GET /telegram/status`, `DELETE /telegram/link`. Mount in v1 router. **[Agent: python-backend]**
-  - [ ] Verify: curl generate code → returns 6-char code. curl status → not connected. Manually insert link row → status shows connected. curl disconnect → link removed. PATCH /users/me with timezone + summary_time → persisted. **[Agent: qa-tester]**
+- [x] **Slice 1: Telegram linking backend**
+  - [x] Create 3 new SQLAlchemy models: `TelegramLink`, `TelegramConnectionCode`, `TelegramConversation`. Create Alembic migration. **[Agent: database-expert]**
+  - [x] Add `timezone` and `summary_time` columns to the `User` model. Update `UserRead` and `UserUpdate` schemas. Create Alembic migration. **[Agent: database-expert]**
+  - [x] Create `telegram_service.py`: generate_code (6-char alphanumeric, 10-min expiry, single prior invalidation), verify_code (marks used, creates link), get_status, delete_link. **[Agent: python-backend]**
+  - [x] Create `app/schemas/telegram.py` and `app/api/v1/telegram.py` with: `POST /telegram/connection-code`, `GET /telegram/status`, `DELETE /telegram/link`. Mount in v1 router. **[Agent: python-backend]**
+  - [x] Verify: curl generate code → returns 6-char code. curl status → not connected. Manually insert link row → status shows connected. curl disconnect → link removed. PATCH /users/me with timezone + summary_time → persisted. **[Agent: qa-tester]**
 
 ---
 
