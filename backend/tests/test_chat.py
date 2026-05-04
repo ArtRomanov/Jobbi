@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from app.services.claude_client import build_system_prompt
+from app.services.groq_client import build_system_prompt
 
 BASE_URL = "/api/v1/applications"
 
@@ -57,13 +57,13 @@ async def _send_message_mocked(
     token: str,
     content: str = "Hello",
 ) -> httpx.Response:
-    """Send a chat message with the Claude streaming response mocked out."""
+    """Send a chat message with the LLM streaming response mocked out."""
 
     async def _fake_stream(*args, **kwargs):
         yield "fake response"
 
     with patch(
-        "app.services.chat_service.stream_claude_response",
+        "app.services.chat_service.stream_llm_response",
         side_effect=_fake_stream,
     ):
         return await client.post(
@@ -275,7 +275,7 @@ def test_build_system_prompt_with_job_url() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Streaming Endpoint (mock Anthropic)
+# Streaming Endpoint (mock Groq)
 # ---------------------------------------------------------------------------
 
 
@@ -291,7 +291,7 @@ async def test_stream_returns_sse_format(
         yield "world"
 
     with patch(
-        "app.services.chat_service.stream_claude_response",
+        "app.services.chat_service.stream_llm_response",
         side_effect=_fake_stream,
     ):
         resp = await client.post(

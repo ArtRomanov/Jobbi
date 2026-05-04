@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.application import Application
 from app.models.chat_message import ChatMessage
 from app.models.cv import Cv
-from app.services.claude_client import build_system_prompt, stream_claude_response
+from app.services.groq_client import build_system_prompt, stream_llm_response
 
 
 async def get_chat_history(
@@ -75,7 +75,7 @@ async def stream_chat_response(
 
     # Stream response
     full_response = []
-    async for chunk in stream_claude_response(system_prompt, messages):
+    async for chunk in stream_llm_response(system_prompt, messages):
         full_response.append(chunk)
         yield chunk
 

@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,13 +10,21 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     DATABASE_URL: str = "sqlite+aiosqlite:///./data/jobbi.db"
     ACCESS_TOKEN_EXPIRE_DAYS: int = 7
-    CORS_ORIGINS: str = "http://localhost:5173"
+    CORS_ORIGINS: str = "http://localhost:5174"
     SENTRY_DSN: str = ""
     LOG_LEVEL: str = "INFO"
-    ANTHROPIC_API_KEY: str = ""
-    ANTHROPIC_MODEL: str = "claude-sonnet-4-6-20250514"
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
     TELEGRAM_BOT_TOKEN: str = ""
-    JOBBI_PUBLIC_URL: str = "http://localhost:5173"
+    JOBBI_PUBLIC_URL: str = "http://localhost:5174"
+
+    @model_validator(mode="after")
+    def _require_groq_api_key(self) -> "Settings":
+        if not self.GROQ_API_KEY:
+            raise ValueError(
+                "GROQ_API_KEY is required. Set it in the environment or .env file."
+            )
+        return self
 
 
 @lru_cache

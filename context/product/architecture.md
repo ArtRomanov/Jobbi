@@ -35,7 +35,7 @@
 ## 4. External Services & APIs
 
 - **Authentication:** Simple email + password (hashed with bcrypt, JWT tokens for session management)
-- **AI Integration:** Anthropic API (direct HTTPS calls via official Python SDK)
+- **AI Integration:** Groq API (direct HTTPS calls via official Python SDK)
 - **API Key Management:** Environment variables (`.env` file, not committed to source control)
 
 ---

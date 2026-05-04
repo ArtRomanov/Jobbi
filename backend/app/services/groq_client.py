@@ -1,6 +1,6 @@
 from collections.abc import AsyncIterator
 
-import anthropic
+import groq
 import structlog
 
 from app.core.config import get_settings
@@ -10,9 +10,9 @@ from app.models.cv import Cv
 logger = structlog.get_logger()
 
 
-def _get_client() -> anthropic.AsyncAnthropic:
+def _get_client() -> groq.AsyncGroq:
     settings = get_settings()
-    return anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    return groq.AsyncGroq(api_key=settings.GROQ_API_KEY)
 
 
 def build_system_prompt(application: Application, cv: Cv | None) -> str:
@@ -77,23 +77,45 @@ def build_system_prompt(application: Application, cv: Cv | None) -> str:
     return "\n".join(parts)
 
 
-async def stream_claude_response(
+async def stream_llm_response(
     system_prompt: str,
     messages: list[dict[str, str]],
 ) -> AsyncIterator[str]:
-    """Stream Claude's response, yielding text chunks."""
+    """Stream the LLM's response, yielding text chunks."""
     settings = get_settings()
     client = _get_client()
 
+    full_messages = [
+        {"role": "system", "content": system_prompt},
+        *messages,
+    ]
+
     try:
-        async with client.messages.stream(
-            model=settings.ANTHROPIC_MODEL,
+        stream = await client.chat.completions.create(
+            model=settings.GROQ_MODEL,
             max_tokens=4096,
-            system=system_prompt,
-            messages=messages,
-        ) as stream:
-            async for text in stream.text_stream:
-                yield text
-    except anthropic.APIError as e:
-        logger.error("Anthropic API error", error=str(e))
+            messages=full_messages,
+            stream=True,
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+    except groq.AuthenticationError as e:
+        logger.error("Groq authentication error", error=str(e))
+        raise RuntimeError(
+            "AI service authentication failed. Please contact the operator."
+        ) from e
+    except groq.RateLimitError as e:
+        logger.error("Groq rate limit", error=str(e))
+        raise RuntimeError(
+            "Rate limit reached. Please try again in a moment."
+        ) from e
+    except groq.APIConnectionError as e:
+        logger.error("Groq connection error", error=str(e))
+        raise RuntimeError(
+            "Couldn't reach the AI service. Please try again."
+        ) from e
+    except groq.APIError as e:
+        logger.error("Groq API error", error=str(e))
         raise
