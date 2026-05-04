@@ -8,5 +8,5 @@
 
 - **Application Tracker** — Kanban/timeline board to manage applications through stages (Researching, Applied, Interview, Offer, Rejected).
 - **CV Constructor** — Build, store, and tailor multiple CV versions per role.
-- **Claude Chat Integration** — AI assistant for cover letters, CV refinement, and interview prep.
+- **AI Chat Integration** — AI assistant for cover letters, CV refinement, and interview prep.
 - **Metrics Dashboard** — Visual stats on applications, response rates, and pipeline health.

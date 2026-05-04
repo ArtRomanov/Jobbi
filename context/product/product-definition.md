@@ -37,13 +37,13 @@ The primary user is the product creator — a tech professional actively searchi
 
 - **Application Tracker** — A timeline/kanban board to manage job applications through stages: Researching, Applied, Interview, Offer, Rejected, Withdrawn.
 - **CV Constructor** — Build, store, and tailor multiple CV versions. Adjust each CV to match specific job requirements.
-- **Claude Chat Integration** — An AI assistant (powered by Claude) to help write cover letters, refine CVs, prepare for interviews, and provide job search advice.
+- **AI Chat Integration** — An AI assistant to help write cover letters, refine CVs, prepare for interviews, and provide job search advice.
 - **Metrics Dashboard** — Visual stats on applications sent, response rates, time-to-response, pipeline distribution, and trends over time.
 
 ### 2.2. User Journey
 
 1. **Research:** The user finds a new job posting that matches their criteria.
-2. **Prepare:** They open Jobbi, create a new application entry, and use the CV Constructor (with Claude's help) to tailor their CV to the specific role's requirements.
+2. **Prepare:** They open Jobbi, create a new application entry, and use the CV Constructor (with AI assistance) to tailor their CV to the specific role's requirements.
 3. **Apply:** They submit the application and update the status in Jobbi to "Applied."
 4. **Track:** The application appears on their timeline/kanban board. They can add notes, set follow-up reminders, and update the stage as it progresses (Interview, Offer, etc.).
 5. **Review:** They check the Metrics Dashboard to see how their job search is performing — how many applications are out, what their response rate looks like, and where to adjust their strategy.
@@ -57,7 +57,7 @@ The primary user is the product creator — a tech professional actively searchi
 - User authentication and personal account.
 - Application tracker with kanban/timeline view and status management (Researching, Applied, Interview, Offer, Rejected, Withdrawn).
 - CV constructor with the ability to create, store, and edit multiple CV versions.
-- Claude chat integration for CV refinement, cover letter writing, and interview prep.
+- AI chat integration for CV refinement, cover letter writing, and interview prep.
 - Metrics dashboard showing application counts, response rates, and pipeline health.
 - Web application (responsive, desktop-first).
 

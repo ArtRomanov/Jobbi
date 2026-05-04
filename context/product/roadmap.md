@@ -28,10 +28,10 @@ _With tracking in place, add the tools that make each application stronger._
   - [x] **Multiple Versions:** Store multiple CV versions and link specific versions to specific job applications.
   - [x] **Tailoring per Role:** Quickly duplicate and adjust a base CV to match a specific job's requirements.
 
-- [x] **Claude Chat Integration**
-  - [x] **CV Refinement Assistant:** Use Claude to review and improve CV content — wording, structure, keyword optimization.
+- [x] **AI Chat Integration**
+  - [x] **CV Refinement Assistant:** Use AI to review and improve CV content — wording, structure, keyword optimization.
   - [x] **Cover Letter Generation:** Generate tailored cover letters based on the job description and selected CV.
-  - [x] **Interview Prep:** Ask Claude for interview questions, company research, and preparation tips relevant to a specific role.
+  - [x] **Interview Prep:** Ask the AI assistant for interview questions, company research, and preparation tips relevant to a specific role.
 
 ---
 
