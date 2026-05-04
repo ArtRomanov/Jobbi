@@ -6,6 +6,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.core.security import hash_password
 from app.models.password_reset import PasswordResetToken
 from app.models.user import User
@@ -42,7 +43,7 @@ async def create_password_reset(db: AsyncSession, user: User) -> str:
     await db.commit()
 
     # Log the reset link to console (no email service in V1)
-    reset_link = f"http://localhost:5173/reset-password?token={raw_token}"
+    reset_link = f"{get_settings().JOBBI_PUBLIC_URL}/reset-password?token={raw_token}"
     logger.info("Password reset link generated", email=user.email, link=reset_link)
 
     return raw_token

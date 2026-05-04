@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "generate:types": "openapi-typescript http://localhost:8000/openapi.json -o src/shared/api/schema.d.ts"
+    "generate:types": "openapi-typescript http://localhost:8003/openapi.json -o src/shared/api/schema.d.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
