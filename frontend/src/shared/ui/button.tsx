@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, ReactNode } from "react";
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { colors } from "./theme";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -23,18 +23,16 @@ const variantStyles: Record<
   },
 };
 
-export function Button({
-  children,
-  loading = false,
-  variant = "primary",
-  disabled,
-  style,
-  ...rest
-}: ButtonProps) {
+/** Styled button. Forwards its ref so callers can manage focus. */
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  { children, loading = false, variant = "primary", disabled, style, ...rest },
+  ref,
+) {
   const isDisabled = disabled || loading;
 
   return (
     <button
+      ref={ref}
       disabled={isDisabled}
       style={{
         padding: "0.5rem 1rem",
@@ -51,4 +49,4 @@ export function Button({
       {loading ? "Loading..." : children}
     </button>
   );
-}
+});

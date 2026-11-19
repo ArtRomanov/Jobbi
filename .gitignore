@@ -35,3 +35,6 @@ build/
 
 # TypeScript incremental build cache
 *.tsbuildinfo
+
+# Claude Code agent worktrees
+.claude/worktrees/
