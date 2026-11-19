@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy import delete, update
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from telegram.error import Forbidden, NetworkError, TelegramError
+from telegram.error import Forbidden, NetworkError, RetryAfter, TelegramError
 from telegram.ext import Application, ApplicationBuilder, JobQueue
 
 from app.bot.handlers import jobs
@@ -113,20 +113,41 @@ def _summary_jobs(job_queue: JobQueue) -> dict[str, object]:
 
 
 class FakeBot:
-    """Records send_message calls; optionally raises a preset error."""
+    """Records send_message calls; optionally raises preset errors.
 
-    def __init__(self, error: Exception | None = None) -> None:
+    `error` is raised on every call; `errors` are raised one per call, in
+    order, before calls start succeeding.
+    """
+
+    def __init__(
+        self, error: Exception | None = None, errors: list[Exception] | None = None
+    ) -> None:
         self.error = error
+        self.errors = list(errors or [])
+        self.attempts = 0
         self.sent: list[dict[str, object]] = []
 
     async def send_message(self, *, chat_id: int, text: str) -> None:
+        self.attempts += 1
         if self.error is not None:
             raise self.error
+        if self.errors:
+            raise self.errors.pop(0)
         self.sent.append({"chat_id": chat_id, "text": text})
 
 
-def _job_context(data: object, bot: FakeBot) -> SimpleNamespace:
-    return SimpleNamespace(job=SimpleNamespace(data=data), bot=bot)
+def _job_context(
+    data: object, bot: FakeBot, bot_data: dict[str, object] | None = None
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        job=SimpleNamespace(data=data),
+        bot=bot,
+        bot_data={} if bot_data is None else bot_data,
+    )
+
+
+def _freeze_now(monkeypatch: pytest.MonkeyPatch, moment: datetime) -> None:
+    monkeypatch.setattr(jobs, "_now_utc", lambda: moment)
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +193,19 @@ async def test_load_schedules_null_timezone_defaults_to_utc(
 
 @pytest.mark.parametrize(
     "bad_timezone",
-    ["Mars/Olympus_Mons", "", "../../etc/passwd", "/etc/localtime", "zone.tab"],
+    [
+        "Mars/Olympus_Mons",
+        "",
+        "../../etc/passwd",
+        "/etc/localtime",
+        "zone.tab",
+        # tzdata directory: ZoneInfo() raises IsADirectoryError on Python <3.13
+        "America",
+        # only resolves on case-insensitive filesystems
+        "europe/berlin",
+        "Factory",
+        "posixrules",
+    ],
 )
 async def test_load_schedules_invalid_timezone_falls_back_to_utc(
     db_session: AsyncSession,
@@ -254,6 +287,18 @@ async def test_apply_creates_one_named_job_per_user(job_queue: JobQueue) -> None
         assert local_next.strftime("%H:%M") == schedule.summary_time
         assert local_next > datetime.now(UTC)
         assert local_next - datetime.now(UTC) <= timedelta(days=1)
+
+
+async def test_apply_daily_jobs_tolerate_a_late_event_loop(
+    job_queue: JobQueue,
+) -> None:
+    apply_schedules(job_queue, _desired(_schedule("alice")))
+
+    (job,) = [j for j in job_queue.jobs() if j.name == "daily_summary:alice"]
+    # APScheduler's default grace is 1s: a busy loop would silently skip the day.
+    assert job.job.misfire_grace_time == jobs.DAILY_MISFIRE_GRACE_SECONDS
+    assert jobs.DAILY_MISFIRE_GRACE_SECONDS >= 10 * 60
+    assert job.job.coalesce is True
 
 
 async def test_apply_same_state_is_idempotent(job_queue: JobQueue) -> None:
@@ -385,6 +430,50 @@ async def test_sync_db_error_keeps_existing_jobs(
 
     assert _summary_jobs(job_queue) == before
     assert "Failed to load summary schedules" in caplog.text
+
+
+async def test_sync_unexpected_error_keeps_existing_jobs(
+    job_queue: JobQueue,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    apply_schedules(job_queue, _desired(_schedule("alice")))
+    before = _summary_jobs(job_queue)
+
+    async def _failing_load() -> dict[str, SummarySchedule]:
+        raise IsADirectoryError(21, "Is a directory")
+
+    monkeypatch.setattr(jobs, "load_schedules", _failing_load)
+
+    with caplog.at_level(logging.ERROR, logger=jobs.__name__):
+        await sync_summary_jobs(SimpleNamespace(job_queue=job_queue))
+
+    assert _summary_jobs(job_queue) == before
+    assert "Failed to sync summary jobs" in caplog.text
+
+
+async def test_apply_one_broken_schedule_does_not_block_others(
+    job_queue: JobQueue,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    real_to_run_time = jobs._to_run_time
+
+    def _flaky_to_run_time(schedule: SummarySchedule) -> object:
+        if schedule.user_id == "broken":
+            raise IsADirectoryError(21, "Is a directory")
+        return real_to_run_time(schedule)
+
+    monkeypatch.setattr(jobs, "_to_run_time", _flaky_to_run_time)
+    alice = _schedule("alice")
+    broken = _schedule("broken", chat_id=2)
+    bob = _schedule("bob", chat_id=3)
+
+    with caplog.at_level(logging.ERROR, logger=jobs.__name__):
+        apply_schedules(job_queue, _desired(alice, broken, bob))
+
+    assert set(_summary_jobs(job_queue)) == {alice.job_name, bob.job_name}
+    assert "Failed to schedule daily summary job daily_summary:broken" in caplog.text
 
 
 async def test_sync_without_job_queue_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -524,6 +613,100 @@ async def test_send_daily_summary_swallows_database_errors(
     assert "Database error building summary" in caplog.text
 
 
+async def test_send_daily_summary_at_most_once_per_local_day(
+    linked_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bot, bot_data = FakeBot(), {}
+    schedule = _schedule(linked_user.id, summary_time="08:00")
+    _freeze_now(monkeypatch, datetime(2026, 3, 10, 8, 0, tzinfo=UTC))
+    await send_daily_summary(_job_context(schedule, bot, bot_data))
+
+    # Same local day: e.g. the user moved summary_time to later today.
+    later_today = _schedule(linked_user.id, summary_time="20:00")
+    _freeze_now(monkeypatch, datetime(2026, 3, 10, 20, 0, tzinfo=UTC))
+    await send_daily_summary(_job_context(later_today, bot, bot_data))
+    assert len(bot.sent) == 1
+
+    _freeze_now(monkeypatch, datetime(2026, 3, 11, 8, 0, tzinfo=UTC))
+    await send_daily_summary(_job_context(later_today, bot, bot_data))
+    assert len(bot.sent) == 2
+
+
+async def test_send_daily_summary_dst_fall_back_sends_once(
+    linked_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Europe/Berlin 2026-10-25: 02:30 local happens at 00:30Z and again at 01:30Z.
+    bot, bot_data = FakeBot(), {}
+    schedule = _schedule(
+        linked_user.id, summary_time="02:30", timezone="Europe/Berlin"
+    )
+
+    for moment in (
+        datetime(2026, 10, 25, 0, 30, tzinfo=UTC),
+        datetime(2026, 10, 25, 1, 30, tzinfo=UTC),
+    ):
+        _freeze_now(monkeypatch, moment)
+        await send_daily_summary(_job_context(schedule, bot, bot_data))
+
+    assert len(bot.sent) == 1
+
+
+async def test_send_daily_summary_failed_send_does_not_use_up_the_day(
+    linked_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bot_data: dict[str, object] = {}
+    schedule = _schedule(linked_user.id)
+    _freeze_now(monkeypatch, datetime(2026, 3, 10, 10, 0, tzinfo=UTC))
+
+    await send_daily_summary(
+        _job_context(schedule, FakeBot(error=NetworkError("down")), bot_data)
+    )
+    retry_bot = FakeBot()
+    await send_daily_summary(_job_context(schedule, retry_bot, bot_data))
+
+    assert len(retry_bot.sent) == 1
+
+
+async def test_send_daily_summary_retry_after_waits_then_retries_once(
+    linked_user: User, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    slept: list[float] = []
+
+    async def _fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(jobs, "_sleep", _fake_sleep)
+    bot = FakeBot(errors=[RetryAfter(7)])
+
+    await send_daily_summary(_job_context(_schedule(linked_user.id), bot))
+
+    assert slept == [7]
+    assert bot.attempts == 2
+    assert len(bot.sent) == 1
+
+
+async def test_send_daily_summary_retry_after_twice_gives_up(
+    linked_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    slept: list[float] = []
+
+    async def _fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(jobs, "_sleep", _fake_sleep)
+    bot = FakeBot(error=RetryAfter(7))
+
+    with caplog.at_level(logging.ERROR, logger=jobs.__name__):
+        await send_daily_summary(_job_context(_schedule(linked_user.id), bot))
+
+    assert slept == [7]
+    assert bot.attempts == 2
+    assert bot.sent == []
+    assert "Telegram error sending summary" in caplog.text
+
+
 @pytest.mark.parametrize(
     "data",
     [None, "daily_summary:user-1", {"user_id": "user-1", "chat_id": CHAT_ID}],
@@ -565,28 +748,23 @@ async def test_register_adds_repeating_sync_job(
     assert SYNC_INTERVAL_SECONDS == 300
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason=(
-        "first=0 is resolved to 'now' when run_repeating is called; by the time "
-        "APScheduler computes the first fire time 'now' has moved on, so the "
-        "IntervalTrigger skips to start+interval. The sync (and therefore every "
-        "daily job) first runs ~5 minutes after startup, not immediately as "
-        "register_summary_jobs' docstring promises (jobs.py:191, 201)."
-    ),
-)
 async def test_register_first_sync_runs_immediately_on_startup(
-    app: Application,
+    app: Application, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Production order (app/bot/__main__.py): register first, start the queue later.
+    ran = asyncio.Event()
+
+    async def _recording_sync(_context: object) -> None:
+        ran.set()
+
+    monkeypatch.setattr(jobs, "sync_summary_jobs", _recording_sync)
+    # Production order (app/bot/__main__.py): register first, start the queue
+    # later, after network calls (getMe, deleteWebhook) that can take seconds.
     register_summary_jobs(app)
     assert app.job_queue is not None
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(1.5)
     await app.job_queue.start()
     try:
-        (sync_job,) = [j for j in app.job_queue.jobs() if j.name == SYNC_JOB_NAME]
-        assert sync_job.next_t - datetime.now(UTC) <= timedelta(seconds=5)
+        await asyncio.wait_for(ran.wait(), timeout=3)
     finally:
         await app.job_queue.stop()
 
