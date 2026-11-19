@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { SettingsPage } from "@/pages/settings";
@@ -31,6 +31,16 @@ function capturePatches(): Array<Record<string, unknown>> {
   return bodies;
 }
 
+/** Make `Intl.DateTimeFormat().resolvedOptions().timeZone` report `timeZone`. */
+function mockBrowserTimezone(timeZone: string): void {
+  vi.restoreAllMocks();
+  const real = new Intl.DateTimeFormat().resolvedOptions();
+  vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
+    ...real,
+    timeZone,
+  });
+}
+
 /** Wait until the profile has loaded and the form is rendered. */
 async function waitForForm(): Promise<void> {
   await screen.findByRole("button", { name: "Save Changes" });
@@ -40,11 +50,7 @@ beforeEach(() => {
   localStorage.setItem("jobbi_token", "test-token");
   currentUser = mockUser;
   // Pin the "browser" timezone so detection is independent of the machine
-  const real = new Intl.DateTimeFormat().resolvedOptions();
-  vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
-    ...real,
-    timeZone: DETECTED_TIMEZONE,
-  });
+  mockBrowserTimezone(DETECTED_TIMEZONE);
 });
 
 afterEach(() => {
@@ -114,11 +120,53 @@ describe("SettingsPage — timezone and daily summary", () => {
 
     expect(screen.getByLabelText("Timezone")).toHaveValue(DETECTED_TIMEZONE);
     expect(screen.queryByText(/Timezone detected and saved/)).not.toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        `Detected timezone ${DETECTED_TIMEZONE} but couldn't save it. Click "Save Changes" to save.`,
+      ),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Save Changes" }));
 
     await waitFor(() => expect(patches).toHaveLength(2));
     expect(patches[1]).toEqual({ timezone: DETECTED_TIMEZONE });
+  });
+
+  it("offers no empty timezone choice once a timezone is saved", async () => {
+    renderWithProviders(<SettingsPage />);
+    await waitForForm();
+
+    const timezone = screen.getByLabelText("Timezone");
+    expect(within(timezone).queryByRole("option", { name: "Not set" })).not.toBeInTheDocument();
+    expect(
+      within(timezone).queryByRole("option", { name: "Select timezone..." }),
+    ).not.toBeInTheDocument();
+    expect(within(timezone).queryByRole("option", { name: "" })).not.toBeInTheDocument();
+  });
+
+  it("requires a timezone when none is saved and none can be detected", async () => {
+    serveUser({ ...mockUser, timezone: null });
+    // Browser can't report a timezone, so nothing is auto-saved
+    mockBrowserTimezone("");
+    const patches = capturePatches();
+    const user = userEvent.setup();
+
+    renderWithProviders(<SettingsPage />);
+    await waitForForm();
+
+    const timezone = screen.getByLabelText("Timezone");
+    expect(timezone).toHaveValue("");
+    expect(
+      within(timezone).getByRole("option", { name: "Select timezone..." }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save Changes" }));
+
+    expect(
+      await screen.findByText("Timezone is required for the daily summary"),
+    ).toBeInTheDocument();
+    expect(timezone).toHaveAttribute("aria-invalid", "true");
+    expect(patches).toHaveLength(0);
   });
 
   it("Save sends the edited timezone and summary time", async () => {
