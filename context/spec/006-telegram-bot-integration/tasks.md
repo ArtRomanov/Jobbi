@@ -46,9 +46,9 @@
 
 ---
 
-- [ ] **Slice 6: Frontend test suite for Telegram**
+- [x] **Slice 6: Frontend test suite for Telegram**
   - [x] Add MSW handlers for `GET /telegram/status`, `POST /telegram/connection-code`, `DELETE /telegram/link`. **[Agent: typescript-frontend]**
   - [x] TelegramSection tests: renders "Not connected" initially, click connect shows code, polling detects connection change, disconnect flow. **[Agent: typescript-frontend]**
   - [x] Settings timezone/summary_time tests: fields visible, save sends values. **[Agent: typescript-frontend]**
-  - [ ] Code review: Review test patterns and polling mocks. **[Agent: react-code-reviewer]**
+  - [x] Code review: Review test patterns and polling mocks. **[Agent: react-code-reviewer]**
   - [x] Verify: `pnpm test` runs all tests — 100% pass rate. **[Agent: qa-tester]**
