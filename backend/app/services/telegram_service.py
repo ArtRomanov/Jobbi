@@ -2,10 +2,12 @@ import secrets
 import string
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import ColumnElement, and_, delete, select
+from sqlalchemy import ColumnElement, and_, delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.telegram_connection_code import TelegramConnectionCode
+from app.models.telegram_conversation import TelegramConversation
 from app.models.telegram_link import TelegramLink
 
 CODE_EXPIRY_MINUTES = 10
@@ -93,6 +95,12 @@ async def verify_and_consume_code(
     If more than one active code shares the value (only possible through a
     concurrent-generation race), returns None rather than guess which user
     the code belongs to.
+
+    Concurrency: the code is consumed with a conditional UPDATE (only while
+    still unused and unexpired), so when two chats redeem the same code at
+    once exactly one UPDATE matches a row and only that caller links. A
+    unique-constraint conflict on the link insert (two codes redeemed from
+    one chat at once) rolls everything back and returns None.
     """
     now = _now_naive()
     result = await db.execute(
@@ -113,20 +121,33 @@ async def verify_and_consume_code(
     if existing is not None and existing.user_id != record.user_id:
         return None
 
-    # Remove any existing link for this user
-    await db.execute(
-        delete(TelegramLink).where(TelegramLink.user_id == record.user_id)
-    )
+    try:
+        consumed = await db.execute(
+            update(TelegramConnectionCode)
+            .where(TelegramConnectionCode.id == record.id, _is_active(now))
+            .values(used_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        if consumed.rowcount != 1:
+            # Another redemption won the race (or the code just expired).
+            await db.rollback()
+            return None
 
-    link = TelegramLink(
-        user_id=record.user_id,
-        chat_id=chat_id,
-        telegram_username=telegram_username,
-    )
-    db.add(link)
-    record.used_at = now
+        # Remove any existing link for this user
+        await db.execute(
+            delete(TelegramLink).where(TelegramLink.user_id == record.user_id)
+        )
+        link = TelegramLink(
+            user_id=record.user_id,
+            chat_id=chat_id,
+            telegram_username=telegram_username,
+        )
+        db.add(link)
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        return None
 
-    await db.commit()
     await db.refresh(link)
     return link
 
@@ -150,9 +171,19 @@ async def get_link_by_chat(
 
 
 async def delete_user_link(db: AsyncSession, user_id: str) -> bool:
+    """Unlink the user's chat and drop any half-finished bot dialog in it.
+
+    The dialog row is keyed by chat, not user: left behind, it could be
+    completed under whichever account links that chat next.
+    """
     link = await get_user_link(db, user_id)
     if link is None:
         return False
+    await db.execute(
+        delete(TelegramConversation).where(
+            TelegramConversation.chat_id == link.chat_id
+        )
+    )
     await db.delete(link)
     await db.commit()
     return True

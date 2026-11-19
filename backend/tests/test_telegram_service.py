@@ -1,13 +1,19 @@
+import asyncio
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import TypeAlias
 
 import pytest
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from app.core.database import Base
 
 from app.models.telegram_connection_code import TelegramConnectionCode
+from app.models.telegram_conversation import TelegramConversation
 from app.models.telegram_link import TelegramLink
 from app.models.user import User
 from app.services import telegram_service
@@ -276,6 +282,106 @@ async def test_verify_relink_replaces_existing_link(
 
 
 # ---------------------------------------------------------------------------
+# Concurrent redemption (file-backed DB: each session is its own connection,
+# like two bot updates processed at once)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def file_sessions(
+    tmp_path: Path,
+) -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'race.db'}")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield async_sessionmaker(engine, expire_on_commit=False)
+    await engine.dispose()
+
+
+async def _file_user(sessions: async_sessionmaker[AsyncSession], email: str) -> str:
+    async with sessions() as db:
+        user = User(email=email, password_hash="x", full_name=email)
+        db.add(user)
+        await db.commit()
+        return user.id
+
+
+async def _redeem(
+    sessions: async_sessionmaker[AsyncSession], code: str, chat_id: int
+) -> TelegramLink | None:
+    async with sessions() as db:
+        return await verify_and_consume_code(db, code, chat_id, f"chat{chat_id}")
+
+
+async def test_concurrent_redeem_of_one_code_succeeds_exactly_once(
+    file_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    user_id = await _file_user(file_sessions, "alice@example.com")
+    async with file_sessions() as db:
+        code = (await create_connection_code(db, user_id)).code
+
+    results = await asyncio.gather(
+        _redeem(file_sessions, code, CHAT_ID),
+        _redeem(file_sessions, code, OTHER_CHAT_ID),
+    )
+
+    winners = [r for r in results if r is not None]
+    assert len(winners) == 1
+    async with file_sessions() as db:
+        links = (await db.execute(select(TelegramLink))).scalars().all()
+    assert [(link.user_id, link.chat_id) for link in links] == [
+        (user_id, winners[0].chat_id)
+    ]
+
+
+async def test_concurrent_redeem_of_two_codes_from_one_chat_links_once(
+    file_sessions: async_sessionmaker[AsyncSession],
+) -> None:
+    alice_id = await _file_user(file_sessions, "alice@example.com")
+    bob_id = await _file_user(file_sessions, "bob@example.com")
+    async with file_sessions() as db:
+        alice_code = (await create_connection_code(db, alice_id)).code
+        bob_code = (await create_connection_code(db, bob_id)).code
+
+    results = await asyncio.gather(
+        _redeem(file_sessions, alice_code, CHAT_ID),
+        _redeem(file_sessions, bob_code, CHAT_ID),
+    )
+
+    assert sum(r is not None for r in results) == 1
+    async with file_sessions() as db:
+        links = (await db.execute(select(TelegramLink))).scalars().all()
+    assert len(links) == 1
+    assert links[0].chat_id == CHAT_ID
+
+
+async def test_verify_link_insert_conflict_returns_none_and_rolls_back(
+    db_session: AsyncSession, make_user: MakeUser, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # What a concurrent insert of the same chat_id looks like on Postgres.
+    user_id = (await make_user()).id  # rollback expires ORM objects
+    record = await create_connection_code(db_session, user_id)
+    real_commit = db_session.commit
+    calls = 0
+
+    async def _conflicting_commit() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise IntegrityError("INSERT", {}, Exception("UNIQUE constraint failed"))
+        await real_commit()
+
+    monkeypatch.setattr(db_session, "commit", _conflicting_commit)
+
+    link = await verify_and_consume_code(db_session, record.code, CHAT_ID, None)
+
+    assert link is None
+    assert await get_user_link(db_session, user_id) is None
+    await db_session.refresh(record)
+    assert record.used_at is None  # the code stays redeemable
+
+
+# ---------------------------------------------------------------------------
 # Link lookups / delete
 # ---------------------------------------------------------------------------
 
@@ -311,6 +417,30 @@ async def test_delete_user_link(db_session: AsyncSession, make_user: MakeUser) -
 
     assert deleted is True
     assert await get_user_link(db_session, user.id) is None
+
+
+async def test_delete_user_link_clears_chat_conversation(
+    db_session: AsyncSession, make_user: MakeUser
+) -> None:
+    user = await make_user()
+    record = await create_connection_code(db_session, user.id)
+    await verify_and_consume_code(db_session, record.code, CHAT_ID, None)
+    db_session.add_all(
+        [
+            TelegramConversation(
+                chat_id=CHAT_ID, step="awaiting_role", context_data={"notes": "x"}
+            ),
+            TelegramConversation(chat_id=OTHER_CHAT_ID, step="awaiting_company"),
+        ]
+    )
+    await db_session.commit()
+
+    await delete_user_link(db_session, user.id)
+
+    remaining = (
+        await db_session.execute(select(TelegramConversation.chat_id))
+    ).scalars().all()
+    assert remaining == [OTHER_CHAT_ID]
 
 
 async def test_delete_user_link_when_none_returns_false(
