@@ -1,7 +1,8 @@
 import { StrictMode } from "react";
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
+import type { MockInstance } from "vitest";
 import { SettingsPage } from "@/pages/settings";
 import { renderWithProviders } from "./utils";
 import { mockUser } from "./mocks/handlers";
@@ -32,14 +33,19 @@ function capturePatches(): Array<Record<string, unknown>> {
   return bodies;
 }
 
+/** Captured before any spy is installed. */
+const REAL_RESOLVED_OPTIONS = new Intl.DateTimeFormat().resolvedOptions();
+
+let resolvedOptionsSpy: MockInstance<() => Intl.ResolvedDateTimeFormatOptions>;
+
 /** Make `Intl.DateTimeFormat().resolvedOptions().timeZone` report `timeZone`. */
 function mockBrowserTimezone(timeZone: string): void {
-  vi.restoreAllMocks();
-  const real = new Intl.DateTimeFormat().resolvedOptions();
-  vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions").mockReturnValue({
-    ...real,
-    timeZone,
-  });
+  resolvedOptionsSpy.mockReturnValue({ ...REAL_RESOLVED_OPTIONS, timeZone });
+}
+
+/** Flush pending effects and microtasks so a stray request would be recorded. */
+async function flushEffects(): Promise<void> {
+  await act(() => Promise.resolve());
 }
 
 /** Wait until the profile has loaded and the form is rendered. */
@@ -51,6 +57,7 @@ beforeEach(() => {
   localStorage.setItem("jobbi_token", "test-token");
   currentUser = mockUser;
   // Pin the "browser" timezone so detection is independent of the machine
+  resolvedOptionsSpy = vi.spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions");
   mockBrowserTimezone(DETECTED_TIMEZONE);
 });
 
@@ -84,8 +91,8 @@ describe("SettingsPage — timezone and daily summary", () => {
     expect(screen.getByLabelText("Timezone")).toHaveValue(DETECTED_TIMEZONE);
     expect(patches).toEqual([{ timezone: DETECTED_TIMEZONE }]);
 
-    // Give any stray effect a chance to fire a second request
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // The toast means the auto-save settled; a stray second effect would fire now
+    await flushEffects();
     expect(patches).toHaveLength(1);
   });
 
@@ -106,8 +113,8 @@ describe("SettingsPage — timezone and daily summary", () => {
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Timezone")).toHaveValue(DETECTED_TIMEZONE);
 
-    // Give the discarded first effect run a chance to fire a stray PATCH
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    // The toast means the auto-save settled; flush the discarded first effect run
+    await flushEffects();
     expect(patches).toEqual([{ timezone: DETECTED_TIMEZONE }]);
   });
 
@@ -115,9 +122,10 @@ describe("SettingsPage — timezone and daily summary", () => {
     const patches = capturePatches();
 
     renderWithProviders(<SettingsPage />);
+    // The form renders only after GET /users/me resolved; flush its effects
     await waitForForm();
+    await flushEffects();
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(patches).toHaveLength(0);
     expect(screen.queryByText(/Timezone detected and saved/)).not.toBeInTheDocument();
     expect(screen.getByLabelText("Timezone")).toHaveValue("Europe/Berlin");

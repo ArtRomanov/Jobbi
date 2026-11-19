@@ -206,7 +206,8 @@ export const mockUser = {
   salary_currency: null,
   timezone: "Europe/Berlin",
   summary_time: "10:00",
-  created_at: "2026-01-01T00:00:00Z",
+  // Naive, like the backend: users.created_at is TIMESTAMP WITHOUT TIME ZONE
+  created_at: "2026-01-01T00:00:00",
 };
 
 export const handlers = [
@@ -492,7 +493,7 @@ export const handlers = [
 
   // DELETE /api/v1/telegram/link — unlink Telegram
   http.delete(`${BASE_URL}/api/v1/telegram/link`, () => {
-    return HttpResponse.json({ message: "Telegram disconnected" });
+    return HttpResponse.json({ message: "Disconnected." });
   }),
 
   // -------------------------------------------------------------------------

@@ -10,32 +10,49 @@ import {
 } from "./mocks/handlers";
 import { server } from "./setup";
 
-// Fixed "now" in UTC. Code expiry timestamps below mix Z-suffixed UTC (current
-// backend) and naive UTC (older backend); both must parse as UTC regardless of
-// the machine's timezone.
+// Fixed "now" in UTC. Expiry timestamps below mix Z-suffixed and naive forms;
+// the UI only rejects an unparseable expires_at (the 10-minute TTL drives
+// expiry), so naive-as-UTC parsing is covered in telegram-helpers.test.ts.
 const NOW = new Date("2026-03-10T12:00:00Z");
 const POLL_INTERVAL_MS = 3000;
 const CODE_TTL_MS = 10 * 60 * 1000;
 const EXPIRY_GRACE_MS = 3000;
+
+const STATUS_URL = "*/api/v1/telegram/status";
+const CODE_URL = "*/api/v1/telegram/connection-code";
+const LINK_URL = "*/api/v1/telegram/link";
 
 type StatusPayload =
   | typeof mockTelegramStatusNotConnected
   | typeof mockTelegramStatusConnected;
 
 /**
+ * Route `method url` to `respond`, which gets the 1-based number of the
+ * request. Returns a live counter of requests made.
+ */
+function mockCountedRoute(
+  method: "get" | "post" | "delete",
+  url: string,
+  respond: (call: number) => Response | Promise<Response>,
+): { count: () => number } {
+  let calls = 0;
+  server.use(
+    http[method](url, () => {
+      calls += 1;
+      return respond(calls);
+    }),
+  );
+  return { count: () => calls };
+}
+
+/**
  * Serve GET /telegram/status from a script: the n-th request gets the n-th
  * payload (the last one repeats). Returns a live counter of requests made.
  */
 function mockStatusSequence(...payloads: StatusPayload[]): { count: () => number } {
-  let calls = 0;
-  server.use(
-    http.get("*/api/v1/telegram/status", () => {
-      const payload = payloads[Math.min(calls, payloads.length - 1)];
-      calls += 1;
-      return HttpResponse.json(payload);
-    }),
+  return mockCountedRoute("get", STATUS_URL, (call) =>
+    HttpResponse.json(payloads[Math.min(call, payloads.length) - 1]),
   );
-  return { count: () => calls };
 }
 
 /**
@@ -43,43 +60,34 @@ function mockStatusSequence(...payloads: StatusPayload[]): { count: () => number
  * Returns a live counter of requests made.
  */
 function mockStatusSwitch(): { count: () => number; setConnected: (value: boolean) => void } {
-  let calls = 0;
   let isConnected = false;
-  server.use(
-    http.get("*/api/v1/telegram/status", () => {
-      calls += 1;
-      return HttpResponse.json(
-        isConnected ? mockTelegramStatusConnected : mockTelegramStatusNotConnected,
-      );
-    }),
+  const { count } = mockCountedRoute("get", STATUS_URL, () =>
+    HttpResponse.json(isConnected ? mockTelegramStatusConnected : mockTelegramStatusNotConnected),
   );
   return {
-    count: () => calls,
+    count,
     setConnected: (value) => {
       isConnected = value;
     },
   };
 }
 
-/** Serve a single fixed connection code. */
+/** Serve one fixed connection code for the next request only. */
 function mockConnectionCodeOnce(code: string, expiresAt: string): void {
   server.use(
-    http.post("*/api/v1/telegram/connection-code", () =>
-      HttpResponse.json({ code, expires_at: expiresAt }, { status: 201 }),
+    http.post(
+      CODE_URL,
+      () => HttpResponse.json({ code, expires_at: expiresAt }, { status: 201 }),
+      { once: true },
     ),
   );
 }
 
 /** Count DELETE /telegram/link requests. */
 function mockDisconnect(): { count: () => number } {
-  let calls = 0;
-  server.use(
-    http.delete("*/api/v1/telegram/link", () => {
-      calls += 1;
-      return HttpResponse.json({ message: "Disconnected." });
-    }),
+  return mockCountedRoute("delete", LINK_URL, () =>
+    HttpResponse.json({ message: "Disconnected." }),
   );
-  return { count: () => calls };
 }
 
 /** Advance fake time and flush the resulting fetches / state updates. */
@@ -146,14 +154,10 @@ describe("TelegramSection", () => {
   });
 
   it("shows an error in the status line with retry when the status request fails", async () => {
-    let calls = 0;
-    server.use(
-      http.get("*/api/v1/telegram/status", () => {
-        calls += 1;
-        return calls === 1
-          ? HttpResponse.json({ detail: "boom" }, { status: 500 })
-          : HttpResponse.json(mockTelegramStatusNotConnected);
-      }),
+    const status = mockCountedRoute("get", STATUS_URL, (call) =>
+      call === 1
+        ? HttpResponse.json({ detail: "boom" }, { status: 500 })
+        : HttpResponse.json(mockTelegramStatusNotConnected),
     );
     const user = setupUser();
 
@@ -166,7 +170,7 @@ describe("TelegramSection", () => {
     await user.click(screen.getByRole("button", { name: "Try again" }));
 
     await expectStatus("Not connected");
-    expect(calls).toBe(2);
+    expect(status.count()).toBe(2);
   });
 
   it("clicking connect shows the code and linking instructions", async () => {
@@ -224,15 +228,11 @@ describe("TelegramSection", () => {
   });
 
   it("code expiry runs one final check, stops polling, and offers a new code", async () => {
-    let codeRequests = 0;
-    server.use(
-      http.post("*/api/v1/telegram/connection-code", () => {
-        codeRequests += 1;
-        return codeRequests === 1
-          ? // Naive UTC (legacy backend format) must still parse as UTC
-            HttpResponse.json({ code: "OLD111", expires_at: "2026-03-10T12:10:00" }, { status: 201 })
-          : HttpResponse.json({ code: "NEW222", expires_at: "2026-03-10T12:25:00Z" }, { status: 201 });
-      }),
+    const codeRequests = mockCountedRoute("post", CODE_URL, (call) =>
+      call === 1
+        ? // Naive (legacy backend format) is accepted; expiry follows the TTL
+          HttpResponse.json({ code: "OLD111", expires_at: "2026-03-10T12:10:00" }, { status: 201 })
+        : HttpResponse.json({ code: "NEW222", expires_at: "2026-03-10T12:25:00Z" }, { status: 201 }),
     );
     const status = mockStatusSwitch();
     const user = setupUser();
@@ -259,7 +259,7 @@ describe("TelegramSection", () => {
     // A fresh code can be generated
     await user.click(screen.getByRole("button", { name: "Generate new code" }));
     expect(await screen.findByText("NEW222")).toBeInTheDocument();
-    expect(codeRequests).toBe(2);
+    expect(codeRequests.count()).toBe(2);
   });
 
   it("a link committed after the last poll is caught by the final check (grace period)", async () => {
@@ -401,35 +401,37 @@ describe("TelegramSection", () => {
   });
 
   it("a new code generated during the cancel check is not overridden by it", async () => {
-    // Hold the cancel check's response until after the user has asked for a new code
+    // Hold the first status request made after Cancel (the cancel check) until
+    // the user has asked for a new code. Polls before Cancel are never held.
+    let isHoldingNext = false;
     let releaseCheck: (() => void) | undefined;
-    let calls = 0;
-    server.use(
-      http.get("*/api/v1/telegram/status", async () => {
-        calls += 1;
-        if (calls === 2) {
-          await new Promise<void>((resolve) => {
-            releaseCheck = resolve;
-          });
-          return HttpResponse.json(mockTelegramStatusConnected);
-        }
-        return HttpResponse.json(mockTelegramStatusNotConnected);
-      }),
-    );
+    let isCheckAnswered = false;
+    mockCountedRoute("get", STATUS_URL, async () => {
+      if (!isHoldingNext) return HttpResponse.json(mockTelegramStatusNotConnected);
+      isHoldingNext = false;
+      await new Promise<void>((resolve) => {
+        releaseCheck = resolve;
+      });
+      isCheckAnswered = true;
+      return HttpResponse.json(mockTelegramStatusConnected);
+    });
     const user = setupUser();
     renderWithProviders(<TelegramSection />);
 
     await user.click(await screen.findByRole("button", { name: "Connect Telegram" }));
     await screen.findByText(mockConnectionCode.code);
+    isHoldingNext = true;
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(releaseCheck).toBeDefined());
 
     await user.click(screen.getByRole("button", { name: "Connect Telegram" }));
     await screen.findByText(mockConnectionCode.code);
+    expect(isCheckAnswered).toBe(false);
 
     releaseCheck?.();
+    await waitFor(() => expect(isCheckAnswered).toBe(true));
     await advance(100);
-    // The stale check must not jump to "connected" over the fresh code
+    // The stale "connected" answer must not override the fresh code
     expect(screen.getByText(mockConnectionCode.code)).toBeInTheDocument();
     expect(screen.queryByText("Telegram connected.")).not.toBeInTheDocument();
   });
