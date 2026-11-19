@@ -3,6 +3,7 @@
 Run with: python -m app.bot
 """
 
+import asyncio
 import logging
 import sys
 
@@ -52,11 +53,26 @@ def add_handlers(app: Application) -> None:
     )
 
 
-def main() -> None:
+def configure_logging() -> None:
     logging.basicConfig(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         level=logging.INFO,
     )
+    # httpx logs every request URL at INFO, and Bot API URLs embed the token
+    # (https://api.telegram.org/bot<TOKEN>/...). Anyone reading the log could
+    # drive the bot, so keep httpx to warnings and errors.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+def ensure_event_loop() -> None:
+    """PTB 21's run_polling calls asyncio.get_event_loop(), which raises on
+    Python 3.14 when no loop is set (3.11 in Docker only warned). Set one."""
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+
+def main() -> None:
+    configure_logging()
+    ensure_event_loop()
 
     app = build_application()
     logger.info("Starting Telegram bot (long polling)...")
