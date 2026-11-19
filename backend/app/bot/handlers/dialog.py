@@ -3,7 +3,7 @@
 import re
 
 from sqlalchemy import delete, select
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
 from app.core.config import get_settings
@@ -26,6 +26,9 @@ NOT_LINKED_MESSAGE = (
 )
 
 STATUS_CALLBACK_PREFIX = "status:"
+
+PRIVATE_CHAT_ONLY_MESSAGE = "Jobbi only works in a private chat with the bot."
+UNKNOWN_STATUS_MESSAGE = "Sorry, I don't know that status. Please tap one of the buttons."
 
 
 async def _get_conversation(db, chat_id: int) -> TelegramConversation | None:
@@ -184,11 +187,22 @@ async def handle_status_callback(
         return
     chat_id = update.effective_chat.id
 
+    # Message handlers are filtered to private chats in __main__; callbacks
+    # can't be, so check here (a button in a group would act for the owner).
+    if update.effective_chat.type != Chat.PRIVATE:
+        await query.answer(PRIVATE_CHAT_ONLY_MESSAGE)
+        return
+
     if not query.data.startswith(STATUS_CALLBACK_PREFIX):
         await query.answer()
         return
 
-    status_value = query.data.removeprefix(STATUS_CALLBACK_PREFIX)
+    # callback_data comes from the client and can be forged.
+    try:
+        status = ApplicationStatus(query.data.removeprefix(STATUS_CALLBACK_PREFIX))
+    except ValueError:
+        await query.answer(UNKNOWN_STATUS_MESSAGE)
+        return
 
     async with async_session() as db:
         link = await get_link_by_chat(db, chat_id)
@@ -214,7 +228,7 @@ async def handle_status_callback(
             role_title=role,
             job_url=data.get("job_url"),
             notes=data.get("notes"),
-            status=status_value,
+            status=status.value,
         )
         app = await create_application(db, link.user_id, payload)
         await _clear_conversation(db, chat_id)

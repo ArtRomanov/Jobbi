@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { handleApiError } from "@/shared/api";
@@ -12,11 +12,16 @@ import {
   PageHeader,
   Divider,
 } from "@/shared/ui";
+import { TelegramSection } from "@/features/telegram-connect";
 import { getMe, updateMe } from "@/entities/user";
 import type { User } from "@/entities/user";
 import { settingsSchema, type SettingsFormData } from "../model/schemas";
 import { REMOTE_OPTIONS } from "../lib/constants";
-import { userToFormValues } from "../lib/helpers";
+import {
+  detectBrowserTimezone,
+  getTimezoneOptions,
+  userToFormValues,
+} from "../lib/helpers";
 import { ChangePasswordSection } from "./change-password-section";
 
 export function SettingsPage() {
@@ -29,6 +34,7 @@ export function SettingsPage() {
     register,
     handleSubmit,
     reset,
+    setValue,
     formState: { errors, dirtyFields },
   } = useForm<SettingsFormData>({
     resolver: zodResolver(settingsSchema),
@@ -41,8 +47,32 @@ export function SettingsPage() {
       try {
         const data = await getMe();
         if (cancelled) return;
-        setUser(data);
-        reset(userToFormValues(data));
+
+        // Daily-summary scheduling needs a timezone: on first visit, detect and save it.
+        const detectedTimezone = data.timezone ? null : detectBrowserTimezone();
+        if (!detectedTimezone) {
+          setUser(data);
+          reset(userToFormValues(data));
+          return;
+        }
+
+        try {
+          const updated = await updateMe({ timezone: detectedTimezone });
+          if (cancelled) return;
+          setUser(updated);
+          reset(userToFormValues(updated));
+          showToast(`Timezone detected and saved: ${detectedTimezone}.`, "success");
+        } catch {
+          if (cancelled) return;
+          // Auto-save failed: prefill as a dirty field so "Save Changes" persists it.
+          setUser(data);
+          reset(userToFormValues(data));
+          setValue("timezone", detectedTimezone, { shouldDirty: true });
+          showToast(
+            `Detected timezone ${detectedTimezone} but couldn't save it. Click "Save Changes" to save.`,
+            "error",
+          );
+        }
       } catch (error: unknown) {
         if (cancelled) return;
         handleApiError(error, showToast);
@@ -53,7 +83,10 @@ export function SettingsPage() {
 
     void fetchUser();
     return () => { cancelled = true; };
-  }, [reset, showToast]);
+  }, [reset, setValue, showToast]);
+
+  const savedTimezone = user?.timezone ?? null;
+  const timezoneOptions = useMemo(() => getTimezoneOptions(savedTimezone), [savedTimezone]);
 
   const onSubmit = async (data: SettingsFormData) => {
     if (isSaving) return;
@@ -218,6 +251,21 @@ export function SettingsPage() {
           />
         </div>
 
+        <Divider label="Telegram daily summary (sent at this time in your timezone)" />
+
+        <FormSelect
+          label="Timezone"
+          options={timezoneOptions}
+          error={errors.timezone?.message}
+          {...register("timezone")}
+        />
+        <FormInput
+          label="Daily Summary Time"
+          type="time"
+          error={errors.summary_time?.message}
+          {...register("summary_time")}
+        />
+
         <Button
           type="submit"
           loading={isSaving}
@@ -226,6 +274,8 @@ export function SettingsPage() {
           Save Changes
         </Button>
       </form>
+
+      <TelegramSection />
 
       <ChangePasswordSection />
     </PageCard>

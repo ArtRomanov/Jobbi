@@ -1,12 +1,13 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, get_db
 from app.models.user import User
 from app.schemas.telegram import ConnectionCodeResponse, TelegramStatus
 from app.services.telegram_service import (
+    CodeGenerationError,
     create_connection_code,
     delete_user_link,
     get_user_link,
@@ -24,7 +25,13 @@ async def generate_connection_code(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ConnectionCodeResponse:
-    record = await create_connection_code(db, current_user.id)
+    try:
+        record = await create_connection_code(db, current_user.id)
+    except CodeGenerationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Could not generate a connection code. Please try again.",
+        ) from exc
     return ConnectionCodeResponse(code=record.code, expires_at=record.expires_at)
 
 

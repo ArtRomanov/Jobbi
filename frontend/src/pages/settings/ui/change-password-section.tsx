@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { apiClient, handleApiError } from "@/shared/api";
-import { FormInput, Button, useToast, colors } from "@/shared/ui";
+import { FormInput, Button, useToast, SectionHeader } from "@/shared/ui";
 import { changePasswordSchema, type ChangePasswordFormData } from "../model/schemas";
 
 export function ChangePasswordSection() {
@@ -39,33 +39,7 @@ export function ChangePasswordSection() {
 
   return (
     <>
-      <hr
-        style={{
-          border: "none",
-          borderTop: `1px solid ${colors.borderLight}`,
-          margin: "2rem 0",
-        }}
-      />
-
-      <h2
-        style={{
-          fontSize: "1.25rem",
-          fontWeight: 700,
-          marginBottom: "0.25rem",
-          color: colors.textPrimary,
-        }}
-      >
-        Change Password
-      </h2>
-      <p
-        style={{
-          fontSize: "0.875rem",
-          color: colors.textMuted,
-          marginBottom: "1.5rem",
-        }}
-      >
-        Update your account password
-      </p>
+      <SectionHeader title="Change Password" subtitle="Update your account password" />
 
       <form onSubmit={handleSubmit(onSubmit)}>
         <FormInput

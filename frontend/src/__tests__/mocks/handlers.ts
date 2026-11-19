@@ -84,6 +84,28 @@ export const mockChatMessages = [
 ];
 
 // ---------------------------------------------------------------------------
+// Telegram mock data
+// ---------------------------------------------------------------------------
+
+export const mockTelegramStatusNotConnected = {
+  connected: false,
+  telegram_username: null,
+  linked_at: null,
+};
+
+export const mockTelegramStatusConnected = {
+  connected: true,
+  telegram_username: "jobbi_tester",
+  // Backend emits UTC with a "Z" suffix (older builds sent naive UTC)
+  linked_at: "2026-03-10T12:00:00Z",
+};
+
+export const mockConnectionCode = {
+  code: "ABC123",
+  expires_at: "2026-03-10T12:10:00Z",
+};
+
+// ---------------------------------------------------------------------------
 // Application mock data
 // ---------------------------------------------------------------------------
 
@@ -172,7 +194,7 @@ export const mockMetrics = {
 // User mock data
 // ---------------------------------------------------------------------------
 
-const mockUser = {
+export const mockUser = {
   id: "user-1",
   email: "test@example.com",
   full_name: "Test User",
@@ -182,6 +204,8 @@ const mockUser = {
   salary_min: null,
   salary_max: null,
   salary_currency: null,
+  timezone: "Europe/Berlin",
+  summary_time: "10:00",
   created_at: "2026-01-01T00:00:00Z",
 };
 
@@ -450,6 +474,25 @@ export const handlers = [
   // DELETE /api/v1/applications/:id/chat — clear chat history
   http.delete(`${BASE_URL}/api/v1/applications/:id/chat`, () => {
     return HttpResponse.json({ message: "Chat history cleared" });
+  }),
+
+  // -------------------------------------------------------------------------
+  // Telegram endpoints
+  // -------------------------------------------------------------------------
+
+  // GET /api/v1/telegram/status — link status
+  http.get(`${BASE_URL}/api/v1/telegram/status`, () => {
+    return HttpResponse.json(mockTelegramStatusNotConnected);
+  }),
+
+  // POST /api/v1/telegram/connection-code — one-time linking code
+  http.post(`${BASE_URL}/api/v1/telegram/connection-code`, () => {
+    return HttpResponse.json(mockConnectionCode, { status: 201 });
+  }),
+
+  // DELETE /api/v1/telegram/link — unlink Telegram
+  http.delete(`${BASE_URL}/api/v1/telegram/link`, () => {
+    return HttpResponse.json({ message: "Telegram disconnected" });
   }),
 
   // -------------------------------------------------------------------------

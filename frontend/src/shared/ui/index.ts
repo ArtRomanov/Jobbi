@@ -8,3 +8,4 @@ export { AuthLayout } from "./auth-layout";
 export { PageCard } from "./page-card";
 export { PageHeader } from "./page-header";
 export { Divider } from "./divider";
+export { SectionHeader } from "./section-header";

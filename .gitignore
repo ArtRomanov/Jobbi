@@ -32,3 +32,9 @@ build/
 *.swo
 *~
 .DS_Store
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+
+# Claude Code agent worktrees
+.claude/worktrees/
