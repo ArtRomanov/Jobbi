@@ -16,7 +16,9 @@ from telegram.ext import (
 
 from app.bot.handlers.cancel import handle_cancel
 from app.bot.handlers.dialog import handle_message, handle_status_callback
+from app.bot.handlers.jobs import register_summary_jobs
 from app.bot.handlers.start import handle_start
+from app.bot.handlers.summary import handle_summary
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -32,8 +34,11 @@ def build_application() -> Application:
 
     app.add_handler(CommandHandler("start", handle_start))
     app.add_handler(CommandHandler("cancel", handle_cancel))
+    app.add_handler(CommandHandler("summary", handle_summary))
     app.add_handler(CallbackQueryHandler(handle_status_callback, pattern=r"^status:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    register_summary_jobs(app)
 
     return app
 

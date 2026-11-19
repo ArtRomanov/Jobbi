@@ -21,9 +21,9 @@
 ---
 
 - [ ] **Slice 3: Summary feature**
-  - [ ] Create `summary_service.py` (backend): build summary text from applications (pipeline counts, recent status changes in last 24h, follow-up count for Applied > 7 days, empty state message). Shared by bot handlers and any future /summary API endpoint. **[Agent: python-backend]**
-  - [ ] Create `handlers/summary.py`: `/summary` command → generate + send summary for the requesting chat. Returns "please link first" if unlinked. **[Agent: python-backend]**
-  - [ ] Create `handlers/jobs.py`: on bot startup, register per-user daily JobQueue jobs at each user's summary_time in their timezone. Add a 5-minute refresh job that syncs registered jobs with current DB state (handles new links, changed times, disconnects). **[Agent: python-backend]**
+  - [x] Create `summary_service.py` (backend): build summary text from applications (pipeline counts, recent status changes in last 24h, follow-up count for Applied > 7 days, empty state message). Shared by bot handlers and any future /summary API endpoint. **[Agent: python-backend]**
+  - [x] Create `handlers/summary.py`: `/summary` command → generate + send summary for the requesting chat. Returns "please link first" if unlinked. **[Agent: python-backend]**
+  - [x] Create `handlers/jobs.py`: on bot startup, register per-user daily JobQueue jobs at each user's summary_time in their timezone. Add a 5-minute refresh job that syncs registered jobs with current DB state (handles new links, changed times, disconnects). **[Agent: python-backend]**
   - [ ] Verify: /summary in Telegram → sends formatted summary message. Set summary_time to current time + 2 min, wait → summary arrives automatically. Empty state user gets "No applications tracked yet". **[Agent: qa-tester]**
 
 ---
