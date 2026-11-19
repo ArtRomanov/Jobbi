@@ -37,18 +37,18 @@
 
 ---
 
-- [ ] **Slice 5: Backend test suite for Telegram**
-  - [ ] Telegram service tests: code generation (format, uniqueness per user, 10-min expiry), code verification (valid, expired, used, invalid), link CRUD. **[Agent: python-backend]**
-  - [ ] API endpoint tests: connection-code (generates, invalidates prior), status (connected/not), disconnect, authorization. **[Agent: python-backend]**
-  - [ ] User profile tests: timezone and summary_time accepted and returned by /users/me. **[Agent: python-backend]**
-  - [ ] Summary service tests: pipeline counts, recent activity (24h window), follow-up count (Applied > 7 days), empty state. **[Agent: python-backend]**
-  - [ ] Verify: `pytest` runs all tests — 100% pass rate. **[Agent: qa-tester]**
+- [x] **Slice 5: Backend test suite for Telegram**
+  - [x] Telegram service tests: code generation (format, uniqueness per user, 10-min expiry), code verification (valid, expired, used, invalid), link CRUD. **[Agent: python-backend]**
+  - [x] API endpoint tests: connection-code (generates, invalidates prior), status (connected/not), disconnect, authorization. **[Agent: python-backend]**
+  - [x] User profile tests: timezone and summary_time accepted and returned by /users/me. **[Agent: python-backend]**
+  - [x] Summary service tests: pipeline counts, recent activity (24h window), follow-up count (Applied > 7 days), empty state. **[Agent: python-backend]**
+  - [x] Verify: `pytest` runs all tests — 100% pass rate. **[Agent: qa-tester]**
 
 ---
 
 - [ ] **Slice 6: Frontend test suite for Telegram**
-  - [ ] Add MSW handlers for `GET /telegram/status`, `POST /telegram/connection-code`, `DELETE /telegram/link`. **[Agent: typescript-frontend]**
-  - [ ] TelegramSection tests: renders "Not connected" initially, click connect shows code, polling detects connection change, disconnect flow. **[Agent: typescript-frontend]**
-  - [ ] Settings timezone/summary_time tests: fields visible, save sends values. **[Agent: typescript-frontend]**
+  - [x] Add MSW handlers for `GET /telegram/status`, `POST /telegram/connection-code`, `DELETE /telegram/link`. **[Agent: typescript-frontend]**
+  - [x] TelegramSection tests: renders "Not connected" initially, click connect shows code, polling detects connection change, disconnect flow. **[Agent: typescript-frontend]**
+  - [x] Settings timezone/summary_time tests: fields visible, save sends values. **[Agent: typescript-frontend]**
   - [ ] Code review: Review test patterns and polling mocks. **[Agent: react-code-reviewer]**
-  - [ ] Verify: `pnpm test` runs all tests — 100% pass rate. **[Agent: qa-tester]**
+  - [x] Verify: `pnpm test` runs all tests — 100% pass rate. **[Agent: qa-tester]**
