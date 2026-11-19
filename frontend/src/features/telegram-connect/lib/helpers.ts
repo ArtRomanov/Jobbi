@@ -1,5 +1,6 @@
 import type { TelegramStatus } from "@/entities/telegram";
 import type { TelegramConnectionState } from "../model/types";
+import { CODE_TTL_MS } from "./constants";
 
 const HAS_TZ_SUFFIX = /(Z|[+-]\d{2}:?\d{2})$/i;
 
@@ -17,6 +18,30 @@ export function formatClockTime(epochMs: number): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+/**
+ * Milliseconds until the code should be treated as expired: never negative and
+ * never longer than the server TTL (guards against client clock skew).
+ */
+export function getExpiryDelayMs(expiresAtMs: number, nowMs: number): number {
+  return Math.min(Math.max(0, expiresAtMs - nowMs), CODE_TTL_MS);
+}
+
+/** Short status line announced to screen readers (one aria-live region). */
+export function getStatusLabel(state: TelegramConnectionState): string {
+  switch (state.status) {
+    case "loading":
+      return "Checking Telegram status...";
+    case "load-error":
+      return "Could not load Telegram status.";
+    case "not-connected":
+      return state.isCodeExpired ? "Not connected (code expired)" : "Not connected";
+    case "awaiting-link":
+      return "Not connected yet — waiting for your code";
+    case "connected":
+      return state.username ? `Connected as @${state.username}` : "Connected";
+  }
 }
 
 /** Map the API status payload onto the UI state machine. */

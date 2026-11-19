@@ -68,6 +68,10 @@ export function SettingsPage() {
           setUser(data);
           reset(userToFormValues(data));
           setValue("timezone", detectedTimezone, { shouldDirty: true });
+          showToast(
+            `Detected timezone ${detectedTimezone} but couldn't save it. Click "Save Changes" to save.`,
+            "error",
+          );
         }
       } catch (error: unknown) {
         if (cancelled) return;

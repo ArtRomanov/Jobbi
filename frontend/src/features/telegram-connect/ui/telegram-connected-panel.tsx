@@ -2,14 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { Button, colors } from "@/shared/ui";
 
 interface TelegramConnectedPanelProps {
-  username: string | null;
   isDisconnecting: boolean;
   onDisconnect: () => Promise<void>;
 }
 
 /** Connected state with an inline (non-modal) confirm step before disconnecting. */
 export function TelegramConnectedPanel({
-  username,
   isDisconnecting,
   onDisconnect,
 }: TelegramConnectedPanelProps) {
@@ -30,20 +28,13 @@ export function TelegramConnectedPanel({
 
   return (
     <div>
-      <p style={{ fontSize: "0.875rem", color: colors.textSecondary, marginBottom: "1rem" }}>
-        {username ? (
-          <>
-            Connected as <strong>@{username}</strong>
-          </>
-        ) : (
-          <strong>Connected</strong>
-        )}
-      </p>
-
       {isConfirming ? (
         <div
           role="group"
           aria-label="Confirm disconnect"
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && !isDisconnecting) setIsConfirming(false);
+          }}
           style={{
             padding: "0.75rem",
             border: `1px solid ${colors.border}`,

@@ -6,8 +6,9 @@ import {
   generateConnectionCode,
   getTelegramStatus,
 } from "@/entities/telegram";
+import type { TelegramStatus } from "@/entities/telegram";
 import { STATUS_POLL_INTERVAL_MS } from "../lib/constants";
-import { parseUtcDate, statusToState } from "../lib/helpers";
+import { getExpiryDelayMs, parseUtcDate, statusToState } from "../lib/helpers";
 import type {
   TelegramConnectionState,
   UseTelegramConnectionResult,
@@ -19,6 +20,8 @@ import type {
  *
  * Polling runs only in the "awaiting-link" state and stops when the link is
  * detected, the code expires, the code is cancelled, or the component unmounts.
+ * On expiry one final status check runs, so a link made in the last seconds
+ * is not misreported as "expired".
  */
 export function useTelegramConnection(): UseTelegramConnectionResult {
   const { showToast } = useToast();
@@ -52,29 +55,51 @@ export function useTelegramConnection(): UseTelegramConnectionResult {
   useEffect(() => {
     if (pendingCode === null || expiresAtMs === null) return;
 
+    // `cancelled`: effect cleaned up (ignore everything). `isStopped`: polling
+    // halted because the code expired (only the final check may settle state).
     let cancelled = false;
+    let isStopped = false;
     let pollTimer: ReturnType<typeof setTimeout> | undefined;
 
-    const expiryTimer = setTimeout(() => {
-      cancelled = true;
+    function markConnected(status: TelegramStatus): void {
+      setState(statusToState(status));
+      showToast("Telegram connected.", "success");
+    }
+
+    async function finalCheck(): Promise<void> {
+      isStopped = true;
       clearTimeout(pollTimer);
+      try {
+        const status = await getTelegramStatus();
+        if (cancelled) return;
+        if (status.connected) {
+          markConnected(status);
+          return;
+        }
+      } catch {
+        if (cancelled) return;
+      }
       setState({ status: "not-connected", isCodeExpired: true });
-    }, Math.max(0, expiresAtMs - Date.now()));
+    }
+
+    const expiryTimer = setTimeout(
+      () => void finalCheck(),
+      getExpiryDelayMs(expiresAtMs, Date.now()),
+    );
 
     // Chained timeouts (not setInterval) so slow responses never overlap
     async function poll(): Promise<void> {
       try {
         const status = await getTelegramStatus();
-        if (cancelled) return;
+        if (cancelled || isStopped) return;
         if (status.connected) {
-          setState(statusToState(status));
-          showToast("Telegram connected.", "success");
+          markConnected(status);
           return;
         }
       } catch {
         // Transient failure: keep polling until the code expires
       }
-      if (!cancelled) pollTimer = setTimeout(() => void poll(), STATUS_POLL_INTERVAL_MS);
+      if (!cancelled && !isStopped) pollTimer = setTimeout(() => void poll(), STATUS_POLL_INTERVAL_MS);
     }
 
     pollTimer = setTimeout(() => void poll(), STATUS_POLL_INTERVAL_MS);
@@ -87,20 +112,22 @@ export function useTelegramConnection(): UseTelegramConnectionResult {
   }, [pendingCode, expiresAtMs, showToast]);
 
   const connect = useCallback(async (): Promise<void> => {
+    if (isGenerating) return;
     setIsGenerating(true);
     try {
       const result = await generateConnectionCode();
-      setState({
-        status: "awaiting-link",
-        code: result.code,
-        expiresAtMs: parseUtcDate(result.expires_at).getTime(),
-      });
+      const parsedExpiresAtMs = parseUtcDate(result.expires_at).getTime();
+      if (Number.isNaN(parsedExpiresAtMs)) {
+        showToast("Something went wrong. Please try again.", "error");
+        return;
+      }
+      setState({ status: "awaiting-link", code: result.code, expiresAtMs: parsedExpiresAtMs });
     } catch (error: unknown) {
       handleApiError(error, showToast);
     } finally {
       setIsGenerating(false);
     }
-  }, [showToast]);
+  }, [isGenerating, showToast]);
 
   const cancelCode = useCallback((): void => {
     setState({ status: "not-connected", isCodeExpired: false });

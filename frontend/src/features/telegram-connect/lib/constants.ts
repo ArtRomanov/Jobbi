@@ -1,3 +1,5 @@
+import { colors } from "@/shared/ui";
+
 /** How often to re-check link status while a connection code is on screen. */
 export const STATUS_POLL_INTERVAL_MS = 3000;
 
@@ -6,3 +8,11 @@ export const STATUS_POLL_INTERVAL_MS = 3000;
  * bot's @username, so we use neutral wording instead of hardcoding a handle.
  */
 export const BOT_DISPLAY_NAME = "the Jobbi bot";
+
+/**
+ * Server-side code lifetime. Used to cap the client-side expiry timer so a
+ * fast/skewed client clock can't make a fresh code "expire" instantly.
+ */
+export const CODE_TTL_MS = 10 * 60 * 1000;
+
+export const MUTED_TEXT_STYLE = { fontSize: "0.875rem", color: colors.textMuted } as const;

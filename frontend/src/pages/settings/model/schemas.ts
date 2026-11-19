@@ -8,7 +8,7 @@ export const settingsSchema = z.object({
   salary_min: z.string().optional(),
   salary_max: z.string().optional(),
   salary_currency: z.string().optional(),
-  timezone: z.string().optional(),
+  timezone: z.string().min(1, "Timezone is required for the daily summary"),
   summary_time: z
     .string()
     .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use HH:MM (24-hour) format"),

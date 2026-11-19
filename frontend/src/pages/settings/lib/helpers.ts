@@ -32,15 +32,15 @@ type IntlWithSupportedValues = typeof Intl & {
 
 /**
  * Options for the timezone select: every IANA zone the browser knows, plus the
- * currently saved value (even if the browser doesn't list it).
+ * saved and detected values. Timezone is required for summary scheduling, so
+ * there is no "Not set" choice — only a placeholder while nothing is saved yet
+ * (form validation still rejects submitting it).
  */
 export function getTimezoneOptions(current: string | null): Array<{ value: string; label: string }> {
   const zones = new Set((Intl as IntlWithSupportedValues).supportedValuesOf?.("timeZone") ?? []);
   if (current) zones.add(current);
   const detected = detectBrowserTimezone();
   if (detected) zones.add(detected);
-  return [
-    { value: "", label: "Not set" },
-    ...[...zones].sort().map((zone) => ({ value: zone, label: zone.replace(/_/g, " ") })),
-  ];
+  const options = [...zones].sort().map((zone) => ({ value: zone, label: zone.replace(/_/g, " ") }));
+  return current ? options : [{ value: "", label: "Select timezone..." }, ...options];
 }

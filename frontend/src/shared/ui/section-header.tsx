@@ -1,3 +1,4 @@
+import type { Ref } from "react";
 import { colors } from "./theme";
 
 interface SectionHeaderProps {
@@ -5,13 +6,15 @@ interface SectionHeaderProps {
   subtitle: string;
   /** Optional heading id so a wrapping <section> can use aria-labelledby. */
   id?: string;
+  /** When given, the heading becomes programmatically focusable (tabIndex=-1). */
+  headingRef?: Ref<HTMLHeadingElement>;
 }
 
 /**
  * Secondary section heading (h2 + subtitle) preceded by a separator rule.
  * Used for stacked sections inside a single PageCard (e.g. Settings).
  */
-export function SectionHeader({ title, subtitle, id }: SectionHeaderProps) {
+export function SectionHeader({ title, subtitle, id, headingRef }: SectionHeaderProps) {
   return (
     <>
       <hr
@@ -23,6 +26,8 @@ export function SectionHeader({ title, subtitle, id }: SectionHeaderProps) {
       />
       <h2
         id={id}
+        ref={headingRef}
+        tabIndex={headingRef ? -1 : undefined}
         style={{
           fontSize: "1.25rem",
           fontWeight: 700,
