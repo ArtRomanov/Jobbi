@@ -122,7 +122,12 @@ async def test_update_me_summary_settings_persisted(
         assert data["summary_time"] == "08:30"
 
 
-@pytest.mark.parametrize("bad_time", ["8:30", "0830", "08:30:00", "noon", ""])
+@pytest.mark.parametrize(
+    "bad_time",
+    # U+0660 is ARABIC-INDIC DIGIT ZERO and U+FF10 FULLWIDTH DIGIT ZERO: a Unicode-aware
+    # \d would accept them.
+    ["8:30", "0830", "08:30:00", "noon", "", "1\u0660:0\u0660", "\uff10\uff18:30"],
+)
 async def test_update_me_summary_time_bad_format_rejected(
     client: httpx.AsyncClient, registered_user: dict, bad_time: str
 ) -> None:
@@ -163,7 +168,22 @@ async def test_update_me_summary_time_range_edges_accepted(
 
 
 @pytest.mark.parametrize(
-    "bad_zone", ["Not/AZone", "Mars/Olympus_Mons", "../etc/passwd", "", " "]
+    "bad_zone",
+    [
+        "Not/AZone",
+        "Mars/Olympus_Mons",
+        "../etc/passwd",
+        "",
+        " ",
+        # A tzdata directory: ZoneInfo() raises IsADirectoryError on Python <3.13.
+        "America",
+        # Passes ZoneInfo() on case-insensitive filesystems (macOS) only.
+        "europe/berlin",
+        # Real files in the tz database that are not usable IANA zones.
+        "Factory",
+        "posixrules",
+        "localtime",
+    ],
 )
 async def test_update_me_unknown_timezone_rejected(
     client: httpx.AsyncClient, registered_user: dict, bad_zone: str
@@ -189,6 +209,34 @@ async def test_update_me_valid_timezone_accepted(
 
     assert resp.status_code == 200
     assert resp.json()["timezone"] == zone
+
+
+async def test_update_me_explicit_null_summary_time_rejected(
+    client: httpx.AsyncClient, registered_user: dict
+) -> None:
+    headers = _auth_header(registered_user["access_token"])
+
+    resp = await client.patch(
+        "/api/v1/users/me", headers=headers, json={"summary_time": None}
+    )
+    get_resp = await client.get("/api/v1/users/me", headers=headers)
+
+    assert resp.status_code == 422
+    assert get_resp.json()["summary_time"] == "10:00"
+
+
+async def test_update_me_omitting_summary_time_keeps_it(
+    client: httpx.AsyncClient, registered_user: dict
+) -> None:
+    headers = _auth_header(registered_user["access_token"])
+    await client.patch("/api/v1/users/me", headers=headers, json={"summary_time": "07:15"})
+
+    resp = await client.patch(
+        "/api/v1/users/me", headers=headers, json={"full_name": "Renamed"}
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["summary_time"] == "07:15"
 
 
 async def test_update_me_timezone_too_long_rejected(
