@@ -52,7 +52,7 @@ _Extend Jobbi with external job sources to streamline the research step._
 
 - [ ] **Telegram Bot Integration**
   - [ ] **Job Alerts via Telegram:** Receive notifications about new matching jobs directly in Telegram.
-  - [ ] **Quick Add from Telegram:** Forward a job posting to Jobbi's bot to create an application entry automatically.
+  - [x] **Quick Add from Telegram:** Forward a job posting to Jobbi's bot to create an application entry automatically.
 
 - [ ] **HeadHunter Integration**
   - [ ] **Job Search & Import:** Search HeadHunter from within Jobbi and import job postings directly as application entries.
