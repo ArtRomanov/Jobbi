@@ -1,5 +1,6 @@
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
+from typing import TypeAlias
 from unittest.mock import AsyncMock
 
 import pytest
@@ -14,7 +15,7 @@ from tests.conftest import TestSessionLocal
 
 CHAT_ID = 555_000_111
 
-type MakeUser = Callable[..., Awaitable[User]]
+MakeUser: TypeAlias = Callable[..., Awaitable[User]]
 
 
 @pytest.fixture(autouse=True)

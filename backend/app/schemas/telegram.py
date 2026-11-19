@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, TypeAlias
 
 from pydantic import AfterValidator, BaseModel
 
@@ -11,7 +11,7 @@ def _assume_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-type UtcDatetime = Annotated[datetime, AfterValidator(_assume_utc)]
+UtcDatetime: TypeAlias = Annotated[datetime, AfterValidator(_assume_utc)]
 
 
 class ConnectionCodeResponse(BaseModel):

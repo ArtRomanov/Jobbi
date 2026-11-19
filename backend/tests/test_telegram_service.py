@@ -1,6 +1,7 @@
 import re
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
+from typing import TypeAlias
 
 import pytest
 from sqlalchemy import select, update
@@ -22,7 +23,7 @@ CODE_PATTERN = re.compile(r"^[A-Z0-9]{6}$")
 CHAT_ID = 111_222_333
 OTHER_CHAT_ID = 444_555_666
 
-type MakeUser = Callable[..., Awaitable[User]]
+MakeUser: TypeAlias = Callable[..., Awaitable[User]]
 
 
 def _utcnow_naive() -> datetime:

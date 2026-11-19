@@ -11,6 +11,7 @@ import logging
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import TypeAlias
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -41,7 +42,7 @@ CHAT_ID = 777_000_111
 OTHER_CHAT_ID = 777_000_222
 FAKE_TOKEN = "123:fake"
 
-type MakeUser = Callable[..., Awaitable[User]]
+MakeUser: TypeAlias = Callable[..., Awaitable[User]]
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
+from typing import TypeAlias
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,8 +18,8 @@ from app.services.summary_service import (
 NOW = datetime(2026, 6, 15, 12, 0, 0)
 LONG_AGO = NOW - timedelta(days=30)
 
-type MakeUser = Callable[..., Awaitable[User]]
-type HistoryEntry = tuple[ApplicationStatus, datetime]
+MakeUser: TypeAlias = Callable[..., Awaitable[User]]
+HistoryEntry: TypeAlias = tuple[ApplicationStatus, datetime]
 
 
 @pytest.fixture
@@ -63,7 +64,7 @@ def add_application(
     return _add
 
 
-type AddApplication = Callable[..., Awaitable[Application]]
+AddApplication: TypeAlias = Callable[..., Awaitable[Application]]
 
 
 def _line(summary: str, prefix: str) -> str | None:
