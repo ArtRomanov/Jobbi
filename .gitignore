@@ -32,3 +32,6 @@ build/
 *.swo
 *~
 .DS_Store
+
+# TypeScript incremental build cache
+*.tsbuildinfo
