@@ -100,27 +100,77 @@ async def test_create_code_does_not_touch_other_users_codes(
     assert link.user_id == alice.id
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BUG: codes are not unique across users (no unique constraint, no retry on "
-        "collision). Two users holding the same active code make "
-        "verify_and_consume_code raise MultipleResultsFound "
-        "(telegram_service.py scalar_one_or_none on code lookup)."
-    ),
-)
-async def test_verify_with_colliding_codes_does_not_crash(
+def _scripted_codes(monkeypatch: pytest.MonkeyPatch, *codes: str) -> None:
+    """Make _generate_code return the given values in order."""
+    sequence = iter(codes)
+    monkeypatch.setattr(telegram_service, "_generate_code", lambda: next(sequence))
+
+
+async def test_create_code_retries_on_active_collision(
     db_session: AsyncSession,
     make_user: MakeUser,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(telegram_service, "_generate_code", lambda: "ABC123")
     alice, bob = await make_user(), await make_user()
+    _scripted_codes(monkeypatch, "ABC123", "ABC123", "ABC123", "XYZ789")
     await create_connection_code(db_session, alice.id)
-    await create_connection_code(db_session, bob.id)
 
-    # Must not raise; a sane outcome is either a link or a clean rejection.
-    await verify_and_consume_code(db_session, "ABC123", CHAT_ID, None)
+    bob_code = await create_connection_code(db_session, bob.id)
+
+    assert bob_code.code == "XYZ789"
+
+
+@pytest.mark.parametrize("stale", ["used", "expired"])
+async def test_create_code_may_reuse_value_of_stale_code(
+    db_session: AsyncSession,
+    make_user: MakeUser,
+    monkeypatch: pytest.MonkeyPatch,
+    stale: str,
+) -> None:
+    alice, bob = await make_user(), await make_user()
+    _scripted_codes(monkeypatch, "ABC123", "ABC123")
+    alice_code = await create_connection_code(db_session, alice.id)
+    if stale == "used":
+        await verify_and_consume_code(db_session, "ABC123", CHAT_ID, None)
+    else:
+        await _expire_code(db_session, alice_code.id)
+
+    bob_code = await create_connection_code(db_session, bob.id)
+    link = await verify_and_consume_code(db_session, "ABC123", OTHER_CHAT_ID, None)
+
+    assert bob_code.code == "ABC123"
+    assert link is not None
+    assert link.user_id == bob.id
+
+
+async def test_create_code_gives_up_after_bounded_retries(
+    db_session: AsyncSession,
+    make_user: MakeUser,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    alice, bob = await make_user(), await make_user()
+    monkeypatch.setattr(telegram_service, "_generate_code", lambda: "ABC123")
+    await create_connection_code(db_session, alice.id)
+
+    with pytest.raises(telegram_service.CodeGenerationError):
+        await create_connection_code(db_session, bob.id)
+
+
+async def test_verify_ambiguous_active_code_rejected_without_crash(
+    db_session: AsyncSession, make_user: MakeUser
+) -> None:
+    # Simulates a concurrent-generation race that slipped past the retry check.
+    alice, bob = await make_user(), await make_user()
+    expires_at = _utcnow_naive() + timedelta(minutes=10)
+    for user in (alice, bob):
+        db_session.add(
+            TelegramConnectionCode(user_id=user.id, code="ABC123", expires_at=expires_at)
+        )
+    await db_session.commit()
+
+    link = await verify_and_consume_code(db_session, "ABC123", CHAT_ID, None)
+
+    assert link is None
 
 
 # ---------------------------------------------------------------------------

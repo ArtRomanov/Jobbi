@@ -5,9 +5,12 @@ import httpx
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services import telegram_service
 from app.services.telegram_service import get_user_link, verify_and_consume_code
 
 CHAT_ID = 987_654_321
+# Timestamps must carry an explicit UTC marker so browsers don't read them as local.
+UTC_SUFFIX = re.compile(r"(Z|\+00:00)$")
 
 
 def _auth_header(token: str) -> dict[str, str]:
@@ -50,7 +53,10 @@ async def test_connection_code_created(
     assert resp.status_code == 201
     data = resp.json()
     assert re.fullmatch(r"[A-Z0-9]{6}", data["code"])
-    expires_at = datetime.fromisoformat(data["expires_at"]).replace(tzinfo=None)
+    assert UTC_SUFFIX.search(data["expires_at"])
+    expires_at = datetime.fromisoformat(data["expires_at"])
+    assert expires_at.utcoffset() == timedelta(0)
+    expires_at = expires_at.replace(tzinfo=None)
     assert timedelta(minutes=9) < expires_at - before <= timedelta(minutes=10, seconds=5)
 
 
@@ -65,6 +71,31 @@ async def test_connection_code_invalidates_prior(
 
     assert await verify_and_consume_code(db_session, first["code"], CHAT_ID, None) is None
     assert await verify_and_consume_code(db_session, second["code"], CHAT_ID, None)
+
+
+async def test_connection_code_generation_failure_returns_503(
+    client: httpx.AsyncClient,
+    registered_user: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(telegram_service, "_generate_code", lambda: "ABC123")
+    headers = _auth_header(registered_user["access_token"])
+    other = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "holder@example.com",
+            "password": "holderpassword123",
+            "full_name": "Code Holder",
+        },
+    )
+    await client.post(
+        "/api/v1/telegram/connection-code",
+        headers=_auth_header(other.json()["access_token"]),
+    )
+
+    resp = await client.post("/api/v1/telegram/connection-code", headers=headers)
+
+    assert resp.status_code == 503
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +131,8 @@ async def test_status_connected(
     data = resp.json()
     assert data["connected"] is True
     assert data["telegram_username"] == "alice_tg"
-    assert data["linked_at"] is not None
+    assert UTC_SUFFIX.search(data["linked_at"])
+    assert datetime.fromisoformat(data["linked_at"]).utcoffset() == timedelta(0)
 
 
 # ---------------------------------------------------------------------------

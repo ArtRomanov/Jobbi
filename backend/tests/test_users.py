@@ -135,15 +135,7 @@ async def test_update_me_summary_time_bad_format_rejected(
     assert resp.status_code == 422
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FINDING: UserUpdate.summary_time only checks the HH:MM shape "
-        r"(pattern ^\d{2}:\d{2}$), so out-of-range values like 25:99 are accepted "
-        "(app/schemas/user.py summary_time field)."
-    ),
-)
-@pytest.mark.parametrize("bad_time", ["25:00", "12:60", "99:99"])
+@pytest.mark.parametrize("bad_time", ["24:00", "25:00", "12:60", "99:99"])
 async def test_update_me_summary_time_out_of_range_rejected(
     client: httpx.AsyncClient, registered_user: dict, bad_time: str
 ) -> None:
@@ -156,23 +148,47 @@ async def test_update_me_summary_time_out_of_range_rejected(
     assert resp.status_code == 422
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "FINDING: UserUpdate.timezone only enforces max_length=64; unknown IANA "
-        "names like Not/AZone are accepted (app/schemas/user.py timezone field)."
-    ),
-)
-async def test_update_me_unknown_timezone_rejected(
-    client: httpx.AsyncClient, registered_user: dict
+@pytest.mark.parametrize("good_time", ["00:00", "09:05", "19:59", "23:59"])
+async def test_update_me_summary_time_range_edges_accepted(
+    client: httpx.AsyncClient, registered_user: dict, good_time: str
 ) -> None:
     resp = await client.patch(
         "/api/v1/users/me",
         headers=_auth_header(registered_user["access_token"]),
-        json={"timezone": "Not/AZone"},
+        json={"summary_time": good_time},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["summary_time"] == good_time
+
+
+@pytest.mark.parametrize(
+    "bad_zone", ["Not/AZone", "Mars/Olympus_Mons", "../etc/passwd", "", " "]
+)
+async def test_update_me_unknown_timezone_rejected(
+    client: httpx.AsyncClient, registered_user: dict, bad_zone: str
+) -> None:
+    resp = await client.patch(
+        "/api/v1/users/me",
+        headers=_auth_header(registered_user["access_token"]),
+        json={"timezone": bad_zone},
     )
 
     assert resp.status_code == 422
+
+
+@pytest.mark.parametrize("zone", ["UTC", "America/New_York", "Asia/Kolkata", None])
+async def test_update_me_valid_timezone_accepted(
+    client: httpx.AsyncClient, registered_user: dict, zone: str | None
+) -> None:
+    resp = await client.patch(
+        "/api/v1/users/me",
+        headers=_auth_header(registered_user["access_token"]),
+        json={"timezone": zone},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["timezone"] == zone
 
 
 async def test_update_me_timezone_too_long_rejected(

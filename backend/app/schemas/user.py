@@ -1,6 +1,7 @@
 from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class UserRead(BaseModel):
@@ -29,7 +30,22 @@ class UserUpdate(BaseModel):
     salary_max: int | None = None
     salary_currency: str | None = Field(default=None, max_length=3)
     timezone: str | None = Field(default=None, max_length=64)
-    summary_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    # 24-hour HH:MM, 00:00–23:59
+    summary_time: str | None = Field(
+        default=None, pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$"
+    )
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_timezone(cls, value: str | None) -> str | None:
+        """Accept only IANA names zoneinfo can resolve (same check the bot uses)."""
+        if value is None:
+            return value
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"Unknown timezone: {value!r}") from exc
+        return value
 
 
 class ChangePasswordRequest(BaseModel):
