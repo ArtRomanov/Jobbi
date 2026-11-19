@@ -2,7 +2,7 @@ import secrets
 import string
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import ColumnElement, and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.telegram_connection_code import TelegramConnectionCode
@@ -11,6 +11,11 @@ from app.models.telegram_link import TelegramLink
 CODE_EXPIRY_MINUTES = 10
 CODE_LENGTH = 6
 CODE_ALPHABET = string.ascii_uppercase + string.digits
+MAX_CODE_GENERATION_ATTEMPTS = 10
+
+
+class CodeGenerationError(RuntimeError):
+    """Could not find a code value that is not already active."""
 
 
 def _generate_code() -> str:
@@ -21,10 +26,43 @@ def _now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _is_active(now: datetime) -> ColumnElement[bool]:
+    """Filter for codes that can still be redeemed (unused and unexpired)."""
+    return and_(
+        TelegramConnectionCode.used_at.is_(None),
+        TelegramConnectionCode.expires_at >= now,
+    )
+
+
+async def _generate_unique_active_code(db: AsyncSession, now: datetime) -> str:
+    """Return a code value that no other active code currently holds.
+
+    Used/expired rows may share the value; they can never be redeemed again.
+
+    Raises:
+        CodeGenerationError: if every attempt collided (practically impossible
+            with 36^6 values, but bounded so a bug can't loop forever).
+    """
+    for _ in range(MAX_CODE_GENERATION_ATTEMPTS):
+        candidate = _generate_code()
+        clash = await db.execute(
+            select(TelegramConnectionCode.id)
+            .where(TelegramConnectionCode.code == candidate, _is_active(now))
+            .limit(1)
+        )
+        if clash.first() is None:
+            return candidate
+    raise CodeGenerationError("Could not generate a unique connection code.")
+
+
 async def create_connection_code(
     db: AsyncSession, user_id: str
 ) -> TelegramConnectionCode:
-    """Generate a new code for the user, invalidating any prior active codes."""
+    """Generate a new code for the user, invalidating any prior active codes.
+
+    Raises:
+        CodeGenerationError: if no non-colliding code could be generated.
+    """
     # Invalidate prior unused codes for this user
     await db.execute(
         delete(TelegramConnectionCode).where(
@@ -36,7 +74,7 @@ async def create_connection_code(
     now = _now_naive()
     code = TelegramConnectionCode(
         user_id=user_id,
-        code=_generate_code(),
+        code=await _generate_unique_active_code(db, now),
         expires_at=now + timedelta(minutes=CODE_EXPIRY_MINUTES),
     )
     db.add(code)
@@ -52,17 +90,20 @@ async def verify_and_consume_code(
 
     If the user already has a link, it is replaced.
     If the chat_id is already linked to a different user, returns None.
+    If more than one active code shares the value (only possible through a
+    concurrent-generation race), returns None rather than guess which user
+    the code belongs to.
     """
-    result = await db.execute(
-        select(TelegramConnectionCode).where(TelegramConnectionCode.code == code)
-    )
-    record = result.scalar_one_or_none()
-    if record is None or record.used_at is not None:
-        return None
-
     now = _now_naive()
-    if record.expires_at < now:
+    result = await db.execute(
+        select(TelegramConnectionCode)
+        .where(TelegramConnectionCode.code == code, _is_active(now))
+        .limit(2)
+    )
+    matches = result.scalars().all()
+    if len(matches) != 1:
         return None
+    record = matches[0]
 
     # Check if chat_id already linked to a different user
     existing_chat = await db.execute(

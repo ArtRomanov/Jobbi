@@ -87,6 +87,123 @@ async def test_update_me_email_not_editable(
 
 
 # ---------------------------------------------------------------------------
+# Telegram summary settings: timezone + summary_time
+# ---------------------------------------------------------------------------
+
+
+async def test_get_me_summary_settings_defaults(
+    client: httpx.AsyncClient, registered_user: dict
+) -> None:
+    resp = await client.get(
+        "/api/v1/users/me", headers=_auth_header(registered_user["access_token"])
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["timezone"] is None
+    assert data["summary_time"] == "10:00"
+
+
+async def test_update_me_summary_settings_persisted(
+    client: httpx.AsyncClient, registered_user: dict
+) -> None:
+    headers = _auth_header(registered_user["access_token"])
+
+    patch_resp = await client.patch(
+        "/api/v1/users/me",
+        headers=headers,
+        json={"timezone": "Europe/Berlin", "summary_time": "08:30"},
+    )
+    get_resp = await client.get("/api/v1/users/me", headers=headers)
+
+    assert patch_resp.status_code == 200
+    for data in (patch_resp.json(), get_resp.json()):
+        assert data["timezone"] == "Europe/Berlin"
+        assert data["summary_time"] == "08:30"
+
+
+@pytest.mark.parametrize("bad_time", ["8:30", "0830", "08:30:00", "noon", ""])
+async def test_update_me_summary_time_bad_format_rejected(
+    client: httpx.AsyncClient, registered_user: dict, bad_time: str
+) -> None:
+    resp = await client.patch(
+        "/api/v1/users/me",
+        headers=_auth_header(registered_user["access_token"]),
+        json={"summary_time": bad_time},
+    )
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.parametrize("bad_time", ["24:00", "25:00", "12:60", "99:99"])
+async def test_update_me_summary_time_out_of_range_rejected(
+    client: httpx.AsyncClient, registered_user: dict, bad_time: str
+) -> None:
+    resp = await client.patch(
+        "/api/v1/users/me",
+        headers=_auth_header(registered_user["access_token"]),
+        json={"summary_time": bad_time},
+    )
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.parametrize("good_time", ["00:00", "09:05", "19:59", "23:59"])
+async def test_update_me_summary_time_range_edges_accepted(
+    client: httpx.AsyncClient, registered_user: dict, good_time: str
+) -> None:
+    resp = await client.patch(
+        "/api/v1/users/me",
+        headers=_auth_header(registered_user["access_token"]),
+        json={"summary_time": good_time},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["summary_time"] == good_time
+
+
+@pytest.mark.parametrize(
+    "bad_zone", ["Not/AZone", "Mars/Olympus_Mons", "../etc/passwd", "", " "]
+)
+async def test_update_me_unknown_timezone_rejected(
+    client: httpx.AsyncClient, registered_user: dict, bad_zone: str
+) -> None:
+    resp = await client.patch(
+        "/api/v1/users/me",
+        headers=_auth_header(registered_user["access_token"]),
+        json={"timezone": bad_zone},
+    )
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.parametrize("zone", ["UTC", "America/New_York", "Asia/Kolkata", None])
+async def test_update_me_valid_timezone_accepted(
+    client: httpx.AsyncClient, registered_user: dict, zone: str | None
+) -> None:
+    resp = await client.patch(
+        "/api/v1/users/me",
+        headers=_auth_header(registered_user["access_token"]),
+        json={"timezone": zone},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["timezone"] == zone
+
+
+async def test_update_me_timezone_too_long_rejected(
+    client: httpx.AsyncClient, registered_user: dict
+) -> None:
+    resp = await client.patch(
+        "/api/v1/users/me",
+        headers=_auth_header(registered_user["access_token"]),
+        json={"timezone": "A" * 65},
+    )
+
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
 # POST /users/me/change-password
 # ---------------------------------------------------------------------------
 
