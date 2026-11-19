@@ -20,20 +20,20 @@
 
 ---
 
-- [ ] **Slice 3: Summary feature**
+- [x] **Slice 3: Summary feature**
   - [x] Create `summary_service.py` (backend): build summary text from applications (pipeline counts, recent status changes in last 24h, follow-up count for Applied > 7 days, empty state message). Shared by bot handlers and any future /summary API endpoint. **[Agent: python-backend]**
   - [x] Create `handlers/summary.py`: `/summary` command → generate + send summary for the requesting chat. Returns "please link first" if unlinked. **[Agent: python-backend]**
   - [x] Create `handlers/jobs.py`: on bot startup, register per-user daily JobQueue jobs at each user's summary_time in their timezone. Add a 5-minute refresh job that syncs registered jobs with current DB state (handles new links, changed times, disconnects). **[Agent: python-backend]**
-  - [ ] Verify: /summary in Telegram → sends formatted summary message. Set summary_time to current time + 2 min, wait → summary arrives automatically. Empty state user gets "No applications tracked yet". **[Agent: qa-tester]**
+  - [x] Verify: /summary in Telegram → sends formatted summary message. Set summary_time to current time + 2 min, wait → summary arrives automatically. Empty state user gets "No applications tracked yet". **[Agent: qa-tester]**
 
 ---
 
-- [ ] **Slice 4: Settings UI for Telegram**
+- [x] **Slice 4: Settings UI for Telegram**
   - [x] Regenerate OpenAPI types. Create `entities/telegram/` slice: types, API calls (getTelegramStatus, generateConnectionCode, disconnectTelegram). **[Agent: typescript-frontend]**
   - [x] Create `features/telegram-connect/` slice: `TelegramSection` component showing connection status. Not-connected state has "Connect Telegram" button that generates code and displays it with instructions. Connected state shows "@username" and "Disconnect" button with confirmation. Polls status every 3 seconds while code is displayed to detect when linking completes. **[Agent: typescript-frontend]**
   - [x] Update `pages/settings/`: add `<TelegramSection />`. Add `timezone` and `summary_time` form fields. Auto-detect browser timezone via `Intl.DateTimeFormat().resolvedOptions().timeZone` on first mount if unset. **[Agent: typescript-frontend]**
   - [x] Code review: Review polling pattern, connection flow UX, and FSD compliance. **[Agent: react-code-reviewer]**
-  - [ ] Verify: Settings → Telegram section shows "Not connected". Click Connect → code displays. Complete link in Telegram → section auto-refreshes to "Connected as @username". Disconnect → back to not connected. Timezone detected and saved. **[Agent: qa-tester]**
+  - [x] Verify: Settings → Telegram section shows "Not connected". Click Connect → code displays. Complete link in Telegram → section auto-refreshes to "Connected as @username". Disconnect → back to not connected. Timezone detected and saved. **[Agent: qa-tester]**
 
 ---
 
