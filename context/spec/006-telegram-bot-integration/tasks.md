@@ -32,7 +32,7 @@
   - [x] Regenerate OpenAPI types. Create `entities/telegram/` slice: types, API calls (getTelegramStatus, generateConnectionCode, disconnectTelegram). **[Agent: typescript-frontend]**
   - [x] Create `features/telegram-connect/` slice: `TelegramSection` component showing connection status. Not-connected state has "Connect Telegram" button that generates code and displays it with instructions. Connected state shows "@username" and "Disconnect" button with confirmation. Polls status every 3 seconds while code is displayed to detect when linking completes. **[Agent: typescript-frontend]**
   - [x] Update `pages/settings/`: add `<TelegramSection />`. Add `timezone` and `summary_time` form fields. Auto-detect browser timezone via `Intl.DateTimeFormat().resolvedOptions().timeZone` on first mount if unset. **[Agent: typescript-frontend]**
-  - [ ] Code review: Review polling pattern, connection flow UX, and FSD compliance. **[Agent: react-code-reviewer]**
+  - [x] Code review: Review polling pattern, connection flow UX, and FSD compliance. **[Agent: react-code-reviewer]**
   - [ ] Verify: Settings → Telegram section shows "Not connected". Click Connect → code displays. Complete link in Telegram → section auto-refreshes to "Connected as @username". Disconnect → back to not connected. Timezone detected and saved. **[Agent: qa-tester]**
 
 ---
