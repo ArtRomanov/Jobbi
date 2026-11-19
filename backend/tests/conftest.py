@@ -2,6 +2,7 @@ import os
 
 # Set env vars before any app imports (database.py calls get_settings() at import time)
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-unit-tests-only")
+os.environ.setdefault("GROQ_API_KEY", "test-groq-key-for-unit-tests-only")
 
 from collections.abc import AsyncGenerator
 
