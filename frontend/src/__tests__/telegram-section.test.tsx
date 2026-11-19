@@ -10,12 +10,13 @@ import {
 } from "./mocks/handlers";
 import { server } from "./setup";
 
-// Fixed "now" in UTC. Code expiry timestamps below are naive UTC (no "Z"),
-// exactly like the backend emits them, so the tests only pass if they are
-// parsed as UTC — independent of the machine's timezone.
+// Fixed "now" in UTC. Code expiry timestamps below mix Z-suffixed UTC (current
+// backend) and naive UTC (older backend); both must parse as UTC regardless of
+// the machine's timezone.
 const NOW = new Date("2026-03-10T12:00:00Z");
 const POLL_INTERVAL_MS = 3000;
 const CODE_TTL_MS = 10 * 60 * 1000;
+const EXPIRY_GRACE_MS = 3000;
 
 type StatusPayload =
   | typeof mockTelegramStatusNotConnected
@@ -35,6 +36,29 @@ function mockStatusSequence(...payloads: StatusPayload[]): { count: () => number
     }),
   );
   return { count: () => calls };
+}
+
+/**
+ * Serve GET /telegram/status as "not connected" until `setConnected(true)`.
+ * Returns a live counter of requests made.
+ */
+function mockStatusSwitch(): { count: () => number; setConnected: (value: boolean) => void } {
+  let calls = 0;
+  let isConnected = false;
+  server.use(
+    http.get("*/api/v1/telegram/status", () => {
+      calls += 1;
+      return HttpResponse.json(
+        isConnected ? mockTelegramStatusConnected : mockTelegramStatusNotConnected,
+      );
+    }),
+  );
+  return {
+    count: () => calls,
+    setConnected: (value) => {
+      isConnected = value;
+    },
+  };
 }
 
 /** Serve a single fixed connection code. */
@@ -74,6 +98,11 @@ function getStatusRegion(): HTMLElement {
 
 async function expectStatus(label: string): Promise<void> {
   await waitFor(() => expect(getStatusRegion()).toHaveTextContent(`Status: ${label}`));
+}
+
+/** Same local "HH:MM" format the code panel uses. */
+function clockTime(epochMs: number): string {
+  return new Date(epochMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function getHeading(): HTMLElement {
@@ -195,46 +224,37 @@ describe("TelegramSection", () => {
   });
 
   it("code expiry runs one final check, stops polling, and offers a new code", async () => {
-    // Expires 5s after NOW: poll at 3s, final check at 5s, nothing at 6s.
     let codeRequests = 0;
     server.use(
       http.post("*/api/v1/telegram/connection-code", () => {
         codeRequests += 1;
         return codeRequests === 1
-          ? HttpResponse.json(
-              { code: "OLD111", expires_at: "2026-03-10T12:00:05" },
-              { status: 201 },
-            )
-          : HttpResponse.json(
-              { code: "NEW222", expires_at: "2026-03-10T12:15:00" },
-              { status: 201 },
-            );
+          ? // Naive UTC (legacy backend format) must still parse as UTC
+            HttpResponse.json({ code: "OLD111", expires_at: "2026-03-10T12:10:00" }, { status: 201 })
+          : HttpResponse.json({ code: "NEW222", expires_at: "2026-03-10T12:25:00Z" }, { status: 201 });
       }),
     );
-    const status = mockStatusSequence(mockTelegramStatusNotConnected);
+    const status = mockStatusSwitch();
     const user = setupUser();
     renderWithProviders(<TelegramSection />);
 
     await user.click(await screen.findByRole("button", { name: "Connect Telegram" }));
     await screen.findByText("OLD111");
 
-    // Still valid after the first poll (a timezone-shifted parse would have
-    // expired it immediately or kept it alive for hours)
-    await advance(POLL_INTERVAL_MS);
-    expect(status.count()).toBe(2);
+    // Still valid at the full TTL: the final check waits out the grace period
+    await advance(CODE_TTL_MS);
     expect(screen.getByText("OLD111")).toBeInTheDocument();
 
-    await advance(2000);
+    await advance(EXPIRY_GRACE_MS);
     await expectStatus("Not connected (code expired)");
     expect(screen.getByText("Generate a new code to try again.")).toBeInTheDocument();
     expect(screen.queryByText("OLD111")).not.toBeInTheDocument();
     expect(screen.queryByText("Telegram connected.")).not.toBeInTheDocument();
-    // initial load + one poll + exactly one final check at expiry
-    expect(status.count()).toBe(3);
 
     // Polling stopped
+    const countAtExpiry = status.count();
     await advance(POLL_INTERVAL_MS * 5);
-    expect(status.count()).toBe(3);
+    expect(status.count()).toBe(countAtExpiry);
 
     // A fresh code can be generated
     await user.click(screen.getByRole("button", { name: "Generate new code" }));
@@ -242,38 +262,70 @@ describe("TelegramSection", () => {
     expect(codeRequests).toBe(2);
   });
 
-  it("a link made in the last seconds before expiry ends connected, not expired", async () => {
-    mockConnectionCodeOnce("LATE33", "2026-03-10T12:00:05");
-    // initial load, poll at 3s (still waiting), final check at expiry (linked)
-    const status = mockStatusSequence(
-      mockTelegramStatusNotConnected,
-      mockTelegramStatusNotConnected,
-      mockTelegramStatusConnected,
-    );
+  it("a link committed after the last poll is caught by the final check (grace period)", async () => {
+    const status = mockStatusSwitch();
     const user = setupUser();
     renderWithProviders(<TelegramSection />);
 
     await user.click(await screen.findByRole("button", { name: "Connect Telegram" }));
-    await screen.findByText("LATE33");
+    await screen.findByText(mockConnectionCode.code);
 
-    await advance(POLL_INTERVAL_MS);
-    expect(status.count()).toBe(2);
+    // Every poll up to the nominal expiry still says "not linked"…
+    await advance(CODE_TTL_MS);
+    expect(screen.getByText(mockConnectionCode.code)).toBeInTheDocument();
+    // …then the server commits the link at the very last moment
+    status.setConnected(true);
 
-    await advance(2000);
+    await advance(EXPIRY_GRACE_MS);
     await expectStatus("Connected as @jobbi_tester");
     expect(screen.getByText("Telegram connected.")).toBeInTheDocument();
     expect(screen.queryByText(/code expired/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Disconnect" })).toBeInTheDocument();
-    expect(status.count()).toBe(3);
 
+    const countAfterLink = status.count();
     await advance(POLL_INTERVAL_MS * 5);
-    expect(status.count()).toBe(3);
+    expect(status.count()).toBe(countAfterLink);
   });
 
-  it("caps the expiry timer at the 10-minute server TTL", async () => {
-    // A skewed expires_at two hours out must not keep the code alive for hours
+  it("a client clock running 3 minutes fast does not expire the code early", async () => {
+    // Server time is 3 min behind the client, so the server's 10-minute code
+    // "expires" only 7 minutes after the client's now (Z-suffixed UTC).
+    const clockSkewMs = 3 * 60 * 1000;
+    const serverExpiresAt = new Date(NOW.getTime() - clockSkewMs + CODE_TTL_MS).toISOString();
+    expect(serverExpiresAt).toBe("2026-03-10T12:07:00.000Z");
+    mockConnectionCodeOnce("FAST55", serverExpiresAt);
+    const status = mockStatusSwitch();
+    const user = setupUser();
+    renderWithProviders(<TelegramSection />);
+
+    await user.click(await screen.findByRole("button", { name: "Connect Telegram" }));
+    await screen.findByText("FAST55");
+
+    // The label follows the user's clock (receipt + TTL), not the skewed expires_at
+    expect(
+      screen.getByText(new RegExp(`Code expires at ${clockTime(NOW.getTime() + CODE_TTL_MS)}\\.`)),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(new RegExp(`Code expires at ${clockTime(Date.parse(serverExpiresAt))}\\.`)),
+    ).not.toBeInTheDocument();
+
+    // Past the skewed expires_at: the server still accepts the code, keep polling
+    await advance(CODE_TTL_MS - clockSkewMs + 30_000);
+    expect(screen.getByText("FAST55")).toBeInTheDocument();
+    expect(screen.queryByText(/code expired/)).not.toBeInTheDocument();
+    const countMidway = status.count();
+    await advance(POLL_INTERVAL_MS * 2);
+    expect(status.count()).toBeGreaterThan(countMidway);
+
+    // The real 10-minute lifetime (from when the code arrived) still applies
+    await advance(CODE_TTL_MS);
+    await expectStatus("Not connected (code expired)");
+  });
+
+  it("ignores a far-future expires_at and expires after the 10-minute TTL", async () => {
+    // A slow client clock (expires_at two hours out) must not keep the code alive for hours
     mockConnectionCodeOnce("SKEW44", "2026-03-10T14:00:00");
-    const status = mockStatusSequence(mockTelegramStatusNotConnected);
+    const status = mockStatusSwitch();
     const user = setupUser();
     renderWithProviders(<TelegramSection />);
 
@@ -283,7 +335,7 @@ describe("TelegramSection", () => {
     await advance(CODE_TTL_MS - 1000);
     expect(screen.getByText("SKEW44")).toBeInTheDocument();
 
-    await advance(2000);
+    await advance(EXPIRY_GRACE_MS + 2000);
     await expectStatus("Not connected (code expired)");
 
     const countAtExpiry = status.count();
@@ -291,13 +343,26 @@ describe("TelegramSection", () => {
     expect(status.count()).toBe(countAtExpiry);
   });
 
-  it("cancelling the code returns to not connected and stops polling", async () => {
-    const status = mockStatusSequence(mockTelegramStatusNotConnected);
+  it("shows an error and stays not connected when expires_at is unparseable", async () => {
+    mockConnectionCodeOnce("BAD666", "not-a-date");
+    const user = setupUser();
+    renderWithProviders(<TelegramSection />);
+
+    await user.click(await screen.findByRole("button", { name: "Connect Telegram" }));
+
+    expect(await screen.findByText("Something went wrong. Please try again.")).toBeInTheDocument();
+    expect(screen.queryByText("BAD666")).not.toBeInTheDocument();
+    await expectStatus("Not connected");
+  });
+
+  it("cancelling the code returns to not connected, checks once, and stops polling", async () => {
+    const status = mockStatusSwitch();
     const user = setupUser();
     renderWithProviders(<TelegramSection />);
 
     await user.click(await screen.findByRole("button", { name: "Connect Telegram" }));
     await screen.findByText(mockConnectionCode.code);
+    const countBeforeCancel = status.count();
 
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
@@ -306,9 +371,67 @@ describe("TelegramSection", () => {
     expect(screen.queryByText(/code expired/)).not.toBeInTheDocument();
     expect(getHeading()).toHaveFocus();
 
-    const countAfterCancel = status.count();
+    // Exactly one final status check, then nothing
+    await waitFor(() => expect(status.count()).toBe(countBeforeCancel + 1));
     await advance(POLL_INTERVAL_MS * 5);
-    expect(status.count()).toBe(countAfterCancel);
+    expect(status.count()).toBe(countBeforeCancel + 1);
+    await expectStatus("Not connected");
+    expect(screen.queryByText("Telegram connected.")).not.toBeInTheDocument();
+  });
+
+  it("cancelling after the code was already sent ends connected", async () => {
+    const status = mockStatusSwitch();
+    const user = setupUser();
+    renderWithProviders(<TelegramSection />);
+
+    await user.click(await screen.findByRole("button", { name: "Connect Telegram" }));
+    await screen.findByText(mockConnectionCode.code);
+
+    // The user sent the code to the bot, then clicked Cancel before the next poll
+    status.setConnected(true);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await expectStatus("Connected as @jobbi_tester");
+    expect(screen.getByText("Telegram connected.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Disconnect" })).toBeInTheDocument();
+
+    const countAfterLink = status.count();
+    await advance(POLL_INTERVAL_MS * 5);
+    expect(status.count()).toBe(countAfterLink);
+  });
+
+  it("a new code generated during the cancel check is not overridden by it", async () => {
+    // Hold the cancel check's response until after the user has asked for a new code
+    let releaseCheck: (() => void) | undefined;
+    let calls = 0;
+    server.use(
+      http.get("*/api/v1/telegram/status", async () => {
+        calls += 1;
+        if (calls === 2) {
+          await new Promise<void>((resolve) => {
+            releaseCheck = resolve;
+          });
+          return HttpResponse.json(mockTelegramStatusConnected);
+        }
+        return HttpResponse.json(mockTelegramStatusNotConnected);
+      }),
+    );
+    const user = setupUser();
+    renderWithProviders(<TelegramSection />);
+
+    await user.click(await screen.findByRole("button", { name: "Connect Telegram" }));
+    await screen.findByText(mockConnectionCode.code);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(releaseCheck).toBeDefined());
+
+    await user.click(screen.getByRole("button", { name: "Connect Telegram" }));
+    await screen.findByText(mockConnectionCode.code);
+
+    releaseCheck?.();
+    await advance(100);
+    // The stale check must not jump to "connected" over the fresh code
+    expect(screen.getByText(mockConnectionCode.code)).toBeInTheDocument();
+    expect(screen.queryByText("Telegram connected.")).not.toBeInTheDocument();
   });
 
   it("unmounting stops polling", async () => {

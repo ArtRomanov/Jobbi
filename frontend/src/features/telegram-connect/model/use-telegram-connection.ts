@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { handleApiError } from "@/shared/api";
 import { useToast } from "@/shared/ui";
 import {
@@ -7,8 +7,8 @@ import {
   getTelegramStatus,
 } from "@/entities/telegram";
 import type { TelegramStatus } from "@/entities/telegram";
-import { STATUS_POLL_INTERVAL_MS } from "../lib/constants";
-import { getExpiryDelayMs, parseUtcDate, statusToState } from "../lib/helpers";
+import { CODE_TTL_MS, EXPIRY_GRACE_MS, STATUS_POLL_INTERVAL_MS } from "../lib/constants";
+import { parseUtcDate, statusToState } from "../lib/helpers";
 import type {
   TelegramConnectionState,
   UseTelegramConnectionResult,
@@ -20,8 +20,11 @@ import type {
  *
  * Polling runs only in the "awaiting-link" state and stops when the link is
  * detected, the code expires, the code is cancelled, or the component unmounts.
- * On expiry one final status check runs, so a link made in the last seconds
- * is not misreported as "expired".
+ *
+ * Expiry is timed as CODE_TTL_MS from when the code arrived (a relative
+ * timer), not from `expires_at`, so a skewed client clock can't end polling
+ * while the server still accepts the code. Both expiry and Cancel run one
+ * final status check, so a link made at the last moment is not lost.
  */
 export function useTelegramConnection(): UseTelegramConnectionResult {
   const { showToast } = useToast();
@@ -29,6 +32,24 @@ export function useTelegramConnection(): UseTelegramConnectionResult {
   const [reloadKey, setReloadKey] = useState(0);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
+  const isMountedRef = useRef(false);
+  // Bumped on every connect/cancel; a stale cancel check must not override a newer flow
+  const flowSeqRef = useRef(0);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  const markConnected = useCallback(
+    (status: TelegramStatus): void => {
+      setState(statusToState(status));
+      showToast("Telegram connected.", "success");
+    },
+    [showToast],
+  );
 
   // Initial (and retry) status load
   useEffect(() => {
@@ -47,24 +68,18 @@ export function useTelegramConnection(): UseTelegramConnectionResult {
     return () => { cancelled = true; };
   }, [reloadKey]);
 
-  // Primitive deps so the effect restarts only when a new code is issued
+  // Primitive dep so the effect restarts only when a new code is issued
   const pendingCode = state.status === "awaiting-link" ? state.code : null;
-  const expiresAtMs = state.status === "awaiting-link" ? state.expiresAtMs : null;
 
   // Poll status while a code is on screen; stop on link, expiry, or unmount
   useEffect(() => {
-    if (pendingCode === null || expiresAtMs === null) return;
+    if (pendingCode === null) return;
 
     // `cancelled`: effect cleaned up (ignore everything). `isStopped`: polling
     // halted because the code expired (only the final check may settle state).
     let cancelled = false;
     let isStopped = false;
     let pollTimer: ReturnType<typeof setTimeout> | undefined;
-
-    function markConnected(status: TelegramStatus): void {
-      setState(statusToState(status));
-      showToast("Telegram connected.", "success");
-    }
 
     async function finalCheck(): Promise<void> {
       isStopped = true;
@@ -82,10 +97,8 @@ export function useTelegramConnection(): UseTelegramConnectionResult {
       setState({ status: "not-connected", isCodeExpired: true });
     }
 
-    const expiryTimer = setTimeout(
-      () => void finalCheck(),
-      getExpiryDelayMs(expiresAtMs, Date.now()),
-    );
+    // Relative timer from code receipt: immune to client clock skew
+    const expiryTimer = setTimeout(() => void finalCheck(), CODE_TTL_MS + EXPIRY_GRACE_MS);
 
     // Chained timeouts (not setInterval) so slow responses never overlap
     async function poll(): Promise<void> {
@@ -109,19 +122,25 @@ export function useTelegramConnection(): UseTelegramConnectionResult {
       clearTimeout(pollTimer);
       clearTimeout(expiryTimer);
     };
-  }, [pendingCode, expiresAtMs, showToast]);
+  }, [pendingCode, markConnected]);
 
   const connect = useCallback(async (): Promise<void> => {
     if (isGenerating) return;
+    flowSeqRef.current += 1;
     setIsGenerating(true);
     try {
       const result = await generateConnectionCode();
-      const parsedExpiresAtMs = parseUtcDate(result.expires_at).getTime();
-      if (Number.isNaN(parsedExpiresAtMs)) {
+      // expires_at is only a sanity check: reject a malformed payload
+      if (Number.isNaN(parseUtcDate(result.expires_at).getTime())) {
         showToast("Something went wrong. Please try again.", "error");
         return;
       }
-      setState({ status: "awaiting-link", code: result.code, expiresAtMs: parsedExpiresAtMs });
+      // Displayed expiry = receipt + TTL on the user's own clock, matching the expiry timer
+      setState({
+        status: "awaiting-link",
+        code: result.code,
+        expiresAtMs: Date.now() + CODE_TTL_MS,
+      });
     } catch (error: unknown) {
       handleApiError(error, showToast);
     } finally {
@@ -129,9 +148,24 @@ export function useTelegramConnection(): UseTelegramConnectionResult {
     }
   }, [isGenerating, showToast]);
 
+  // Stop polling right away, then check once: the user may already have sent the code
   const cancelCode = useCallback((): void => {
+    flowSeqRef.current += 1;
+    const seq = flowSeqRef.current;
     setState({ status: "not-connected", isCodeExpired: false });
-  }, []);
+
+    async function cancelCheck(): Promise<void> {
+      try {
+        const status = await getTelegramStatus();
+        if (!isMountedRef.current || seq !== flowSeqRef.current) return;
+        if (status.connected) markConnected(status);
+      } catch {
+        // Stay "not connected"; the next page load will show the real status
+      }
+    }
+
+    void cancelCheck();
+  }, [markConnected]);
 
   const disconnect = useCallback(async (): Promise<void> => {
     setIsDisconnecting(true);

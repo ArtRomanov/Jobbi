@@ -1,12 +1,12 @@
 import type { TelegramStatus } from "@/entities/telegram";
 import type { TelegramConnectionState } from "../model/types";
-import { CODE_TTL_MS } from "./constants";
 
 const HAS_TZ_SUFFIX = /(Z|[+-]\d{2}:?\d{2})$/i;
 
 /**
- * Parse an API timestamp as UTC. The backend emits naive UTC datetimes
- * (no `Z`), which `new Date()` would otherwise treat as local time.
+ * Parse an API timestamp as UTC. Accepts both Z/offset-suffixed values and
+ * naive UTC datetimes (older backend builds), which `new Date()` would
+ * otherwise treat as local time.
  */
 export function parseUtcDate(value: string): Date {
   return new Date(HAS_TZ_SUFFIX.test(value) ? value : `${value}Z`);
@@ -18,14 +18,6 @@ export function formatClockTime(epochMs: number): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-/**
- * Milliseconds until the code should be treated as expired: never negative and
- * never longer than the server TTL (guards against client clock skew).
- */
-export function getExpiryDelayMs(expiresAtMs: number, nowMs: number): number {
-  return Math.min(Math.max(0, expiresAtMs - nowMs), CODE_TTL_MS);
 }
 
 /** Short status line announced to screen readers (one aria-live region). */

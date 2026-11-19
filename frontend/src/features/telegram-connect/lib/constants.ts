@@ -10,9 +10,16 @@ export const STATUS_POLL_INTERVAL_MS = 3000;
 export const BOT_DISPLAY_NAME = "the Jobbi bot";
 
 /**
- * Server-side code lifetime. Used to cap the client-side expiry timer so a
- * fast/skewed client clock can't make a fresh code "expire" instantly.
+ * Server-side code lifetime. The client times expiry as this duration from
+ * when the code arrived — never from `expires_at` — so client clock skew
+ * (fast or slow) cannot shorten or stretch the window.
  */
 export const CODE_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Extra wait after the TTL before the single final status check, so a link
+ * the server committed at the last moment is still seen.
+ */
+export const EXPIRY_GRACE_MS = 3000;
 
 export const MUTED_TEXT_STYLE = { fontSize: "0.875rem", color: colors.textMuted } as const;

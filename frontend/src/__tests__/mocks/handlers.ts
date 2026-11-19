@@ -96,13 +96,13 @@ export const mockTelegramStatusNotConnected = {
 export const mockTelegramStatusConnected = {
   connected: true,
   telegram_username: "jobbi_tester",
-  // Backend emits naive UTC datetimes (no "Z")
-  linked_at: "2026-03-10T12:00:00",
+  // Backend emits UTC with a "Z" suffix (older builds sent naive UTC)
+  linked_at: "2026-03-10T12:00:00Z",
 };
 
 export const mockConnectionCode = {
   code: "ABC123",
-  expires_at: "2026-03-10T12:10:00",
+  expires_at: "2026-03-10T12:10:00Z",
 };
 
 // ---------------------------------------------------------------------------

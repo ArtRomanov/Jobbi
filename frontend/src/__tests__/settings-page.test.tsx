@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
@@ -86,6 +87,28 @@ describe("SettingsPage — timezone and daily summary", () => {
     // Give any stray effect a chance to fire a second request
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(patches).toHaveLength(1);
+  });
+
+  it("auto-saves the detected timezone exactly once under React StrictMode", async () => {
+    serveUser({ ...mockUser, timezone: null });
+    const patches = capturePatches();
+
+    // StrictMode mounts, unmounts, and re-mounts: effects run twice in dev
+    renderWithProviders(
+      <StrictMode>
+        <SettingsPage />
+      </StrictMode>,
+    );
+    await waitForForm();
+
+    expect(
+      await screen.findByText(`Timezone detected and saved: ${DETECTED_TIMEZONE}.`),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Timezone")).toHaveValue(DETECTED_TIMEZONE);
+
+    // Give the discarded first effect run a chance to fire a stray PATCH
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(patches).toEqual([{ timezone: DETECTED_TIMEZONE }]);
   });
 
   it("does not auto-save when the timezone is already set", async () => {
