@@ -87,6 +87,107 @@ async def test_update_me_email_not_editable(
 
 
 # ---------------------------------------------------------------------------
+# Telegram summary settings: timezone + summary_time
+# ---------------------------------------------------------------------------
+
+
+async def test_get_me_summary_settings_defaults(
+    client: httpx.AsyncClient, registered_user: dict
+) -> None:
+    resp = await client.get(
+        "/api/v1/users/me", headers=_auth_header(registered_user["access_token"])
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["timezone"] is None
+    assert data["summary_time"] == "10:00"
+
+
+async def test_update_me_summary_settings_persisted(
+    client: httpx.AsyncClient, registered_user: dict
+) -> None:
+    headers = _auth_header(registered_user["access_token"])
+
+    patch_resp = await client.patch(
+        "/api/v1/users/me",
+        headers=headers,
+        json={"timezone": "Europe/Berlin", "summary_time": "08:30"},
+    )
+    get_resp = await client.get("/api/v1/users/me", headers=headers)
+
+    assert patch_resp.status_code == 200
+    for data in (patch_resp.json(), get_resp.json()):
+        assert data["timezone"] == "Europe/Berlin"
+        assert data["summary_time"] == "08:30"
+
+
+@pytest.mark.parametrize("bad_time", ["8:30", "0830", "08:30:00", "noon", ""])
+async def test_update_me_summary_time_bad_format_rejected(
+    client: httpx.AsyncClient, registered_user: dict, bad_time: str
+) -> None:
+    resp = await client.patch(
+        "/api/v1/users/me",
+        headers=_auth_header(registered_user["access_token"]),
+        json={"summary_time": bad_time},
+    )
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "FINDING: UserUpdate.summary_time only checks the HH:MM shape "
+        r"(pattern ^\d{2}:\d{2}$), so out-of-range values like 25:99 are accepted "
+        "(app/schemas/user.py summary_time field)."
+    ),
+)
+@pytest.mark.parametrize("bad_time", ["25:00", "12:60", "99:99"])
+async def test_update_me_summary_time_out_of_range_rejected(
+    client: httpx.AsyncClient, registered_user: dict, bad_time: str
+) -> None:
+    resp = await client.patch(
+        "/api/v1/users/me",
+        headers=_auth_header(registered_user["access_token"]),
+        json={"summary_time": bad_time},
+    )
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "FINDING: UserUpdate.timezone only enforces max_length=64; unknown IANA "
+        "names like Not/AZone are accepted (app/schemas/user.py timezone field)."
+    ),
+)
+async def test_update_me_unknown_timezone_rejected(
+    client: httpx.AsyncClient, registered_user: dict
+) -> None:
+    resp = await client.patch(
+        "/api/v1/users/me",
+        headers=_auth_header(registered_user["access_token"]),
+        json={"timezone": "Not/AZone"},
+    )
+
+    assert resp.status_code == 422
+
+
+async def test_update_me_timezone_too_long_rejected(
+    client: httpx.AsyncClient, registered_user: dict
+) -> None:
+    resp = await client.patch(
+        "/api/v1/users/me",
+        headers=_auth_header(registered_user["access_token"]),
+        json={"timezone": "A" * 65},
+    )
+
+    assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
 # POST /users/me/change-password
 # ---------------------------------------------------------------------------
 

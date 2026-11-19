@@ -4,7 +4,7 @@ import os
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-unit-tests-only")
 os.environ.setdefault("GROQ_API_KEY", "test-groq-key-for-unit-tests-only")
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 
 import httpx
 import pytest
@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.core.database import Base
 from app.core.deps import get_db
 from app.main import create_app
+from app.models.user import User
 
 # In-memory SQLite engine for tests
 test_engine = create_async_engine("sqlite+aiosqlite://", echo=False)
@@ -66,3 +67,38 @@ async def registered_user(client: httpx.AsyncClient) -> dict:
     # Include the original password for convenience in login tests
     data["password"] = payload["password"]
     return data
+
+
+@pytest.fixture
+async def other_registered_user(client: httpx.AsyncClient) -> dict:
+    """A second registered user, for cross-user authorization tests."""
+    payload = {
+        "email": "otheruser@example.com",
+        "password": "anothersecurepassword",
+        "full_name": "Other User",
+    }
+    resp = await client.post("/api/v1/auth/register", json=payload)
+    assert resp.status_code == 201
+    return resp.json()
+
+
+@pytest.fixture
+async def make_user(db_session: AsyncSession) -> Callable[..., Awaitable[User]]:
+    """Factory that inserts a user row directly (no HTTP, no bcrypt)."""
+    counter = 0
+
+    async def _make_user(**overrides: object) -> User:
+        nonlocal counter
+        counter += 1
+        user = User(
+            email=f"user{counter}@example.com",
+            password_hash="not-a-real-hash",
+            full_name=f"User {counter}",
+            **overrides,
+        )
+        db_session.add(user)
+        await db_session.commit()
+        await db_session.refresh(user)
+        return user
+
+    return _make_user
