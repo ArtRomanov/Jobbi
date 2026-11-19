@@ -31,16 +31,25 @@ def build_application() -> Application:
         sys.exit(1)
 
     app = Application.builder().token(settings.TELEGRAM_BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", handle_start))
-    app.add_handler(CommandHandler("cancel", handle_cancel))
-    app.add_handler(CommandHandler("summary", handle_summary))
-    app.add_handler(CallbackQueryHandler(handle_status_callback, pattern=r"^status:"))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
+    add_handlers(app)
     register_summary_jobs(app)
-
     return app
+
+
+def add_handlers(app: Application) -> None:
+    """Register update handlers. Private chats only: in a group, every member
+    would act as (and see the pipeline of) whoever linked that chat.
+    Callback queries carry no message filter; handle_status_callback checks
+    the chat type itself.
+    """
+    private = filters.ChatType.PRIVATE
+    app.add_handler(CommandHandler("start", handle_start, filters=private))
+    app.add_handler(CommandHandler("cancel", handle_cancel, filters=private))
+    app.add_handler(CommandHandler("summary", handle_summary, filters=private))
+    app.add_handler(CallbackQueryHandler(handle_status_callback, pattern=r"^status:"))
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND & private, handle_message)
+    )
 
 
 def main() -> None:
