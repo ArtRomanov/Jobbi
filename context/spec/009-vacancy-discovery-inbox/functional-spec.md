@@ -10,7 +10,7 @@
 
 The user finds vacancies in two places: public Telegram job channels and company career pages. Today they scroll channels and check career pages by hand, then retype what they find into Jobbi. Relevant posts get lost in the noise, and good roles are noticed late.
 
-**Desired outcome:** Jobbi watches the user's chosen channels and companies, picks out vacancies that match the user's keywords, rates how well each fits the user's profile, and collects them in a new **Inbox**. The user reviews the Inbox and sends good ones to the tracker in one click. New matches are announced through the Jobbi Telegram bot.
+**Desired outcome:** Jobbi watches the user's chosen channels and companies, uses AI to pick out posts that are vacancies matching what the user described in their own words (any language, synonyms included), rates how well each fits the user's profile, and collects them in a new **Inbox**. The user reviews the Inbox and sends good ones to the tracker in one click. New matches are announced through the Jobbi Telegram bot.
 
 The Inbox is separate from the Application Tracker: a found vacancy is not an application until the user decides so. This keeps tracker metrics (response rate, pipeline) about real applications only.
 
@@ -23,27 +23,30 @@ The Inbox is separate from the Application Tracker: a found vacancy is not an ap
 
 ## 2. Functional Requirements (The "What")
 
-### 2.1 Managing sources and keywords
+### 2.1 Managing sources and the search description
 
-- **As a** user, **I want to** choose which channels and companies Jobbi watches and which words matter, **so that** only relevant vacancies reach me.
+- **As a** user, **I want to** choose which channels and companies Jobbi watches and describe what I'm looking for, **so that** only relevant vacancies reach me.
   - **Acceptance Criteria:**
-    - [ ] The Inbox page has a "Sources" panel listing watched Telegram channels, watched companies, include keywords and exclude keywords.
+    - [ ] The Inbox page has a "Sources" panel listing watched Telegram channels, watched companies, the search description and exclude words.
     - [ ] The user can add a Telegram channel by `@name` or `t.me/<name>` link. If the channel does not exist or is not public, an error is shown immediately ("This channel is not public or does not exist") and nothing is saved.
     - [ ] The user can add a company by its Greenhouse or Lever job-board link. If the link is not a recognised Greenhouse/Lever board or the board cannot be read, an error is shown immediately and nothing is saved. The company name is shown in the list once added.
     - [ ] The user can remove any channel or company. Vacancies already in the Inbox from it stay.
-    - [ ] The user can add and remove include keywords and exclude keywords. Matching ignores letter case.
+    - [ ] The user can write a **search description** in plain text, up to 500 characters (e.g. "Senior frontend, React or Vue, remote or EU, from 4000 €, no outsourcing"). It can be edited at any time; a change applies to posts found from then on.
+    - [ ] The user can add and remove **exclude words** (optional). A post containing any of them is skipped without being sent to AI. Matching ignores letter case.
     - [ ] When a new source is added, Jobbi scans its vacancies from the last 7 days; the results appear in the Inbox after that scan.
-    - [ ] Sources and keywords are per user; one user never sees another user's sources or Inbox.
+    - [ ] Sources, the search description and exclude words are per user; one user never sees another user's sources or Inbox.
 
 ### 2.2 Finding and scoring vacancies
 
 - **As a** user, **I want** Jobbi to check my sources regularly and rate what it finds, **so that** I see the best-fitting vacancies first.
   - **Acceptance Criteria:**
     - [ ] Jobbi checks all sources of all users every hour.
-    - [ ] A Telegram post or career-page job is a **match** if its text contains at least one include keyword and none of the exclude keywords. If the user has no include keywords, nothing matches and the Sources panel shows a hint: "Add at least one keyword to start finding vacancies."
-    - [ ] Each match is rated by AI against the user's profile (desired role, location, remote preference, salary) as **High**, **Medium** or **Low** fit, with a one-sentence reason (e.g. "Remote React role, salary not stated").
-    - [ ] AI also extracts the company name and role title from the post when possible; career-page jobs already carry both.
-    - [ ] If AI is unavailable, the vacancy still appears in the Inbox marked "Not scored", and Jobbi retries scoring on the next check.
+    - [ ] Every **new** post or career-page job (not seen before) that contains none of the exclude words is evaluated by AI against the search description and the user's profile (desired role, location, remote preference, salary). The AI decides: is this a vacancy, and does it match the description?
+    - [ ] Only posts the AI judges as matching vacancies appear in the Inbox. Non-vacancy posts (news, ads, memes) and non-matching vacancies are skipped.
+    - [ ] Each match gets a fit rating **High**, **Medium** or **Low** with a one-sentence reason (e.g. "Remote React role, salary not stated"), plus the company name and role title when they can be determined (career-page jobs already carry both).
+    - [ ] If the user has no search description, nothing is evaluated and the Sources panel shows a hint: "Describe what you're looking for to start finding vacancies."
+    - [ ] If AI is unavailable, new posts wait and are evaluated on the next check; nothing is lost. If a source's posts cannot be evaluated for 24 hours, the Sources panel shows "Vacancy search is temporarily unavailable".
+    - [ ] Jobbi evaluates at most a daily limit of posts per user (default 300); posts above the limit wait for the next day, oldest first.
     - [ ] The same vacancy is shown once: a post or job already seen (same link, or the same post in the same channel) does not create a second card, including after it was dismissed.
 
 ### 2.3 The Inbox
@@ -51,13 +54,13 @@ The Inbox is separate from the Application Tracker: a found vacancy is not an ap
 - **As a** user, **I want** one list of found vacancies, **so that** I can review them and decide quickly.
   - **Acceptance Criteria:**
     - [ ] "Inbox" is a new item in the main navigation, with a badge showing the number of new (not yet opened) vacancies.
-    - [ ] Each card shows: role title, company (or "Unknown company"), source (channel name or company), date posted, fit (High/Medium/Low or "Not scored") with its reason, and the first lines of the text.
+    - [ ] Each card shows: role title, company (or "Unknown company"), source (channel name or company), date posted, fit (High/Medium/Low) with its reason, and the first lines of the text.
     - [ ] A card is "new" until the user opens or acts on it; then it becomes "seen".
     - [ ] "Open source" opens the original Telegram post or career-page job in a new tab.
     - [ ] "Add to tracker" creates an application with status Researching, filling company, role, job link, and the full post text as notes; missing company or role can be typed in before confirming. The card then leaves the Inbox and the user sees a confirmation with a link to the new application.
     - [ ] "Dismiss" removes the card from the Inbox; it never comes back.
     - [ ] The user can filter by source and by new/seen, and sort by date posted (default: newest first) or by fit (High first).
-    - [ ] Empty Inbox shows: "No vacancies yet. Add channels, companies and keywords in Sources."
+    - [ ] Empty Inbox shows: "No vacancies yet. Add channels or companies and describe what you're looking for in Sources."
     - [ ] Vacancies that were dismissed or left untouched are deleted after 30 days. Vacancies added to the tracker live on as applications.
 
 ### 2.4 Alerts via Telegram
@@ -76,11 +79,11 @@ The Inbox is separate from the Application Tracker: a found vacancy is not an ap
 
 ### In-Scope
 
-- Inbox page with Sources panel (channels, companies, include/exclude keywords).
+- Inbox page with Sources panel (channels, companies, search description, exclude words).
 - Public Telegram channels via their public web preview.
 - Company career pages hosted on Greenhouse and Lever.
 - Hourly checks; initial 7-day scan for new sources; 30-day retention.
-- Keyword matching plus AI fit rating (High/Medium/Low + reason) and company/role extraction.
+- AI search: every new post evaluated against a plain-text search description (match yes/no, High/Medium/Low fit + reason, company/role); optional exclude words as a pre-filter.
 - Inbox actions: Add to tracker (Researching), Dismiss, Open source, filter and sort.
 - Grouped bot alert per check and a line in the daily summary.
 
@@ -89,7 +92,8 @@ The Inbox is separate from the Application Tracker: a found vacancy is not an ap
 - **HeadHunter Integration** and **LinkedIn Integration** (separate roadmap items).
 - Private Telegram channels and groups, or reading Telegram as the user's own account.
 - Career pages not on Greenhouse/Lever (generic HTML parsing) — possible later spec.
-- Managing sources, keywords or the Inbox from the Telegram bot (bot only notifies).
-- Alerts filtered by fit threshold; per-source keyword sets.
+- Managing sources, the search description or the Inbox from the Telegram bot (bot only notifies).
+- Alerts filtered by fit threshold; per-source search descriptions.
+- Re-evaluating past posts when the search description changes (applies to new posts only).
 - Editing vacancy text in the Inbox; bulk actions.
 - Auto-applying to vacancies.
