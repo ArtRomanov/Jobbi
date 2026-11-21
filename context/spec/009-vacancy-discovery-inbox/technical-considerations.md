@@ -22,7 +22,7 @@ The API gets a new `vacancies` domain: sources and keywords CRUD (with synchrono
 - Frontend: `/inbox` page, 2 entities, 3 features, 5 shared UI components, toast with link, dashboard deep link.
 - Infrastructure: new `discovery` service in Docker Compose; new dependencies `beautifulsoup4` and an explicit `apscheduler` pin (already present transitively via PTB).
 
-**Verified 2026-11-19 by live requests:** `t.me/s/telegram` returns 200 with 20 posts carrying `data-post="<channel>/<id>"`, `.tgme_widget_message_text` and `time[datetime]`; a nonexistent channel returns 302 to `t.me/<name>`. Greenhouse `GET boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true` → 200 with `title, absolute_url, location, company_name, content, updated_at`; `GET /v1/boards/{token}` → `{name}`; unknown token → 404. Lever `GET api.lever.co/v0/postings/{company}?mode=json` → 200 array with `text, hostedUrl, categories, descriptionPlain, createdAt`; unknown company → 404.
+**Verified 2026-11-19 by live requests:** `t.me/s/telegram` returns 200 with 20 posts carrying `data-post="<channel>/<id>"`, `.tgme_widget_message_text` and `time[datetime]`; a nonexistent channel returns 302 to `t.me/<name>`. Greenhouse `GET boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true` → 200 with `title, absolute_url, location, company_name, content, updated_at`; `GET /v1/boards/{token}` → `{name}`; unknown token → 404. Lever `GET api.lever.co/v0/postings/{company}?mode=json` → 200 array with `text, hostedUrl, categories, descriptionPlain, createdAt`; unknown company → 404. Lever EU region `api.eu.lever.co/v0/postings/{company}` exists and also returns 404 for an unknown company. Greenhouse EU boards (`job-boards.eu.greenhouse.io`) exist, but `boards-api.eu.greenhouse.io` does not resolve (NXDOMAIN) — EU board API host unverified, see 2.2.
 
 ---
 
@@ -38,7 +38,7 @@ All IDs `String(36)` UUID, timestamps naive UTC with `server_default=func.now()`
 |---|---|---|---|
 | `id` | String(36) | PK | |
 | `user_id` | String(36) | FK → users.id ON DELETE CASCADE, indexed | |
-| `kind` | String(16) | NOT NULL | `telegram`, `greenhouse`, `lever` |
+| `kind` | String(16) | NOT NULL | `telegram`, `greenhouse`, `lever`, `lever_eu` (Lever keeps each company's data in one region; the region decides the API host) |
 | `handle` | String(64) | NOT NULL | channel name / board token / Lever company slug, lowercased |
 | `display_name` | String(255) | NOT NULL | channel title or company name |
 | `initial_scan_completed_at` | DateTime | NULL | NULL = 7-day backfill pending |
@@ -65,7 +65,7 @@ All IDs `String(36)` UUID, timestamps naive UTC with `server_default=func.now()`
 | `user_id` | String(36) | FK → users.id ON DELETE CASCADE, indexed | |
 | `source_id` | String(36) | FK → vacancy_sources.id ON DELETE SET NULL | source may be removed; vacancy stays |
 | `source_label` | String(255) | NOT NULL | copy of source display name for filtering/display after source removal |
-| `external_key` | String(255) | NOT NULL | dedupe key: `tg:<channel>/<post_id>`, `gh:<token>/<job_id>`, `lever:<company>/<id>` |
+| `external_key` | String(255) | NOT NULL | dedupe key: `tg:<channel>/<post_id>`, `gh:<token>/<job_id>`, `lever:<company>/<id>`, `lever_eu:<company>/<id>` |
 | `url` | String(2048) | NOT NULL | original post / job page |
 | `title` | String(255) | NULL | role (AI-extracted for Telegram) |
 | `company` | String(255) | NULL | |
@@ -104,7 +104,9 @@ New router `app/api/v1/vacancies.py`, all endpoints require `get_current_user` a
 | `POST /api/v1/vacancies/{id}/dismiss` | — | `204` | |
 | `POST /api/v1/vacancies/{id}/add-to-tracker` | `{company_name, role_title, notes?}` | `201 {application_id}` | One transaction: create application (status researching, job_url = vacancy.url) + set vacancy `state=added`, `application_id`. `409` if already added |
 
-**Input parsing (no SSRF):** user input is never fetched as given. The API extracts a handle with strict patterns (Telegram `^[A-Za-z0-9_]{5,32}$`; Greenhouse `(job-)?boards(.eu)?.greenhouse.io/<token>`; Lever `jobs.lever.co/<company>`) and requests only fixed hosts (`t.me`, `boards-api.greenhouse.io`, `api.lever.co`).
+**Input parsing (no SSRF):** user input is never fetched as given. The API extracts a handle with strict patterns (Telegram `^[A-Za-z0-9_]{5,32}$`; Greenhouse `(job-)?boards(.eu)?.greenhouse.io/<token>`; Lever `jobs.lever.co/<company>` → `lever`, `jobs.eu.lever.co/<company>` → `lever_eu`) and requests only fixed hosts (`t.me`, `boards-api.greenhouse.io`, `api.lever.co`, `api.eu.lever.co`). A pasted Lever link that 404s in its own region is not retried in the other one: the link already names the region.
+
+**Greenhouse EU boards:** links on `boards.eu.greenhouse.io` / `job-boards.eu.greenhouse.io` are accepted by the pattern. Before implementing, verify whether `boards-api.greenhouse.io` serves EU board tokens; if not, find the EU API host or reject EU board links with "EU Greenhouse boards are not supported yet".
 
 ### 2.3 Discovery Worker (`backend/app/discovery/`)
 
@@ -112,7 +114,7 @@ New router `app/api/v1/vacancies.py`, all endpoints require `get_current_user` a
 |---|---|
 | `__main__.py` | Logging (httpx at WARNING), event loop, `AsyncIOScheduler`: hourly `check_all`, every-minute `run_initial_scans`, daily `cleanup`. Single instance per deployment |
 | `fetchers/telegram.py` | GET `t.me/s/<channel>` (+ `?before=<id>` paging for the 7-day backfill, max 10 pages); parse with BeautifulSoup into `RawPost{external_key, url, text, posted_at}` |
-| `fetchers/greenhouse.py`, `fetchers/lever.py` | JSON → `RawPost` with title/company/location; HTML `content` converted to plain text |
+| `fetchers/greenhouse.py`, `fetchers/lever.py` | JSON → `RawPost` with title/company/location; HTML `content` converted to plain text. `lever.py` takes the region (`api.lever.co` or `api.eu.lever.co`) from the source kind |
 | `matcher.py` | Case-insensitive whole-word match of include/exclude terms against title + text |
 | `scorer.py` | Groq JSON mode, batches of up to 10 matches per request; input = user profile + vacancy text (truncated to 3 000 chars) wrapped in delimiters with an instruction that vacancy text is data; output validated with Pydantic: `[{key, fit: high|medium|low, reason ≤ 200 chars, company?, title?}]`. Invalid/failed → leave `fit` NULL, increment `score_attempts` |
 | `service.py` | Per source: fetch → filter new keys → match → insert vacancies (`state=new`) → score; per user: collect matches inserted this run that are not from an initial scan → alert |
@@ -173,7 +175,8 @@ Styling stays inline styles with `colors` tokens; vacancy text is rendered as pl
   - Greenhouse/Lever mappers against saved JSON fixtures.
   - Matcher: case, whole words, exclude wins, empty include list → no matches.
   - Scorer with a mocked Groq client: valid JSON, invalid JSON, wrong enum, rate limit, and a hostile post text containing fake instructions and delimiter-breaking content (stored as-is, output still validated).
-  - Input parsing: every accepted form plus hostile inputs (other hosts, `@`, path traversal, over-long).
+  - Input parsing: every accepted form (including `jobs.eu.lever.co` → `lever_eu` and EU Greenhouse links) plus hostile inputs (other hosts, look-alikes such as `jobs.eu.lever.co.evil.com`, `@`, path traversal, over-long).
+  - Lever fetcher calls `api.eu.lever.co` for `lever_eu` sources and `api.lever.co` for `lever`.
 - **Backend service/integration:** `respx` mocks for outbound HTTP; worker run with fixed clock: inserts, dedupe across runs and after dismiss, initial scan (7-day cutoff, no alert), alert grouping (top 10 + "+N more"), no alert without link/token, `alerted_at` prevents resend, retention cleanup, one failing source doesn't block others.
 - **API:** CRUD and validation messages, limits, per-user isolation (other user's ids → 404), list filters/sort/pagination, add-to-tracker atomicity (failure after application insert rolls back both) and double-add → 409.
 - **Frontend (Vitest + MSW):** Inbox page states (empty, list, filters, sort), Sources panel add/remove with inline error, keyword chips, AddToTrackerDialog validation and success toast with link, Dismiss, nav badge count, dashboard `?application=` deep link, Modal focus trap and Escape.
