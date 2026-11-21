@@ -58,6 +58,8 @@ The Inbox is separate from the Application Tracker: a found vacancy is not an ap
     - [ ] A card is "new" until the user opens or acts on it; then it becomes "seen".
     - [ ] "Open source" opens the original Telegram post or career-page job in a new tab.
     - [ ] "Add to tracker" creates an application with status Researching, filling company, role, job link, and the full post text as notes; missing company or role can be typed in before confirming. The card then leaves the Inbox and the user sees a confirmation with a link to the new application.
+    - [ ] The "Add to tracker" dialog also offers **"Add & tailor CV"**: the user picks a base CV (default: the most recently updated one). Jobbi creates the application, makes a copy of the base CV named "<CV name> — <Company> <Role>", links the copy to the application, and opens the AI chat for that application with the first message pre-filled: "Adapt my CV to this vacancy". The message is sent only when the user presses Send. If the user has no CVs, the button is disabled with the hint "Create a CV first".
+    - [ ] If any step of "Add & tailor CV" fails, nothing is created (no application, no CV copy) and the card stays in the Inbox with an error message.
     - [ ] "Dismiss" removes the card from the Inbox; it never comes back.
     - [ ] The user can filter by source and by new/seen, and sort by date posted (default: newest first) or by fit (High first).
     - [ ] Empty Inbox shows: "No vacancies yet. Add channels or companies and describe what you're looking for in Sources."

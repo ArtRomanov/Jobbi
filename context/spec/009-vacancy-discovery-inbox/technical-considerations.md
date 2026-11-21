@@ -101,7 +101,7 @@ New router `app/api/v1/vacancies.py`, all endpoints require `get_current_user` a
 | `GET /api/v1/vacancies/new-count` | — | `{count: int}` | Nav badge |
 | `POST /api/v1/vacancies/{id}/seen` | — | `204` | `new → seen`, idempotent |
 | `POST /api/v1/vacancies/{id}/dismiss` | — | `204` | |
-| `POST /api/v1/vacancies/{id}/add-to-tracker` | `{company_name, role_title, notes?}` | `201 {application_id}` | One transaction: create application (status researching, job_url = vacancy.url) + set vacancy `state=added`, `application_id`. `409` if already added |
+| `POST /api/v1/vacancies/{id}/add-to-tracker` | `{company_name, role_title, notes?, base_cv_id?}` | `201 {application_id, cv_id: string|null}` | One transaction: create application (status researching, job_url = vacancy.url); if `base_cv_id` given (must belong to the user, else 404): duplicate it as "<CV name> — <Company> <Role>" and link the copy (`applications.cv_id`); set vacancy `state=added`, `application_id`. `409` if already added |
 
 **Input parsing (no SSRF):** user input is never fetched as given. The API extracts a handle with strict patterns (Telegram `^[A-Za-z0-9_]{5,32}$`; Greenhouse `(job-)?boards(.eu)?.greenhouse.io/<token>`; Lever `jobs.lever.co/<company>` → `lever`, `jobs.eu.lever.co/<company>` → `lever_eu`) and requests only fixed hosts (`t.me`, `boards-api.greenhouse.io`, `api.lever.co`, `api.eu.lever.co`). A pasted Lever link that 404s in its own region is not retried in the other one: the link already names the region.
 
@@ -123,7 +123,7 @@ Politeness: one request at a time per host, 1 s pause between Telegram channel p
 
 ### 2.4 Changes to Existing Backend Code
 
-- `application_service.create_application`: add a `commit: bool = True` parameter (or split into a non-committing builder) so add-to-tracker commits once.
+- `application_service.create_application` and `cv_service.duplicate_cv`: add a `commit: bool = True` parameter (or split into non-committing builders) so add-to-tracker (+ CV copy) commits once.
 - `summary_service.build_summary`: add "📥 N new vacancies in Inbox" line when N > 0; the "No applications tracked yet" early return must still show the Inbox line.
 - `docker-compose.yml`: new `discovery` service (same image, `python -m app.discovery`).
 - `pyproject.toml`: `beautifulsoup4`, `apscheduler>=3.10,<4`; dev: `respx` for HTTP mocking.
@@ -136,11 +136,12 @@ Politeness: one request at a time per host, 1 s pause between Telegram channel p
 | `entities/vacancy/` | Types (aliases of generated OpenAPI schemas), API functions (list, new-count, seen, dismiss), `VacancyCard` (display only, actions slot), fit labels/colors in `lib/`, `useNewVacancyCount` hook |
 | `entities/vacancy-source/` | Types and API for sources and search settings |
 | `features/manage-sources/` | Sources panel: add channel/company input with inline error from `error.body.detail`, list with remove and `last_error`, search description textarea (500 chars, counter), exclude-word chip input, "describe what you're looking for" hint |
-| `features/vacancy-actions/` | `AddToTrackerDialog` (own zod schema: company, role required, notes), Dismiss, Open source (marks seen) |
+| `features/vacancy-actions/` | `AddToTrackerDialog` (own zod schema: company, role required, notes; base CV select defaulting to the most recently updated CV via `entities/cv` `listCvs`) with two actions: "Add to tracker" and "Add & tailor CV" (disabled with hint when the user has no CVs; on success navigates to `/applications/:id/chat` with router state `{draft: "Adapt my CV to this vacancy"}`); Dismiss; Open source (marks seen) |
 | `features/inbox-filters/` | Controlled source / new-seen filter and sort control |
 | `shared/ui/` (new) | `Badge`, `Modal` (focus trap, Escape), `ChipInput`, `SegmentedControl` (replaces dashboard's private `TabButton`), `EmptyState`; toast gains optional `{label, to}` link |
 | `app/layout.tsx` | "Inbox" nav item with `Badge` from `useNewVacancyCount` (refetch on route change) |
 | `pages/dashboard/` | Read `?application=<id>` to open the application panel (target of the "added" toast link) |
+| `pages/chat/` + `features/chat-interface/` | Accept an optional `draft` from router state and pre-fill the chat input with it (not auto-sent); cleared after use so a reload does not re-fill |
 
 Styling stays inline styles with `colors` tokens; vacancy text is rendered as plain text (React escaping), never as HTML.
 
@@ -177,6 +178,6 @@ Styling stays inline styles with `colors` tokens; vacancy text is rendered as pl
   - Input parsing: every accepted form (including `jobs.eu.lever.co` → `lever_eu` and EU Greenhouse links) plus hostile inputs (other hosts, look-alikes such as `jobs.eu.lever.co.evil.com`, `@`, path traversal, over-long).
   - Lever fetcher calls `api.eu.lever.co` for `lever_eu` sources and `api.lever.co` for `lever`.
 - **Backend service/integration:** `respx` mocks for outbound HTTP; worker run with fixed clock: inserts, each post evaluated once across runs (rejects remembered), pending retried next hour, dedupe after dismiss, initial scan (7-day cutoff, no alert), alert grouping (top 10 + "+N more"), no alert without link/token, `alerted_at` prevents resend, retention cleanup, one failing source doesn't block others.
-- **API:** CRUD and validation messages, limits, per-user isolation (other user's ids → 404), list filters/sort/pagination, add-to-tracker atomicity (failure after application insert rolls back both) and double-add → 409.
-- **Frontend (Vitest + MSW):** Inbox page states (empty, list, filters, sort), Sources panel add/remove with inline error, search description and exclude-word chips, AddToTrackerDialog validation and success toast with link, Dismiss, nav badge count, dashboard `?application=` deep link, Modal focus trap and Escape.
+- **API:** CRUD and validation messages, limits, per-user isolation (other user's ids → 404), list filters/sort/pagination, add-to-tracker atomicity (failure after application insert rolls back both) and double-add → 409; add with `base_cv_id`: CV copied, named and linked, another user's CV → 404, failure during CV copy rolls back the application too.
+- **Frontend (Vitest + MSW):** Inbox page states (empty, list, filters, sort), Sources panel add/remove with inline error, search description and exclude-word chips, AddToTrackerDialog validation and success toast with link, "Add & tailor CV" (base CV default, disabled without CVs, navigates to chat with pre-filled unsent draft), Dismiss, nav badge count, dashboard `?application=` deep link, Modal focus trap and Escape.
 - **Live check:** add a real public channel and a Greenhouse board, see the Inbox fill after the initial scan, receive an hourly bot alert, add one vacancy to the tracker.
