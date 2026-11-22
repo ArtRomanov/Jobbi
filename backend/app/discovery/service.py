@@ -9,7 +9,12 @@ Functions never hold an ORM object across a network call; they copy what they
 need into the frozen dataclasses below.
 
 Sources: Telegram channels and Greenhouse / Lever boards (`board_scan`).
-Slots for later slices are marked with TODO.
+
+Reposts (same `job_link` as a user's `new`/`seen`/`dismissed` card) merge into
+that card as an extra `vacancy_card_sources` row. Mostly at store time, before
+any AI call: the card keeps the first post's date, fit and text anyway, so
+rating the repost would only spend the daily cap. Posts stored before their
+card existed (e.g. two channels in one run, both pending) merge after a match.
 """
 
 import asyncio
@@ -50,15 +55,19 @@ from app.models.vacancy_seen_key import VacancySeenKey
 from app.models.vacancy_source import VacancySource
 
 __all__ = [
+    "CARD_RETENTION",
     "EVAL_PAUSE_S",
     "LOOKBACK",
     "MAX_EVAL_ATTEMPTS",
     "MAX_PAGES",
+    "PENDING_WITHOUT_DESCRIPTION_RETENTION",
     "READ_ERROR_MESSAGES",
+    "CleanupReport",
     "Clock",
     "DiscoveryConfig",
     "RunReport",
     "check_all",
+    "cleanup",
     "evaluate_pending",
     "run_initial_scans",
 ]
@@ -73,6 +82,19 @@ MAX_EVAL_ATTEMPTS = 3
 # (a post cannot be seen before it is posted); the margin absorbs clock skew.
 _KNOWN_KEYS_MARGIN = timedelta(days=1)
 _KEY_CHUNK = 500
+# First-scan retry backoff: (failure streak shorter than, retry after).
+# Retries land at +1, +6 and +21 min after the first failure, then hourly.
+_INITIAL_BACKOFF = (
+    (timedelta(minutes=1), timedelta(minutes=1)),
+    (timedelta(minutes=6), timedelta(minutes=5)),
+    (timedelta(minutes=21), timedelta(minutes=15)),
+)
+_INITIAL_BACKOFF_HOURLY = timedelta(hours=1)
+# Retention (daily `cleanup`).
+CARD_RETENTION = timedelta(days=30)
+PENDING_WITHOUT_DESCRIPTION_RETENTION = timedelta(days=7)
+# States a repost can merge into (and that retention deletes after 30 days).
+_VISIBLE_STATES = ("new", "seen", "dismissed")
 
 # Keyed by `SourceReadError.reason` (Telegram) and `BoardReadError.reason`.
 READ_ERROR_MESSAGES = {
@@ -112,6 +134,8 @@ class RunReport:
     sources_failed: int = 0
     posts_stored: int = 0
     posts_excluded: int = 0
+    # Reposts added as a source to an existing card (at store or after rating).
+    posts_merged: int = 0
     ai_calls: int = 0
     posts_evaluated: int = 0
     matches: int = 0
@@ -487,14 +511,20 @@ async def _scan_source(
     )
 
 
-def _next_initial_attempt(now: datetime) -> datetime | None:
-    """When a failed first scan is retried.
+def _next_initial_attempt(now: datetime, failing_since: datetime | None) -> datetime:
+    """When a failed first scan is retried: 1, 5, 15 min after the 1st, 2nd and
+    3rd failure, then hourly.
 
-    TODO(Slice 8): backoff 1, 5, 15 min, then hourly. For now: the next
-    every-minute run (None = due immediately).
+    The failure count is derived from `failing_since` (the first failure of
+    this streak, kept until a success), so no counter column is needed. With
+    retries at +1, +6 and +21 min, a failure less than 1 min after the first
+    one is the 1st, less than 6 min the 2nd, less than 21 min the 3rd.
     """
-    del now
-    return None
+    elapsed = now - (failing_since or now)
+    for streak_end, delay in _INITIAL_BACKOFF:
+        if elapsed < streak_end:
+            return now + delay
+    return now + _INITIAL_BACKOFF_HOURLY
 
 
 async def _record_read_failure(
@@ -504,13 +534,18 @@ async def _record_read_failure(
     now: datetime,
     initial: bool,
 ) -> None:
-    values: dict[str, Any] = {
-        "failing_since": func.coalesce(VacancySource.failing_since, now),
-        "last_error": message,
-    }
-    if initial:
-        values["next_initial_attempt_at"] = _next_initial_attempt(now)
     async with session_factory() as session, session.begin():
+        values: dict[str, Any] = {
+            "failing_since": func.coalesce(VacancySource.failing_since, now),
+            "last_error": message,
+        }
+        if initial:
+            failing_since = await session.scalar(
+                select(VacancySource.failing_since).where(VacancySource.id == source.id)
+            )
+            values["next_initial_attempt_at"] = _next_initial_attempt(
+                now, failing_since
+            )
         await session.execute(
             update(VacancySource).where(VacancySource.id == source.id).values(**values)
         )
@@ -587,8 +622,14 @@ async def _store_posts(
             if excluded(post.title, post.text, exclude_terms):
                 report.posts_excluded += 1
                 continue
-            # TODO(Slice 8): merge into an existing new/seen/dismissed card with
-            # the same job_link instead of creating a new one.
+            # A repost of a job already on a card: add this source to that card
+            # (no AI call; the card keeps the first post's date, fit and text).
+            if post.job_link is not None and (
+                target_id := await _merge_target(session, source.user_id, post.job_link)
+            ):
+                await _add_card_source(session, target_id, source)
+                report.posts_merged += 1
+                continue
             vacancy_id = str(uuid.uuid4())
             session.add(
                 Vacancy(
@@ -619,6 +660,86 @@ async def _store_posts(
                 )
             )
             report.posts_stored += 1
+
+
+async def _merge_target(
+    session: AsyncSession,
+    user_id: str,
+    job_link: str,
+    *,
+    exclude_id: str | None = None,
+) -> str | None:
+    """The user's oldest `new`/`seen`/`dismissed` card with this job link.
+
+    `pending` (not rated yet) and `added` (lives on as an application) cards
+    are never merge targets. Telegram posts without an external link have no
+    `job_link`, so they never merge.
+    """
+    stmt = (
+        select(Vacancy.id)
+        .where(
+            Vacancy.user_id == user_id,
+            Vacancy.job_link == job_link,
+            Vacancy.state.in_(_VISIBLE_STATES),
+        )
+        .order_by(Vacancy.found_at, Vacancy.id)
+        .limit(1)
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(Vacancy.id != exclude_id)
+    return await session.scalar(stmt)
+
+
+async def _has_card_source(
+    session: AsyncSession, vacancy_id: str, kind: str, handle: str
+) -> bool:
+    found = await session.scalar(
+        select(VacancyCardSource.id)
+        .where(
+            VacancyCardSource.vacancy_id == vacancy_id,
+            VacancyCardSource.source_kind == kind,
+            VacancyCardSource.source_handle == handle,
+        )
+        .limit(1)
+    )
+    return found is not None
+
+
+async def _add_card_source(
+    session: AsyncSession, vacancy_id: str, source: _SourceRef
+) -> None:
+    """List `source` on the card, once per source identity (kind + handle)."""
+    if await _has_card_source(session, vacancy_id, source.kind, source.handle):
+        return
+    session.add(
+        VacancyCardSource(
+            vacancy_id=vacancy_id,
+            source_id=source.id,
+            source_kind=source.kind,
+            source_handle=source.handle,
+            label=source.display_name,
+        )
+    )
+
+
+async def _merge_pending_into(
+    session: AsyncSession, pending_id: str, target_id: str
+) -> None:
+    """Move a rated repost's sources onto `target_id`, then delete the repost
+    (its seen key stays, so it never comes back)."""
+    card_sources = (
+        await session.scalars(
+            select(VacancyCardSource).where(VacancyCardSource.vacancy_id == pending_id)
+        )
+    ).all()
+    for card_source in card_sources:
+        if await _has_card_source(
+            session, target_id, card_source.source_kind, card_source.source_handle
+        ):
+            continue
+        card_source.vacancy_id = target_id
+    await session.flush()
+    await _delete_pending(session, pending_id)
 
 
 async def _already_seen(
@@ -887,6 +1008,18 @@ async def _apply_evaluation(
                 continue
             evaluated_keys.append(row.post.external_key)
             if verdict.match and verdict.fit is not None:
+                report.matches += 1
+                # A repost whose card appeared after this post was stored
+                # (e.g. both posts waited in the same run): merge, so the
+                # card keeps the first post and the alert counts it once.
+                if row.post.job_link is not None and (
+                    target_id := await _merge_target(
+                        session, user_id, row.post.job_link, exclude_id=row.vacancy_id
+                    )
+                ):
+                    await _merge_pending_into(session, row.vacancy_id, target_id)
+                    report.posts_merged += 1
+                    continue
                 result = await session.execute(
                     update(Vacancy)
                     .where(Vacancy.id == row.vacancy_id, Vacancy.state == "pending")
@@ -900,7 +1033,6 @@ async def _apply_evaluation(
                 )
                 if result.rowcount:
                     new_ids.append(row.vacancy_id)
-                report.matches += 1
             else:
                 await _delete_pending(session, row.vacancy_id)
         if evaluated_keys:
@@ -980,16 +1112,85 @@ async def _set_limit_reached(
         )
 
 
+# --------------------------------------------------------------------------
+# Retention
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CleanupReport:
+    cards_deleted: int
+    pending_deleted: int
+    card_sources_deleted: int
+
+
+async def cleanup(session_factory: SessionFactory, clock: Clock) -> CleanupReport:
+    """Daily retention, one short transaction (no network).
+
+    - `new`/`seen`/`dismissed` cards first fetched more than 30 days ago are
+      deleted;
+    - `pending` posts older than 7 days are deleted only for users without a
+      search description (posts waiting for the AI or the daily cap stay);
+    - `added` cards are never deleted (they link to their application);
+    - seen keys are never deleted, so deleted cards never come back.
+
+    Card sources are deleted explicitly (SQLite does not enforce the FK
+    cascade here): after the cards, every card source whose card is gone.
+    Deleting cards first keeps this right on PostgreSQL too, where a card
+    could change state (e.g. become `added`) between two statements.
+    """
+    now = clock()
+    with_description = select(VacancySearchSettings.user_id).where(
+        VacancySearchSettings.description.is_not(None),
+        func.trim(VacancySearchSettings.description) != "",
+    )
+    async with session_factory() as session, session.begin():
+        cards = await session.execute(
+            delete(Vacancy).where(
+                Vacancy.state.in_(_VISIBLE_STATES),
+                Vacancy.found_at < now - CARD_RETENTION,
+            )
+        )
+        pending = await session.execute(
+            delete(Vacancy).where(
+                Vacancy.state == "pending",
+                Vacancy.found_at < now - PENDING_WITHOUT_DESCRIPTION_RETENTION,
+                Vacancy.user_id.not_in(with_description),
+            )
+        )
+        orphans = await session.execute(
+            delete(VacancyCardSource).where(
+                ~select(Vacancy.id)
+                .where(Vacancy.id == VacancyCardSource.vacancy_id)
+                .exists()
+            )
+        )
+    report = CleanupReport(
+        cards_deleted=cards.rowcount,
+        pending_deleted=pending.rowcount,
+        card_sources_deleted=orphans.rowcount,
+    )
+    logger.info(
+        "Discovery cleanup: cards deleted=%d, pending deleted=%d, "
+        "card sources deleted=%d",
+        report.cards_deleted,
+        report.pending_deleted,
+        report.card_sources_deleted,
+    )
+    return report
+
+
 def _log_report(name: str, report: RunReport) -> None:
     logger.info(
-        "Discovery %s: sources read=%d failed=%d, posts stored=%d excluded=%d, "
-        "AI calls=%d evaluated=%d matches=%d rejected=%d, users at daily cap=%d, "
-        "alerts sent=%d",
+        "Discovery %s: sources read=%d failed=%d, posts stored=%d excluded=%d "
+        "merged=%d, AI calls=%d evaluated=%d matches=%d rejected=%d, "
+        "users at daily cap=%d, alerts sent=%d",
         name,
         report.sources_read,
         report.sources_failed,
         report.posts_stored,
         report.posts_excluded,
+        report.posts_merged,
         report.ai_calls,
         report.posts_evaluated,
         report.matches,
