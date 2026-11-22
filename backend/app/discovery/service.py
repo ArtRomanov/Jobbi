@@ -25,9 +25,11 @@ import groq
 import httpx
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from telegram import Bot
 
 from app.core.config import Settings, get_settings
 from app.core.timezones import local_day_bounds, zone_or_utc
+from app.discovery.alerts import send_run_alerts
 from app.discovery.board_scan import BOARD_KINDS, board_key_prefix, fetch_board
 from app.discovery.evaluator import (
     BATCH_SIZE,
@@ -115,6 +117,9 @@ class RunReport:
     matches: int = 0
     rejected: int = 0
     users_capped: set[str] = field(default_factory=set)
+    # Cards that became `new` in this run, per user (input for alerts).
+    new_card_ids: dict[str, list[str]] = field(default_factory=dict)
+    alerts_sent: int = 0
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -179,25 +184,33 @@ async def run_initial_scans(
     *,
     config: DiscoveryConfig | None = None,
     sleep: SleepFn = asyncio.sleep,
+    bot: Bot | None = None,
 ) -> RunReport:
     """First 7-day scan of every source whose first scan has not completed and
     is due (`next_initial_attempt_at` unset or passed), then evaluate the
     pending posts of the users whose sources were scanned.
+
+    First-scan cards are never alerted. Posts of those users that were found
+    by an earlier hourly check and waited (daily cap, AI down) may be rated
+    here; they are alerted at the end, like in `check_all`.
     """
     config = config or DiscoveryConfig.from_settings()
     report = RunReport()
     sources = await _load_sources(session_factory, clock(), initial=True)
-    for source in sources:
-        await _scan_source(
-            session_factory,
-            http_client,
-            source,
-            clock(),
-            report,
-            initial=True,
-            sleep=sleep,
-        )
-    if sources:
+    if not sources:
+        return report
+
+    async def work() -> None:
+        for source in sources:
+            await _scan_source(
+                session_factory,
+                http_client,
+                source,
+                clock(),
+                report,
+                initial=True,
+                sleep=sleep,
+            )
         await evaluate_pending(
             session_factory,
             groq_client,
@@ -207,7 +220,9 @@ async def run_initial_scans(
             sleep=sleep,
             report=report,
         )
-        _log_report("initial scans", report)
+
+    await _run_then_alert(work(), session_factory, bot, clock, report, sleep)
+    _log_report("initial scans", report)
     return report
 
 
@@ -219,31 +234,88 @@ async def check_all(
     *,
     config: DiscoveryConfig | None = None,
     sleep: SleepFn = asyncio.sleep,
+    bot: Bot | None = None,
 ) -> RunReport:
     """Hourly check: read every source with a completed first scan, store new
     posts, then evaluate the pending posts of every user with a description.
 
     Sources still in their first scan are skipped. One failing source does not
-    stop the run.
+    stop the run. At the end each user gets one Telegram alert (when `bot` is
+    given and the user linked Telegram) for the cards that became `new` in
+    this run, first-scan cards excluded.
     """
     config = config or DiscoveryConfig.from_settings()
     report = RunReport()
-    for source in await _load_sources(session_factory, clock(), initial=False):
-        await _scan_source(
+
+    async def work() -> None:
+        for source in await _load_sources(session_factory, clock(), initial=False):
+            await _scan_source(
+                session_factory,
+                http_client,
+                source,
+                clock(),
+                report,
+                initial=False,
+                sleep=sleep,
+            )
+        await evaluate_pending(
             session_factory,
-            http_client,
-            source,
-            clock(),
-            report,
-            initial=False,
+            groq_client,
+            clock,
+            config=config,
             sleep=sleep,
+            report=report,
         )
-    await evaluate_pending(
-        session_factory, groq_client, clock, config=config, sleep=sleep, report=report
-    )
-    # TODO(Slice 7): send alerts for cards that became `new` in this run.
+
+    await _run_then_alert(work(), session_factory, bot, clock, report, sleep)
     _log_report("hourly check", report)
     return report
+
+
+async def _run_then_alert(
+    work: Awaitable[None],
+    session_factory: SessionFactory,
+    bot: Bot | None,
+    clock: Clock,
+    report: RunReport,
+    sleep: SleepFn,
+) -> None:
+    """Run `work`, then alert about the cards it made `new` — also when it
+    fails half way, so those cards are not left unannounced with
+    `alert_handled_at` NULL forever.
+
+    - Success or an ordinary exception: alert normally, then re-raise.
+    - Cancellation (worker shutting down): no network — the cards are only
+      marked handled (one short write), then the cancellation goes on. They
+      stay in the Inbox; they are just not announced.
+    """
+    try:
+        await work
+    except asyncio.CancelledError:
+        await _alert_safely(session_factory, None, clock, report, sleep)
+        raise
+    except Exception:
+        await _alert_safely(session_factory, bot, clock, report, sleep)
+        raise
+    report.alerts_sent = await send_run_alerts(
+        session_factory, bot, report.new_card_ids, clock, sleep=sleep
+    )
+
+
+async def _alert_safely(
+    session_factory: SessionFactory,
+    bot: Bot | None,
+    clock: Clock,
+    report: RunReport,
+    sleep: SleepFn,
+) -> None:
+    """Alert step on the failure path: never hides the original error."""
+    try:
+        report.alerts_sent = await send_run_alerts(
+            session_factory, bot, report.new_card_ids, clock, sleep=sleep
+        )
+    except Exception:
+        logger.exception("Alerts after an interrupted run failed")
 
 
 async def evaluate_pending(
@@ -806,6 +878,7 @@ async def _apply_evaluation(
     gets one attempt counted; after MAX_EVAL_ATTEMPTS it is treated as rejected.
     """
     evaluated_keys: list[str] = []
+    new_ids: list[str] = []
     async with session_factory() as session, session.begin():
         for row in rows:
             verdict = evaluation.results.get(row.post.external_key)
@@ -814,7 +887,7 @@ async def _apply_evaluation(
                 continue
             evaluated_keys.append(row.post.external_key)
             if verdict.match and verdict.fit is not None:
-                await session.execute(
+                result = await session.execute(
                     update(Vacancy)
                     .where(Vacancy.id == row.vacancy_id, Vacancy.state == "pending")
                     .values(
@@ -825,6 +898,8 @@ async def _apply_evaluation(
                         title=func.coalesce(Vacancy.title, verdict.title),
                     )
                 )
+                if result.rowcount:
+                    new_ids.append(row.vacancy_id)
                 report.matches += 1
             else:
                 await _delete_pending(session, row.vacancy_id)
@@ -844,6 +919,8 @@ async def _apply_evaluation(
             .values(ai_failing_since=None)
         )
     report.posts_evaluated += len(evaluated_keys)
+    # After the commit: only cards that really became `new` are alerted.
+    report.new_card_ids.setdefault(user_id, []).extend(new_ids)
 
 
 async def _count_failed_attempt(
@@ -906,7 +983,8 @@ async def _set_limit_reached(
 def _log_report(name: str, report: RunReport) -> None:
     logger.info(
         "Discovery %s: sources read=%d failed=%d, posts stored=%d excluded=%d, "
-        "AI calls=%d evaluated=%d matches=%d rejected=%d, users at daily cap=%d",
+        "AI calls=%d evaluated=%d matches=%d rejected=%d, users at daily cap=%d, "
+        "alerts sent=%d",
         name,
         report.sources_read,
         report.sources_failed,
@@ -917,4 +995,5 @@ def _log_report(name: str, report: RunReport) -> None:
         report.matches,
         report.rejected,
         len(report.users_capped),
+        report.alerts_sent,
     )

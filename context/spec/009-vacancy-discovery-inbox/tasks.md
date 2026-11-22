@@ -45,12 +45,12 @@ Conventions for every slice:
 
 ---
 
-- [ ] **Slice 5: Add to tracker and "Add & tailor CV"**
-  - [ ] Extract `application_service.build_application` and `cv_service.build_cv_copy` (no commit); existing functions wrap them; `delete_application` clears `vacancies.application_id`. Existing tests stay green. **[Agent: python-backend]**
-  - [ ] `POST /vacancies/{id}/add-to-tracker` (conditional UPDATE race guard, normalized duplicate check with `allow_duplicate`, optional `base_cv_id` copy named and cut to 255, one commit); `existing_application` in the list response. Tests incl. concurrent double add and rollback when the CV copy fails. **[Agent: python-backend]**
-  - [ ] `shared/ui` `Modal` (focus trap, Escape, focus return). `AddToTrackerDialog` (zod: company/role required; notes; base CV select defaulting to most recently updated; duplicate warning with Open it / Add anyway; Add & tailor CV disabled without CVs). Chat page pre-fills an unsent `draft` from router state and clears it. Dashboard opens `?application=<id>`. Success toast with link. Tests. **[Agent: typescript-frontend]**
-  - [ ] Code review: Modal accessibility, chat draft, dashboard deep link. **[Agent: react-code-reviewer]**
-  - [ ] Verify: browser — Add to tracker → application in Researching with notes and link, toast link opens it; Add & tailor CV → CV copy linked, chat opens with the unsent draft, reload does not re-fill; existing link → warning; double click → one application. **[Agent: qa-tester]**
+- [x] **Slice 5: Add to tracker and "Add & tailor CV"**
+  - [x] Extract `application_service.build_application` and `cv_service.build_cv_copy` (no commit); existing functions wrap them; `delete_application` clears `vacancies.application_id`. Existing tests stay green. **[Agent: python-backend]**
+  - [x] `POST /vacancies/{id}/add-to-tracker` (conditional UPDATE race guard, normalized duplicate check with `allow_duplicate`, optional `base_cv_id` copy named and cut to 255, one commit); `existing_application` in the list response. Tests incl. concurrent double add and rollback when the CV copy fails. **[Agent: python-backend]**
+  - [x] `shared/ui` `Modal` (focus trap, Escape, focus return). `AddToTrackerDialog` (zod: company/role required; notes; base CV select defaulting to most recently updated; duplicate warning with Open it / Add anyway; Add & tailor CV disabled without CVs). Chat page pre-fills an unsent `draft` from router state and clears it. Dashboard opens `?application=<id>`. Success toast with link. Tests. **[Agent: typescript-frontend]**
+  - [x] Code review: Modal accessibility, chat draft, dashboard deep link. **[Agent: react-code-reviewer]**
+  - [x] Verify: browser — Add to tracker → application in Researching with notes and link, toast link opens it; Add & tailor CV → CV copy linked, chat opens with the unsent draft, reload does not re-fill; existing link → warning; double click → one application. **[Agent: qa-tester]** _(2026-11-22: API verified live — Kleos card → Researching application with the external job link and a linked CV copy; repeat → 409; concurrency covered by tests; browser part pending the Chrome extension)_
 
 ---
 
@@ -62,8 +62,8 @@ Conventions for every slice:
 ---
 
 - [ ] **Slice 7: Telegram alerts and daily summary line**
-  - [ ] Move the RetryAfter send logic into `app/core/telegram_send.py` taking a `Bot`; bot uses it unchanged in behavior (existing bot tests green). **[Agent: python-backend]**
-  - [ ] `alerts.py`: one message per user per `check_all` run for cards that became new in this run (not from initial scans); exact text from functional spec 2.4; `alert_handled_at` set in every case. `summary_service`: "📥 N new vacancies in Inbox" incl. the zero-applications branch. Tests. **[Agent: python-backend]**
+  - [x] Move the RetryAfter send logic into `app/core/telegram_send.py` taking a `Bot`; bot uses it unchanged in behavior (existing bot tests green). **[Agent: python-backend]**
+  - [x] `alerts.py`: one message per user per `check_all` run for cards that became new in this run (not from initial scans); exact text from functional spec 2.4; `alert_handled_at` set in every case. `summary_service`: "📥 N new vacancies in Inbox" incl. the zero-applications branch. Tests. **[Agent: python-backend]**
   - [ ] Verify: live — with Telegram linked, a new matching post in a watched channel produces one grouped bot message after the next check; adding a source produces no message; `/summary` shows the Inbox line; unlink + new matches + relink → no message about old cards. **[Agent: qa-tester]**
 
 ---

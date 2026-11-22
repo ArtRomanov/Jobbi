@@ -15,15 +15,16 @@ summary_time moved later the same day cannot produce a second message.
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-from telegram.error import Forbidden, RetryAfter, TelegramError
+from telegram.error import Forbidden, TelegramError
 from telegram.ext import Application, ContextTypes, JobQueue
 
 from app.core.database import async_session
+from app.core.telegram_send import send_with_retry
 from app.core.timezones import is_valid_timezone
 from app.models.telegram_link import TelegramLink
 from app.models.user import User
@@ -191,20 +192,6 @@ def _local_today(schedule: SummarySchedule) -> date:
     return _now_utc().astimezone(ZoneInfo(schedule.timezone)).date()
 
 
-async def _send_with_retry(
-    context: ContextTypes.DEFAULT_TYPE, chat_id: int, text: str
-) -> None:
-    """Send once; on flood control wait the requested time and retry once."""
-    try:
-        await context.bot.send_message(chat_id=chat_id, text=text)
-    except RetryAfter as exc:
-        delay = exc.retry_after
-        seconds = delay.total_seconds() if isinstance(delay, timedelta) else delay
-        logger.warning("Flood control: retrying summary in %ss", seconds)
-        await _sleep(seconds)
-        await context.bot.send_message(chat_id=chat_id, text=text)
-
-
 async def send_daily_summary(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Daily job: build and send one user's summary.
 
@@ -235,7 +222,8 @@ async def send_daily_summary(context: ContextTypes.DEFAULT_TYPE) -> None:
                 )
                 return
             text = await build_summary(db, schedule.user_id)
-        await _send_with_retry(context, schedule.chat_id, text)
+        # Raises on failure (handled below) so `last_sent` is set only on success.
+        await send_with_retry(context.bot, schedule.chat_id, text, sleep=_sleep)
         last_sent[schedule.user_id] = today
     except Forbidden:
         logger.warning(

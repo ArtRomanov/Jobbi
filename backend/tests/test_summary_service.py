@@ -1,3 +1,4 @@
+import itertools
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from typing import TypeAlias
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.constants import ApplicationStatus
 from app.models.application import Application, ApplicationStatusHistory
 from app.models.user import User
+from app.models.vacancy import Vacancy
 from app.services.summary_service import (
     EMPTY_STATE_MESSAGE,
     SUMMARY_HEADER,
@@ -360,3 +362,109 @@ async def test_follow_up_line_omitted_when_zero(
 
     assert "follow-up" not in summary
     assert summary.splitlines()[-1].startswith("🔗")
+
+
+# ---------------------------------------------------------------------------
+# Inbox line
+# ---------------------------------------------------------------------------
+
+AddCards: TypeAlias = Callable[..., Awaitable[None]]
+INBOX_PREFIX = "📥"
+_CARD_KEYS = itertools.count(1)
+
+
+@pytest.fixture
+def add_cards(db_session: AsyncSession) -> AddCards:
+    async def _add(user_id: str, state: str, count: int = 1) -> None:
+        for _ in range(count):
+            db_session.add(
+                Vacancy(
+                    user_id=user_id,
+                    external_key=f"tg:chan/{next(_CARD_KEYS)}",
+                    url="https://t.me/chan/1",
+                    text="Frontend developer",
+                    posted_at=LONG_AGO,
+                    found_at=LONG_AGO,
+                    state=state,
+                    fit=None if state == "pending" else "high",
+                )
+            )
+        await db_session.commit()
+
+    return _add
+
+
+@pytest.mark.parametrize(
+    ("count", "expected"),
+    [(1, "📥 1 new vacancy in Inbox"), (3, "📥 3 new vacancies in Inbox")],
+    ids=["singular", "plural"],
+)
+async def test_inbox_line_with_applications(
+    db_session: AsyncSession,
+    user: User,
+    add_application: AddApplication,
+    add_cards: AddCards,
+    count: int,
+    expected: str,
+) -> None:
+    await add_application(user.id, ApplicationStatus.RESEARCHING)
+    await add_cards(user.id, "new", count)
+
+    summary = await build_summary(db_session, user.id, now=NOW)
+
+    lines = summary.splitlines()
+    assert _line(summary, INBOX_PREFIX) == expected
+    # Last content line, before the blank line and the dashboard link.
+    assert lines[-3] == expected
+    assert lines[-1].startswith("🔗")
+
+
+async def test_inbox_line_in_empty_state(
+    db_session: AsyncSession, user: User, add_cards: AddCards
+) -> None:
+    await add_cards(user.id, "new", 2)
+
+    summary = await build_summary(db_session, user.id, now=NOW)
+
+    assert summary.splitlines()[:3] == [
+        EMPTY_STATE_MESSAGE,
+        "📥 2 new vacancies in Inbox",
+        "",
+    ]
+    assert summary.splitlines()[-1].startswith("🔗")
+
+
+async def test_inbox_line_counts_only_new_cards_of_the_user(
+    db_session: AsyncSession,
+    user: User,
+    make_user: MakeUser,
+    add_application: AddApplication,
+    add_cards: AddCards,
+) -> None:
+    someone_else = await make_user()
+    await add_application(user.id, ApplicationStatus.APPLIED)
+    await add_cards(user.id, "new", 2)
+    for state in ("pending", "seen", "dismissed", "added"):
+        await add_cards(user.id, state)
+    await add_cards(someone_else.id, "new", 5)
+
+    summary = await build_summary(db_session, user.id, now=NOW)
+
+    assert _line(summary, INBOX_PREFIX) == "📥 2 new vacancies in Inbox"
+
+
+@pytest.mark.parametrize("with_application", [True, False], ids=["apps", "empty"])
+async def test_inbox_line_omitted_when_zero(
+    db_session: AsyncSession,
+    user: User,
+    add_application: AddApplication,
+    add_cards: AddCards,
+    with_application: bool,
+) -> None:
+    if with_application:
+        await add_application(user.id, ApplicationStatus.APPLIED)
+    await add_cards(user.id, "seen")
+
+    summary = await build_summary(db_session, user.id, now=NOW)
+
+    assert INBOX_PREFIX not in summary

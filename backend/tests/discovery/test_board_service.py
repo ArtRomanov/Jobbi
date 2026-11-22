@@ -14,12 +14,15 @@ from app.models.vacancy import VacancyCardSource
 from app.models.vacancy_seen_key import VacancySeenKey
 from app.models.vacancy_source import VacancySource
 from tests.discovery.board_stubs import GreenhouseBoard, LeverBoard
+from tests.discovery.fake_bot import FakeBot
 from tests.discovery.test_service import (
+    CHAT_ID,
     CONFIG,
     NOW,
     TrackingFactory,
     at,
     get_source,
+    link_telegram,
     make_user,
     seen_keys,
     vacancies,
@@ -221,7 +224,8 @@ class TestBoardHourlyCheck:
         new = rows["gh:acme/3"]
         assert new.state == "new"
         assert new.from_initial_scan is False
-        assert new.alert_handled_at is None  # left for the alerts step
+        assert new.alert_handled_at == LATER  # handled by the run's alert step
+        assert report.new_card_ids == {user_id: [new.id]}
         assert report.posts_stored == 1
 
         # A further check finds nothing new.
@@ -263,6 +267,40 @@ class TestBoardHourlyCheck:
         await check_all(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep)
 
         assert gh.list_requests == 0
+
+
+# --- alerts ----------------------------------------------------------------------
+
+
+async def test_board_first_scan_is_never_alerted_but_a_later_job_is(
+    factory, db, gh, lever_board, http, ai, sleep
+) -> None:
+    bot = FakeBot(open_transactions=factory.open_transactions)
+    user_id = await make_user(db)
+    await link_telegram(db, user_id)
+    await make_board(db, user_id, "greenhouse", "acme", "Acme Corp")
+    await make_board(db, user_id, "lever", "acme-labs", "Acme Labs")
+    gh.add(1, "MATCH HIGH gh first scan", RECENT)
+    lever_board.add("a", "MATCH HIGH lever first scan", RECENT)
+
+    await run_initial_scans(
+        factory, http, ai, at(NOW), config=CONFIG, sleep=sleep, bot=bot
+    )
+
+    rows = await vacancies(db)
+    assert [r.state for r in rows] == ["new", "new"]
+    assert all(r.from_initial_scan and r.alert_handled_at == NOW for r in rows)
+    assert bot.sent == []
+
+    gh.add(2, "MATCH HIGH gh hourly", LATER, title="Frontend Engineer")
+    await check_all(factory, http, ai, at(LATER), config=CONFIG, sleep=sleep, bot=bot)
+
+    assert len(bot.sent) == 1
+    chat_id, text = bot.sent[0]
+    assert chat_id == CHAT_ID
+    assert "Frontend Engineer" in text
+    assert "first scan" not in text
+    assert bot.violations == 0
 
 
 # --- read errors -------------------------------------------------------------------

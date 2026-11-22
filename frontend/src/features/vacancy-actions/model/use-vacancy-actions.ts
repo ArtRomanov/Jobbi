@@ -46,19 +46,30 @@ export function useVacancyActions(callbacks: VacancyActionsCallbacks): UseVacanc
     };
   }, [dismissToast]);
 
-  const openSource = useCallback((vacancy: Vacancy): void => {
-    if (!isSafeExternalUrl(vacancy.url)) return;
-    // Synchronously inside the click, so popup blockers allow it
-    window.open(vacancy.url, "_blank", NEW_TAB_FEATURES);
+  const markSeen = useCallback((vacancy: Vacancy): void => {
     if (vacancy.state !== "new") return;
-
     callbacksRef.current.onUpdate({ ...vacancy, state: "seen" });
     markVacancySeen(vacancy.id)
       .catch(() => {
-        // The tab is open anyway; show the card as new again so it matches the server
+        // Show the card as new again so it matches the server
         if (isMountedRef.current) callbacksRef.current.onUpdate(vacancy);
       })
       .finally(notifyVacanciesChanged);
+  }, []);
+
+  const openSource = useCallback(
+    (vacancy: Vacancy): void => {
+      if (!isSafeExternalUrl(vacancy.url)) return;
+      // Synchronously inside the click, so popup blockers allow it
+      window.open(vacancy.url, "_blank", NEW_TAB_FEATURES);
+      markSeen(vacancy);
+    },
+    [markSeen],
+  );
+
+  const completeAdd = useCallback((vacancy: Vacancy): void => {
+    // The server already moved the card to "added" (no Undo); the dialog already notified the badge
+    callbacksRef.current.onRemove(vacancy.id);
   }, []);
 
   const undo = useCallback(
@@ -114,5 +125,5 @@ export function useVacancyActions(callbacks: VacancyActionsCallbacks): UseVacanc
     [dismissToast, showToast, undo],
   );
 
-  return { openSource, dismiss };
+  return { openSource, dismiss, markSeen, completeAdd };
 }

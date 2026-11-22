@@ -8,6 +8,10 @@ Jobs (APScheduler 3.x `AsyncIOScheduler`):
 Both are `max_instances=1, coalesce=True` and share one `asyncio.Lock`, so they
 never run at the same time. On SIGINT/SIGTERM the scheduler stops and a running
 job is cancelled; every step commits on its own, so nothing half-written is left.
+
+Alerts go through a standalone `telegram.Bot` (no polling) when
+`TELEGRAM_BOT_TOKEN` is set; without it, runs still mark cards as handled.
+The token is never logged.
 """
 
 import asyncio
@@ -21,13 +25,23 @@ import groq
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from telegram import Bot
+from telegram.error import InvalidToken, TelegramError
 
 from app.core.config import get_settings
 from app.core.database import async_session
+from app.core.telegram_send import describe_error
 from app.core.worker_logging import configure_logging
 from app.discovery.service import DiscoveryConfig, check_all, run_initial_scans
 
-__all__ = ["JobRunner", "build_scheduler", "main", "run_worker"]
+__all__ = [
+    "JobRunner",
+    "build_scheduler",
+    "close_bot",
+    "main",
+    "open_bot",
+    "run_worker",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -76,17 +90,52 @@ class JobRunner:
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+async def open_bot(token: str) -> Bot | None:
+    """A ready `telegram.Bot` for alerts, or None when alerts are off.
+
+    A rejected token disables alerts. If Telegram cannot be reached at start,
+    the bot is still returned: `send_message` works without `initialize()`,
+    so alerts resume once Telegram is reachable.
+    """
+    if not token:
+        logger.info("TELEGRAM_BOT_TOKEN is not set: Telegram alerts are off")
+        return None
+    bot = Bot(token)
+    try:
+        await bot.initialize()
+    except InvalidToken:
+        # The exception text contains the token: do not log it.
+        logger.error("Telegram rejected the bot token: Telegram alerts are off")
+        return None
+    except TelegramError as exc:
+        logger.warning(
+            "Could not reach Telegram at start (%s); alerts will still be tried",
+            describe_error(exc, bot),
+        )
+    return bot
+
+
+async def close_bot(bot: Bot | None) -> None:
+    if bot is None:
+        return
+    try:
+        await bot.shutdown()
+    except TelegramError as exc:
+        logger.warning("Telegram bot shutdown failed: %s", describe_error(exc, bot))
+
+
 def build_scheduler(
     runner: JobRunner,
     http_client: httpx.AsyncClient,
     groq_client: groq.AsyncGroq,
     config: DiscoveryConfig,
+    bot: Bot | None = None,
 ) -> AsyncIOScheduler:
     async def initial_scans_job() -> None:
         await runner.run(
             "run_initial_scans",
             lambda: run_initial_scans(
-                async_session, http_client, groq_client, utcnow, config=config
+                async_session, http_client, groq_client, utcnow, config=config, bot=bot
             ),
         )
 
@@ -94,7 +143,7 @@ def build_scheduler(
         await runner.run(
             "check_all",
             lambda: check_all(
-                async_session, http_client, groq_client, utcnow, config=config
+                async_session, http_client, groq_client, utcnow, config=config, bot=bot
             ),
         )
 
@@ -132,16 +181,18 @@ async def run_worker(stop: asyncio.Event | None = None) -> None:
             loop.add_signal_handler(sig, stop.set)
 
     runner = JobRunner()
+    bot = await open_bot(settings.TELEGRAM_BOT_TOKEN)
     async with httpx.AsyncClient(
         headers={"User-Agent": USER_AGENT}, timeout=HTTP_TIMEOUT_S
     ) as http_client:
         groq_client = groq.AsyncGroq(api_key=settings.GROQ_API_KEY)
-        scheduler = build_scheduler(runner, http_client, groq_client, config)
+        scheduler = build_scheduler(runner, http_client, groq_client, config, bot)
         scheduler.start()
         logger.info(
-            "Discovery worker started (model %s, daily limit %d)",
+            "Discovery worker started (model %s, daily limit %d, alerts %s)",
             config.model,
             config.daily_limit,
+            "on" if bot is not None else "off",
         )
         try:
             await stop.wait()
@@ -150,6 +201,7 @@ async def run_worker(stop: asyncio.Event | None = None) -> None:
             scheduler.shutdown(wait=False)
             await runner.cancel_running()
             await groq_client.close()
+            await close_bot(bot)
     logger.info("Discovery worker stopped")
 
 

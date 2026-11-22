@@ -21,4 +21,5 @@ export { ChipInput } from "./chip-input";
 export { Badge } from "./badge";
 export type { BadgeTone } from "./badge";
 export { SegmentedControl } from "./segmented-control";
+export { Modal } from "./modal";
 export type { SegmentedControlOption } from "./segmented-control";

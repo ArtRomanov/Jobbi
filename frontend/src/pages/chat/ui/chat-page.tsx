@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   getApplication,
   type ApplicationDetail,
@@ -8,6 +8,7 @@ import {
   getChatHistory,
   clearChatHistory,
   sendChatMessage,
+  getChatDraft,
   type ChatMessage,
 } from "@/entities/chat";
 import { ChatWindow, ChatInput, QuickActionBar } from "@/features/chat-interface";
@@ -21,7 +22,10 @@ import { Button, colors, fonts, useToast } from "@/shared/ui";
 export function ChatPage() {
   const { id: applicationId } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { showToast } = useToast();
+  // Read once: the router state is cleared below, so a reload does not re-fill
+  const [draft] = useState(() => getChatDraft(location.state) ?? undefined);
 
   const [application, setApplication] = useState<ApplicationDetail | null>(
     null,
@@ -73,6 +77,15 @@ export function ChatPage() {
       cancelled = true;
     };
   }, [applicationId, showToast]);
+
+  // Drop the draft from history state (same URL), so a reload or Back does not pre-fill again
+  const { pathname, search, hash } = location;
+  const hasClearedDraftRef = useRef(false);
+  useEffect(() => {
+    if (draft === undefined || hasClearedDraftRef.current) return;
+    hasClearedDraftRef.current = true;
+    navigate({ pathname, search, hash }, { replace: true, state: null });
+  }, [draft, navigate, pathname, search, hash]);
 
   // Clean up abort controller on unmount
   useEffect(() => {
@@ -288,7 +301,7 @@ export function ChatPage() {
       )}
 
       {/* Input */}
-      <ChatInput onSend={handleSend} disabled={isSending} />
+      <ChatInput onSend={handleSend} disabled={isSending} draft={draft} />
     </div>
   );
 }

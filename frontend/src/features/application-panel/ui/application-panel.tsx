@@ -10,9 +10,13 @@ import {
 } from "@/entities/application";
 import { listCvs, duplicateCv, type Cv } from "@/entities/cv";
 import { Button, FormInput, FormSelect, FormTextarea, colors, useToast } from "@/shared/ui";
-import { handleApiError } from "@/shared/api";
+import { handleApiError, isApiError } from "@/shared/api";
 import type { FormValues } from "../model/types";
-import { STATUS_OPTIONS } from "../lib/constants";
+import {
+  APPLICATION_LOAD_ERROR_MESSAGE,
+  APPLICATION_NOT_FOUND_MESSAGE,
+  STATUS_OPTIONS,
+} from "../lib/constants";
 import { toFormValues, buildDirtyPayload, formatDate, statusLabel } from "../lib/helpers";
 
 interface ApplicationPanelProps {
@@ -77,8 +81,11 @@ export function ApplicationPanel({
       })
       .catch((err: unknown) => {
         if (!cancelled) {
+          // Never show raw request text ("Request failed: GET …")
           setError(
-            err instanceof Error ? err.message : "Failed to load application",
+            isApiError(err) && err.status === 404
+              ? APPLICATION_NOT_FOUND_MESSAGE
+              : APPLICATION_LOAD_ERROR_MESSAGE,
           );
           setIsLoading(false);
         }

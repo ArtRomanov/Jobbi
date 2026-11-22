@@ -1,5 +1,6 @@
 """Discovery worker runs against a file-backed SQLite, respx and a fake Groq."""
 
+import asyncio
 import json
 import re
 from collections.abc import AsyncGenerator, Callable
@@ -20,6 +21,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from app.core.config import get_settings
 from app.core.database import Base
 from app.discovery import service
 from app.discovery.service import (
@@ -29,12 +31,14 @@ from app.discovery.service import (
     evaluate_pending,
     run_initial_scans,
 )
+from app.models.telegram_link import TelegramLink
 from app.models.user import User
 from app.models.vacancy import Vacancy, VacancyCardSource
 from app.models.vacancy_search_settings import VacancySearchSettings
 from app.models.vacancy_seen_key import VacancySeenKey
 from app.models.vacancy_source import VacancySource
 from tests.discovery.board_stubs import GreenhouseBoard, LeverBoard
+from tests.discovery.fake_bot import FakeBot
 
 NOW = datetime(2026, 11, 22, 12, 0)
 CHANNEL = "jobbi_jobs"
@@ -586,7 +590,7 @@ class TestCheckAll:
 
         [card] = await vacancies(db)
         assert (card.state, card.fit, card.from_initial_scan) == ("new", "low", False)
-        assert card.alert_handled_at is None  # alerts (Slice 7) handle it
+        assert card.alert_handled_at == NOW  # handled by alerts, even with no bot
         source = await get_source(db, source_id)
         assert source.last_checked_at == NOW
 
@@ -1011,11 +1015,267 @@ class TestEvaluation:
         assert ai.posts_sent[1:] == ["MATCH older 50", "MATCH newer 1"]
 
 
+# --- alerts ----------------------------------------------------------------------
+
+CHAT_ID = 777
+
+
+@pytest.fixture
+def bot(factory: TrackingFactory) -> FakeBot:
+    return FakeBot(open_transactions=factory.open_transactions)
+
+
+async def link_telegram(db: async_sessionmaker[AsyncSession], user_id: str) -> None:
+    async with db() as session:
+        session.add(TelegramLink(user_id=user_id, chat_id=CHAT_ID))
+        await session.commit()
+
+
+async def set_description(
+    db: async_sessionmaker[AsyncSession], user_id: str, description: str
+) -> None:
+    async with db() as session:
+        row = await session.get(VacancySearchSettings, user_id)
+        assert row is not None
+        row.description = description
+        await session.commit()
+
+
+class TestAlerts:
+    async def test_check_all_sends_one_grouped_message(
+        self, factory, db, channel, http, ai, sleep, bot
+    ) -> None:
+        user_id = await make_user(db)
+        await link_telegram(db, user_id)
+        await make_source(db, user_id, scanned=True)
+        channel.add(10, "MATCH LOW", NOW - timedelta(hours=1))
+        channel.add(11, "MATCH HIGH", NOW - timedelta(hours=3))
+        channel.add(12, "not a vacancy")
+
+        report = await check_all(
+            factory, http, ai, at(NOW), config=CONFIG, sleep=sleep, bot=bot
+        )
+
+        inbox = f"{get_settings().JOBBI_PUBLIC_URL.rstrip('/')}/inbox"
+        assert bot.sent == [
+            (
+                CHAT_ID,
+                (
+                    "🔎 2 new vacancies\n"
+                    "\n"
+                    "High · Frontend Developer — Acme\n"
+                    "Low · Frontend Developer — Acme\n"
+                    "\n"
+                    f"🔗 Open Inbox: {inbox}"
+                ),
+            )
+        ]
+        assert report.alerts_sent == 1
+        assert bot.violations == 0
+        assert {card.alert_handled_at for card in await vacancies(db)} == {NOW}
+
+    async def test_no_message_when_nothing_new(
+        self, factory, db, channel, http, ai, sleep, bot
+    ) -> None:
+        user_id = await make_user(db)
+        await link_telegram(db, user_id)
+        await make_source(db, user_id, scanned=True)
+        channel.add(10, "not a vacancy")
+
+        await check_all(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep, bot=bot)
+        await check_all(
+            factory,
+            http,
+            ai,
+            at(NOW + timedelta(hours=1)),
+            config=CONFIG,
+            sleep=sleep,
+            bot=bot,
+        )
+
+        assert bot.sent == []
+
+    async def test_cards_are_announced_once_across_runs(
+        self, factory, db, channel, http, ai, sleep, bot
+    ) -> None:
+        user_id = await make_user(db)
+        await link_telegram(db, user_id)
+        await make_source(db, user_id, scanned=True)
+        channel.add(10, "MATCH a")
+
+        await check_all(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep, bot=bot)
+        channel.add(11, "MATCH b")
+        await check_all(
+            factory,
+            http,
+            ai,
+            at(NOW + timedelta(hours=1)),
+            config=CONFIG,
+            sleep=sleep,
+            bot=bot,
+        )
+
+        assert [text.splitlines()[0] for text in bot.texts] == [
+            "🔎 1 new vacancy",
+            "🔎 1 new vacancy",
+        ]
+
+    async def test_initial_scan_never_alerts_even_when_rated_in_check_all(
+        self, factory, db, channel, http, ai, sleep, bot
+    ) -> None:
+        # No description during the first scan: its posts stay pending and are
+        # only rated by the hourly check after the description is set.
+        user_id = await make_user(db, description=None)
+        await link_telegram(db, user_id)
+        await make_source(db, user_id)
+        channel.add(10, "MATCH HIGH")
+        channel.add(11, "MATCH")
+        await run_initial_scans(
+            factory, http, ai, at(NOW), config=CONFIG, sleep=sleep, bot=bot
+        )
+        await set_description(db, user_id, DESCRIPTION)
+
+        await check_all(
+            factory,
+            http,
+            ai,
+            at(NOW + timedelta(hours=1)),
+            config=CONFIG,
+            sleep=sleep,
+            bot=bot,
+        )
+
+        assert [card.state for card in await vacancies(db)] == ["new", "new"]
+        assert bot.sent == []
+
+    async def test_initial_scan_with_description_never_alerts(
+        self, factory, db, channel, http, ai, sleep, bot
+    ) -> None:
+        user_id = await make_user(db)
+        await link_telegram(db, user_id)
+        await make_source(db, user_id)
+        channel.add(10, "MATCH HIGH")
+
+        await run_initial_scans(
+            factory, http, ai, at(NOW), config=CONFIG, sleep=sleep, bot=bot
+        )
+
+        assert [card.state for card in await vacancies(db)] == ["new"]
+        assert bot.sent == []
+
+    async def test_delayed_matches_are_alerted(
+        self, factory, db, http, ai, sleep, bot
+    ) -> None:
+        # Found by an earlier hourly check, waited for the daily cap / the AI.
+        user_id = await make_user(db)
+        await link_telegram(db, user_id)
+        await make_pending(db, user_id, 2, found_at=NOW - timedelta(days=1))
+
+        await check_all(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep, bot=bot)
+
+        [text] = bot.texts
+        assert text.splitlines()[0] == "🔎 2 new vacancies"
+
+    async def test_delayed_matches_rated_during_an_initial_scan_run_are_alerted(
+        self, factory, db, channel, http, ai, sleep, bot
+    ) -> None:
+        user_id = await make_user(db)
+        await link_telegram(db, user_id)
+        await make_pending(db, user_id, 1, found_at=NOW - timedelta(days=1))
+        await make_source(db, user_id)
+        channel.add(10, "MATCH first scan")
+
+        await run_initial_scans(
+            factory, http, ai, at(NOW), config=CONFIG, sleep=sleep, bot=bot
+        )
+
+        [text] = bot.texts
+        assert text.splitlines()[0] == "🔎 1 new vacancy"
+        assert len([c for c in await vacancies(db) if c.state == "new"]) == 2
+
+    async def test_no_message_without_link_and_none_after_linking_late(
+        self, factory, db, channel, http, ai, sleep, bot
+    ) -> None:
+        user_id = await make_user(db)
+        await make_source(db, user_id, scanned=True)
+        channel.add(10, "MATCH")
+
+        await check_all(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep, bot=bot)
+        assert bot.sent == []
+
+        await link_telegram(db, user_id)
+        await check_all(
+            factory,
+            http,
+            ai,
+            at(NOW + timedelta(hours=1)),
+            config=CONFIG,
+            sleep=sleep,
+            bot=bot,
+        )
+
+        assert bot.sent == []
+        [card] = await vacancies(db)
+        assert card.alert_handled_at == NOW
+
+    @pytest.mark.parametrize(
+        ("error", "is_sent"),
+        [(RuntimeError("boom"), True), (asyncio.CancelledError(), False)],
+        ids=["error-alerts", "cancel-marks-only"],
+    )
+    async def test_interrupted_run_still_handles_cards_made_new(
+        self, factory, db, http, ai, sleep, bot, error: BaseException, is_sent: bool
+    ) -> None:
+        user_id = await make_user(db)
+        await link_telegram(db, user_id)
+        await make_pending(db, user_id, 6)  # two batches: 5 + 1
+        first_call = ai.chat.completions.create
+
+        async def fail_on_second_call(**kwargs: Any) -> Any:
+            if ai.calls:
+                raise error
+            return await first_call(**kwargs)
+
+        ai.chat.completions.create = fail_on_second_call
+
+        with pytest.raises(type(error)):
+            await check_all(
+                factory, http, ai, at(NOW), config=CONFIG, sleep=sleep, bot=bot
+            )
+
+        cards = await vacancies(db)
+        made_new = [card for card in cards if card.state == "new"]
+        assert len(made_new) == 5
+        assert {card.alert_handled_at for card in made_new} == {NOW}
+        assert [card.alert_handled_at for card in cards if card.state == "pending"] == [
+            None
+        ]
+        if is_sent:
+            [text] = bot.texts
+            assert text.splitlines()[0] == "🔎 5 new vacancies"
+        else:  # shutting down: no network, cards only marked handled
+            assert bot.sent == []
+
+    async def test_without_bot_cards_are_still_handled(
+        self, factory, db, channel, http, ai, sleep
+    ) -> None:
+        user_id = await make_user(db)
+        await link_telegram(db, user_id)
+        await make_source(db, user_id, scanned=True)
+        channel.add(10, "MATCH")
+
+        report = await check_all(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep)
+
+        assert report.alerts_sent == 0
+        [card] = await vacancies(db)
+        assert card.alert_handled_at == NOW
+
+
 # --- invariant: no network I/O inside a transaction --------------------------------
 
 
 async def test_no_http_or_groq_call_while_a_transaction_is_open(
-    factory, db, respx_mock, http, ai, sleep
+    factory, db, respx_mock, http, ai, sleep, bot
 ) -> None:
     http_violations: list[int] = []
     stub = Channel()
@@ -1043,6 +1303,7 @@ async def test_no_http_or_groq_call_while_a_transaction_is_open(
     lever_board.mount(respx_mock)
     lever_board.add("a", "lever news", NOW - timedelta(days=1))
     user_id = await make_user(db, exclude=["spam"])
+    await link_telegram(db, user_id)
     await make_source(db, user_id)
     await make_source(db, user_id, handle="second_channel", scanned=True)
     async with db() as session:
@@ -1072,11 +1333,18 @@ async def test_no_http_or_groq_call_while_a_transaction_is_open(
     stub.add(22, "GARBAGE")  # whole-batch format error → single-post retries
     board.add(3, "board news new", NOW + timedelta(minutes=30))
     await check_all(
-        factory, http, ai, at(NOW + timedelta(hours=1)), config=CONFIG, sleep=sleep
+        factory,
+        http,
+        ai,
+        at(NOW + timedelta(hours=1)),
+        config=CONFIG,
+        sleep=sleep,
+        bot=bot,
     )
 
     assert board.detail_requests == [1, 3]
     assert lever_board.requests
+    assert len(bot.sent) == 1 and bot.violations == 0
     assert len(http_violations) >= 8 and set(http_violations) == {0}
     assert len(ai.calls) >= 3 and ai.violations == 0
     # The checks are meaningful: sessions were opened and wrote data.

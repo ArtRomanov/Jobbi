@@ -1,10 +1,12 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { KanbanBoard } from "@/features/kanban-board";
 import { ApplicationPanel } from "@/features/application-panel";
 import { ActivityFeed, ApplicationList } from "@/features/timeline-feed";
 import { STATUSES, type StatusKey } from "@/entities/application";
 import { SegmentedControl, colors } from "@/shared/ui";
 import { useDebounce } from "@/shared/lib";
+import { APPLICATION_SEARCH_PARAM } from "@/shared/config";
 import { DASHBOARD_VIEW_OPTIONS, SEARCH_DEBOUNCE_MS } from "../lib/constants";
 import type { DashboardTab } from "../model/types";
 
@@ -25,6 +27,25 @@ export function DashboardPage() {
     string | null
   >(null);
   const [refreshKey, setRefreshKey] = useState(0);
+
+  // Deep link `?application=<id>` (e.g. the Inbox "Open application" toast):
+  // open that panel, then drop the param (replace) so a reload or closing the
+  // panel does not reopen it. Runs again when a new link lands on this page.
+  // An empty `?application=` is just removed.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedApplicationId = searchParams.get(APPLICATION_SEARCH_PARAM);
+  useEffect(() => {
+    if (linkedApplicationId === null) return;
+    if (linkedApplicationId !== "") setSelectedApplicationId(linkedApplicationId);
+    setSearchParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        next.delete(APPLICATION_SEARCH_PARAM);
+        return next;
+      },
+      { replace: true },
+    );
+  }, [linkedApplicationId, setSearchParams]);
 
   // Search state — debounced before passing to the board (Board tab only)
   const [searchInput, setSearchInput] = useState("");

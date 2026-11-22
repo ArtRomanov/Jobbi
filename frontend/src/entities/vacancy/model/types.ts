@@ -25,3 +25,15 @@ export type VacancyNewCount = components["schemas"]["NewVacancyCount"];
 export type VacancyListParams = NonNullable<
   operations["get_vacancies_api_v1_vacancies_get"]["parameters"]["query"]
 >;
+
+/** An application that already tracks the card's job link (`existing_application` on a card). */
+export type ExistingApplicationRef = components["schemas"]["ExistingApplicationRef"];
+
+/** Body of POST /api/v1/vacancies/{id}/add-to-tracker. */
+export type AddToTrackerRequest = components["schemas"]["AddToTrackerRequest"];
+
+/** 201 of add-to-tracker: the new application, plus the CV copy when `base_cv_id` was sent. */
+export type AddToTrackerResponse = components["schemas"]["AddToTrackerResponse"];
+
+/** Structured 409 of add-to-tracker when the job link is tracked and `allow_duplicate` is false. */
+export type DuplicateApplicationConflict = components["schemas"]["DuplicateApplicationConflict"];
