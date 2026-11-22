@@ -9,7 +9,7 @@ Conventions for every slice:
 ---
 
 - [ ] **Slice 1: Inbox page with Telegram channel sources**
-  - [ ] Pre-checks, recorded in technical-considerations.md: Groq console limits for `llama-3.1-8b-instant`; whether `boards-api.greenhouse.io` serves an EU board token; response size of a large Lever board (`mode=json`). **[Agent: general-purpose]**
+  - [ ] Pre-checks, recorded in technical-considerations.md: Groq console limits for `qwen/qwen3.8-27b` (and `openai/gpt-oss-20b` as fallback); whether `boards-api.greenhouse.io` serves an EU board token; response size of a large Lever board (`mode=json`). **[Agent: general-purpose]**
   - [ ] Models + one Alembic migration for `vacancy_sources` and `vacancy_search_settings` (later tables get their own migrations). **[Agent: database-expert]**
   - [ ] Source input parsing (Telegram forms only for now; anchored patterns, hostile-input tests), live channel check via `t.me/s/<name>` (10 s, fixed host), `GET/POST/DELETE /api/v1/vacancy-sources` with 400/409 messages, 30-source limit, per-user isolation; router included. Tests. **[Agent: python-backend]**
   - [ ] Extend `shared/api/handle-api-error.ts` (string `detail` first) + `getErrorMessage`. Add `shared/ui` `EmptyState`. Create `entities/vacancy-source/`, `features/manage-sources/` (add input with inline error, list with remove), `pages/inbox/` with route `/inbox` and an "Inbox" nav item (no badge yet). MSW handlers + tests. **[Agent: typescript-frontend]**
@@ -27,7 +27,7 @@ Conventions for every slice:
 
 - [ ] **Slice 3: Discovery worker finds Telegram vacancies (read-only Inbox)**
   - [ ] Migration: `vacancy_seen_keys`, `vacancies`, `vacancy_card_sources`. **[Agent: database-expert]**
-  - [ ] Settings `GROQ_DISCOVERY_MODEL`, `DISCOVERY_DAILY_EVAL_LIMIT` in `config.py` and `.env.example`; deps `beautifulsoup4`, `apscheduler>=3.10,<4`, dev `respx`. **[Agent: python-backend]**
+  - [ ] Settings `GROQ_DISCOVERY_MODEL` (default `qwen/qwen3.8-27b`), `DISCOVERY_DAILY_EVAL_LIMIT` in `config.py` and `.env.example`; change the `GROQ_MODEL` default to `qwen/qwen3.8-27b` in both; treat `model_not_found` as a transport error; deps `beautifulsoup4`, `apscheduler>=3.10,<4`, dev `respx`. **[Agent: python-backend]**
   - [ ] `app/discovery/`: `__main__.py` (httpx WARNING, scheduler: hourly `check_all`, every-minute `run_initial_scans`, shared lock, `max_instances=1`), `fetchers/telegram.py` (paging until known key / 7-day cutoff, job-link extraction; HTML fixture tests), `prefilter.py`, `evaluator.py` (Groq JSON mode `{"results": [...]}`, batches of 10, match rule and fit levels from functional spec 2.2, fenced post text, Pydantic validation), `initial_scan.py`, `service.py` (no network I/O inside transactions). Unit + worker tests incl. reference cases as fixtures and a hostile post. **[Agent: python-backend]**
   - [ ] `GET /api/v1/vacancies` (filters by label, state, sort with CASE fit order, pagination) and `GET /vacancies/new-count`. Tests. **[Agent: python-backend]**
   - [ ] `discovery` service in `docker-compose.yml` (same image, `backend-data` volume, env, `depends_on: backend`); document `alembic upgrade head` before start. **[Agent: devops-infra]**
