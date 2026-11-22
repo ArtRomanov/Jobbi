@@ -157,3 +157,25 @@ def test_no_http_link_means_no_job_link() -> None:
     )
     posts, _ = parse_channel_page(html, "jobbi_test")
     assert posts[0].job_link is None
+
+
+def _post_html(post: str) -> str:
+    return (
+        f'<div class="tgme_widget_message" data-post="{post}">'
+        '<div class="tgme_widget_message_text js-message_text">hi</div>'
+        '<time datetime="2026-11-22T00:00:00+00:00"></time></div>'
+    )
+
+
+@pytest.mark.parametrize(
+    "raw_id",
+    ["²", "٣", "١٢"],  # superscript two; Arabic-Indic 3 and 12
+    ids=["superscript", "arabic-indic", "arabic-indic-multi"],
+)
+def test_non_ascii_digit_post_id_is_skipped_and_page_still_parsed(raw_id: str) -> None:
+    html = _post_html(f"jobbi_test/{raw_id}") + _post_html("jobbi_test/5")
+
+    posts, oldest_id = parse_channel_page(html, "jobbi_test")
+
+    assert [p.external_key for p in posts] == ["tg:jobbi_test/5"]
+    assert oldest_id == 5

@@ -1,5 +1,5 @@
-import type { VacancyListParams } from "@/entities/vacancy";
-import type { InboxFilterValues } from "@/features/inbox-filters";
+import type { Vacancy, VacancyListParams } from "@/entities/vacancy";
+import type { InboxFilterValues, InboxStateFilter } from "@/features/inbox-filters";
 import { VACANCIES_PER_PAGE } from "./constants";
 
 /** Query for one page of the list under the given filters. */
@@ -27,4 +27,10 @@ export function pickFocusAfterRemove(ids: readonly string[], id: string): string
 export function insertAt<T>(items: readonly T[], index: number, item: T): T[] {
   const position = Math.min(Math.max(index, 0), items.length);
   return [...items.slice(0, position), item, ...items.slice(position)];
+}
+
+/** Whether a card in `vacancyState` belongs in a list filtered by `filter`. */
+export function matchesStateFilter(vacancyState: Vacancy["state"], filter: InboxStateFilter): boolean {
+  if (filter === "all") return vacancyState === "new" || vacancyState === "seen";
+  return vacancyState === filter;
 }

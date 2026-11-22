@@ -319,3 +319,50 @@ async def test_check_company_failures(
         await lever.check_company(client, "lever", "acme")
 
     assert exc_info.value.reason == reason
+
+
+# ---------------------------------------------------------------------------
+# Length caps vs the DB columns (pre-merge 009): key 255, url/job_link 2048
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+async def test_list_postings_skips_too_long_key_or_url(
+    client: httpx.AsyncClient,
+) -> None:
+    long_id = "i" * 300
+    long_url = "https://jobs.lever.co/acme/" + "u" * 2100
+    respx.get(US_ACME).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"id": long_id, "hostedUrl": "https://jobs.lever.co/acme/x"},
+                {"id": "long-url", "hostedUrl": long_url},
+                *_postings(1),
+            ],
+        )
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        postings = await lever.list_postings(client, "lever", "acme")
+
+    assert [p["id"] for p in postings] == ["id-0"]
+    skipped = [e for e in logs if e["event"] == "lever_posting_too_long"]
+    assert [e["log_level"] for e in skipped] == ["info", "info"]
+    assert skipped[1]["job_id"] == "long-url"
+    # id-only logging: the URL never lands in the log, a huge id is clipped.
+    assert all("u" * 100 not in str(e) for e in skipped)
+    assert len(skipped[0]["job_id"]) <= 64
+
+
+def test_to_raw_post_truncates_title_to_255() -> None:
+    posting = {
+        "id": "x",
+        "hostedUrl": "https://jobs.lever.co/acme/x",
+        "text": "T" * 400,
+    }
+
+    post = lever.to_raw_post("lever", "acme", posting)
+
+    assert post.title == "T" * 255
+    assert post.company is not None and len(post.company) <= 255

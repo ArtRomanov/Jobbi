@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +25,7 @@ from app.services.application_service import (
     list_applications,
     update_application,
 )
+from app.services.cv_service import CvNotFoundError
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
@@ -34,7 +35,9 @@ async def _enrich_with_cv_name(db: AsyncSession, app: Application) -> dict:
     data = {c.key: getattr(app, c.key) for c in Application.__table__.columns}
     data["cv_name"] = None
     if app.cv_id:
-        result = await db.execute(select(Cv.name).where(Cv.id == app.cv_id))
+        result = await db.execute(
+            select(Cv.name).where(Cv.id == app.cv_id, Cv.user_id == app.user_id)
+        )
         data["cv_name"] = result.scalar_one_or_none()
     return data
 
@@ -70,9 +73,7 @@ async def history_feed(
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=50, ge=1, le=500),
 ) -> PaginatedResponse[StatusHistoryFeedRead]:
-    items, total = await get_status_history_feed(
-        db, current_user.id, page, per_page
-    )
+    items, total = await get_status_history_feed(db, current_user.id, page, per_page)
     return PaginatedResponse(
         items=[StatusHistoryFeedRead(**item) for item in items],
         total=total,
@@ -81,7 +82,9 @@ async def history_feed(
     )
 
 
-@router.post("", response_model=ApplicationDetailRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=ApplicationDetailRead, status_code=status.HTTP_201_CREATED
+)
 async def create_app(
     body: ApplicationCreate,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -114,9 +117,12 @@ async def update_app(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ApplicationDetailRead:
-    application = await update_application(
-        db, current_user.id, application_id, body
-    )
+    try:
+        application = await update_application(
+            db, current_user.id, application_id, body
+        )
+    except CvNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="CV not found.") from exc
     if application is None:
         not_found("Application")
     enriched = await _enrich_with_cv_name(db, application)

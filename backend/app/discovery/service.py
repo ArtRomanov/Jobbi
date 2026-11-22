@@ -28,7 +28,7 @@ from typing import Any, Self, TypeAlias
 
 import groq
 import httpx
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Bot
 
@@ -42,6 +42,7 @@ from app.discovery.evaluator import (
     EvaluationFormatError,
     EvaluationRateLimitedError,
     EvaluationTransportError,
+    PostVerdict,
     evaluate_batch,
 )
 from app.discovery.fetchers.errors import BoardReadError
@@ -309,9 +310,10 @@ async def _run_then_alert(
     `alert_handled_at` NULL forever.
 
     - Success or an ordinary exception: alert normally, then re-raise.
-    - Cancellation (worker shutting down): no network — the cards are only
-      marked handled (one short write), then the cancellation goes on. They
-      stay in the Inbox; they are just not announced.
+    - Cancellation (worker shutting down), also while the alert itself is
+      being sent: no network — the cards are only marked handled (one short
+      write), then the cancellation goes on. They stay in the Inbox; they are
+      just not announced.
     """
     try:
         await work
@@ -321,9 +323,14 @@ async def _run_then_alert(
     except Exception:
         await _alert_safely(session_factory, bot, clock, report, sleep)
         raise
-    report.alerts_sent = await send_run_alerts(
-        session_factory, bot, report.new_card_ids, clock, sleep=sleep
-    )
+    try:
+        report.alerts_sent = await send_run_alerts(
+            session_factory, bot, report.new_card_ids, clock, sleep=sleep
+        )
+    except asyncio.CancelledError:
+        # Cards already announced are handled; this marks the rest.
+        await _alert_safely(session_factory, None, clock, report, sleep)
+        raise
 
 
 async def _alert_safely(
@@ -742,6 +749,67 @@ async def _merge_pending_into(
     await _delete_pending(session, pending_id)
 
 
+# A user's own decision outranks a fresh `new` (see `_promote_earlier_pending`).
+_STATE_RANK = {"new": 0, "seen": 1, "dismissed": 2}
+
+
+async def _promote_earlier_pending(
+    session: AsyncSession, pending_id: str, target_id: str, verdict: PostVerdict
+) -> bool:
+    """If the rated pending post was found before the card it would merge into,
+    make it the card instead (spec 2.2: the card keeps the first post's date,
+    fit and text) and merge the later card into it. Returns False (nothing
+    changed) when the existing card came first.
+
+    The promoted card takes the later card's user state (`seen`/`dismissed`
+    outrank `new`) and its `alert_handled_at`, so a decision is not undone
+    and an alert is not repeated. The later card's seen key stays.
+    """
+    pending = await session.get(Vacancy, pending_id)
+    target = (
+        await session.scalars(
+            select(Vacancy).where(Vacancy.id == target_id).with_for_update()
+        )
+    ).one_or_none()
+    if pending is None or target is None or pending.state != "pending":
+        return False
+    if (pending.found_at, pending.posted_at) >= (target.found_at, target.posted_at):
+        return False
+
+    state = max("new", target.state, key=lambda value: _STATE_RANK.get(value, 0))
+    card_sources = (
+        await session.scalars(
+            select(VacancyCardSource).where(VacancyCardSource.vacancy_id == target_id)
+        )
+    ).all()
+    for card_source in card_sources:
+        if await _has_card_source(
+            session, pending_id, card_source.source_kind, card_source.source_handle
+        ):
+            continue
+        card_source.vacancy_id = pending_id
+    await session.flush()
+    await session.execute(
+        delete(VacancyCardSource).where(VacancyCardSource.vacancy_id == target_id)
+    )
+    await session.execute(delete(Vacancy).where(Vacancy.id == target_id))
+    await session.execute(
+        update(Vacancy)
+        .where(Vacancy.id == pending_id, Vacancy.state == "pending")
+        .values(
+            state=state,
+            fit=verdict.fit.value if verdict.fit is not None else None,
+            fit_reason=verdict.reason or None,
+            company=func.coalesce(Vacancy.company, verdict.company),
+            title=func.coalesce(Vacancy.title, verdict.title),
+            alert_handled_at=func.coalesce(
+                Vacancy.alert_handled_at, target.alert_handled_at
+            ),
+        )
+    )
+    return True
+
+
 async def _already_seen(
     session: AsyncSession, user_id: str, keys: Sequence[str]
 ) -> set[str]:
@@ -1017,7 +1085,14 @@ async def _apply_evaluation(
                         session, user_id, row.post.job_link, exclude_id=row.vacancy_id
                     )
                 ):
-                    await _merge_pending_into(session, row.vacancy_id, target_id)
+                    if await _promote_earlier_pending(
+                        session, row.vacancy_id, target_id, verdict
+                    ):
+                        # Alerted only if the replaced card was not yet
+                        # (the alert step filters on `alert_handled_at`).
+                        new_ids.append(row.vacancy_id)
+                    else:
+                        await _merge_pending_into(session, row.vacancy_id, target_id)
                     report.posts_merged += 1
                     continue
                 result = await session.execute(
@@ -1131,7 +1206,8 @@ async def cleanup(session_factory: SessionFactory, clock: Clock) -> CleanupRepor
       deleted;
     - `pending` posts older than 7 days are deleted only for users without a
       search description (posts waiting for the AI or the daily cap stay);
-    - `added` cards are never deleted (they link to their application);
+    - `added` cards stay while they link to their application; once the
+      application is deleted (`application_id` cleared) they are deleted too;
     - seen keys are never deleted, so deleted cards never come back.
 
     Card sources are deleted explicitly (SQLite does not enforce the FK
@@ -1147,8 +1223,13 @@ async def cleanup(session_factory: SessionFactory, clock: Clock) -> CleanupRepor
     async with session_factory() as session, session.begin():
         cards = await session.execute(
             delete(Vacancy).where(
-                Vacancy.state.in_(_VISIBLE_STATES),
-                Vacancy.found_at < now - CARD_RETENTION,
+                or_(
+                    and_(
+                        Vacancy.state.in_(_VISIBLE_STATES),
+                        Vacancy.found_at < now - CARD_RETENTION,
+                    ),
+                    and_(Vacancy.state == "added", Vacancy.application_id.is_(None)),
+                )
             )
         )
         pending = await session.execute(

@@ -8,11 +8,19 @@ from typing import Any
 import httpx
 
 from app.discovery.fetchers.errors import BoardReadError
+from app.discovery.normalize import normalize_url
 
 USER_AGENT = "Jobbi/1.0"
 REQUEST_TIMEOUT_SECONDS = 15.0
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024  # measured on the decompressed body
 MAX_TEXT_CHARS = 20_000
+# Column sizes of `vacancies` / `vacancy_seen_keys` (PostgreSQL enforces them;
+# one oversized value would fail the whole store transaction every run).
+MAX_KEY_CHARS = 255
+MAX_URL_CHARS = 2048
+MAX_NAME_CHARS = 255
+# Remote ids go into logs clipped to this length.
+MAX_LOGGED_ID_CHARS = 64
 
 # Board tokens and Lever slugs only ever go into a URL path on a fixed host.
 # Anything else (slashes, dots, encoded chars) cannot be a real board.
@@ -118,3 +126,22 @@ def html_to_text(markup: str) -> str:
 def cap_text(text: str) -> str:
     """Cut stored post text to ``MAX_TEXT_CHARS``."""
     return text[:MAX_TEXT_CHARS]
+
+
+def fits_columns(key: str, url: str) -> bool:
+    """True if the seen-key and the URL (raw and normalized) fit their columns."""
+    return (
+        len(key) <= MAX_KEY_CHARS
+        and len(url) <= MAX_URL_CHARS
+        and len(normalize_url(url)) <= MAX_URL_CHARS
+    )
+
+
+def cap_name(value: Any) -> str | None:
+    """A non-empty string cut to ``MAX_NAME_CHARS``; None otherwise."""
+    return value[:MAX_NAME_CHARS] if isinstance(value, str) and value else None
+
+
+def loggable_id(value: Any) -> str:
+    """A remote id as a short string, safe to put in a log line."""
+    return str(value)[:MAX_LOGGED_ID_CHARS]

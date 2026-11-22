@@ -24,7 +24,7 @@ from telegram.error import Forbidden, TelegramError
 from telegram.ext import Application, ContextTypes, JobQueue
 
 from app.core.database import async_session
-from app.core.telegram_send import send_with_retry
+from app.core.telegram_send import describe_error, send_with_retry
 from app.core.timezones import is_valid_timezone
 from app.models.telegram_link import TelegramLink
 from app.models.user import User
@@ -127,9 +127,7 @@ async def load_schedules() -> dict[str, SummarySchedule]:
     return {schedule.job_name: schedule for schedule in schedules}
 
 
-def apply_schedules(
-    job_queue: JobQueue, desired: dict[str, SummarySchedule]
-) -> None:
+def apply_schedules(job_queue: JobQueue, desired: dict[str, SummarySchedule]) -> None:
     """Make the registered summary jobs match `desired` exactly."""
     existing = {
         job.name: job
@@ -230,10 +228,17 @@ async def send_daily_summary(context: ContextTypes.DEFAULT_TYPE) -> None:
             "Cannot send summary to user %s: bot blocked or chat unavailable",
             schedule.user_id,
         )
-    except TelegramError:
-        logger.exception("Telegram error sending summary to user %s", schedule.user_id)
+    except TelegramError as exc:
+        # No traceback: the error text can hold the request URL with the token.
+        logger.warning(
+            "Telegram error sending summary to user %s: %s",
+            schedule.user_id,
+            describe_error(exc, context.bot),
+        )
     except SQLAlchemyError:
-        logger.exception("Database error building summary for user %s", schedule.user_id)
+        logger.exception(
+            "Database error building summary for user %s", schedule.user_id
+        )
 
 
 def register_summary_jobs(app: Application) -> None:

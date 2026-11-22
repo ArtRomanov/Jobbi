@@ -269,3 +269,51 @@ def test_to_raw_post_posted_at_override() -> None:
     )
 
     assert post.posted_at == datetime(2026, 11, 22, 12, 0)
+
+
+# ---------------------------------------------------------------------------
+# Length caps vs the DB columns (pre-merge 009): key 255, url/job_link 2048
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+async def test_list_jobs_skips_too_long_key_or_url(client: httpx.AsyncClient) -> None:
+    huge_id = 10**300  # JSON ints are unbounded; the key would be > 255 chars
+    long_url = "https://x.example/" + "u" * 2100
+    respx.get(f"{API}/jobs").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "jobs": [
+                    {"id": huge_id, "absolute_url": "https://x.example/1"},
+                    {"id": 2, "absolute_url": long_url},
+                    {"id": 3, "absolute_url": "https://x.example/3"},
+                ]
+            },
+        )
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        jobs = await greenhouse.list_jobs(client, "raisin")
+
+    assert [job["id"] for job in jobs] == [3]
+    skipped = [e for e in logs if e["event"] == "greenhouse_job_too_long"]
+    assert [e["log_level"] for e in skipped] == ["info", "info"]
+    assert skipped[1]["job_id"] == "2"
+    assert all("u" * 100 not in str(e) for e in skipped)
+    assert len(skipped[0]["job_id"]) <= 64
+
+
+def test_to_raw_post_truncates_title_and_company_to_255() -> None:
+    job = {
+        "id": 9,
+        "title": "T" * 400,
+        "company_name": "C" * 400,
+        "absolute_url": "https://x.example/9",
+        "first_published": None,
+        "updated_at": None,
+    }
+
+    post = greenhouse.to_raw_post("acme", job, "")
+
+    assert (post.title, post.company) == ("T" * 255, "C" * 255)

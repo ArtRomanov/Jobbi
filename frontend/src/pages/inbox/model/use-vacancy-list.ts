@@ -3,7 +3,7 @@ import { getErrorMessage } from "@/shared/api";
 import { listVacancies } from "@/entities/vacancy";
 import type { Vacancy } from "@/entities/vacancy";
 import type { InboxFilterValues } from "@/features/inbox-filters";
-import { buildListParams, insertAt } from "../lib/helpers";
+import { buildListParams, insertAt, matchesStateFilter } from "../lib/helpers";
 import type { UseVacancyListResult, VacancyListLoadState, VacancyListState } from "./types";
 
 const EMPTY_LIST: VacancyListState = { items: [], total: 0 };
@@ -31,9 +31,13 @@ export function useVacancyList(
   const generationRef = useRef(0);
   const isLoadingMoreRef = useRef(false);
   const lastFiltersKeyRef = useRef<string | null>(null);
-  // Cards removed since the last page-1 load, with where they stood: Undo puts
-  // them back in place, and its size is how far server pages have shifted
+  // Cards removed locally and not restored, with where they stand in the
+  // current list: Undo puts them back in place, and a page-1 load that still
+  // lists them (its request raced the dismiss) hides them
   const removedIndexesRef = useRef(new Map<string, number>());
+  // Set by a local remove since the last page-1 load: server pages may have
+  // shifted, so "Load more" re-reads the previous page too
+  const hasShiftedRef = useRef(false);
 
   useEffect(() => {
     generationRef.current += 1;
@@ -43,14 +47,26 @@ export function useVacancyList(
       setLoadState("loading");
     }
     lastFiltersKeyRef.current = filtersKey;
-    // The new page 1 decides what is listed; a later Undo must not insert into it
-    removedIndexesRef.current.clear();
 
     async function load(): Promise<void> {
       try {
         const data = await listVacancies(buildListParams({ source, state, sort }, 1));
         if (generation !== generationRef.current) return;
-        setList({ items: data.items, total: data.total });
+        // Read on arrival, not when the request was sent: a dismiss that lands
+        // while the request is in flight must not bring its card back
+        const removed = removedIndexesRef.current;
+        const stillRemoved = new Map<string, number>();
+        data.items.forEach((item, index) => {
+          if (removed.has(item.id)) stillRemoved.set(item.id, index);
+        });
+        // Cards the server no longer lists are out of this list for good, so a
+        // later Undo does not insert them; the next load shows them if restored
+        removedIndexesRef.current = stillRemoved;
+        hasShiftedRef.current = stillRemoved.size > 0;
+        setList({
+          items: data.items.filter((item) => !stillRemoved.has(item.id)),
+          total: Math.max(0, data.total - stillRemoved.size),
+        });
         setPage(1);
         setLoadMoreError(null);
         setLoadState("ready");
@@ -79,15 +95,23 @@ export function useVacancyList(
       // Removed cards shift later cards onto earlier server pages; re-reading
       // the previous page too (deduped by id) keeps them from being skipped
       const pages = await Promise.all(
-        removedIndexesRef.current.size > 0
+        hasShiftedRef.current
           ? [nextPage - 1, nextPage].map((p) => listVacancies(buildListParams(params, p)))
           : [listVacancies(buildListParams(params, nextPage))],
       );
       if (generation !== generationRef.current) return;
       const fetched = pages.flatMap((data) => data.items);
-      const fetchedTotal = pages[pages.length - 1]?.total ?? 0;
+      // The server still counts listed cards whose dismiss has not landed
+      const removed = removedIndexesRef.current;
+      const hiddenCount = new Set(fetched.filter((item) => removed.has(item.id)).map((item) => item.id)).size;
+      const fetchedTotal = Math.max(0, (pages[pages.length - 1]?.total ?? 0) - hiddenCount);
       setList((current) => {
-        const known = new Set(current.items.map((item) => item.id));
+        // Locally removed cards count as known: a re-read page may still list
+        // one whose dismiss has not landed yet
+        const known = new Set([
+          ...current.items.map((item) => item.id),
+          ...removedIndexesRef.current.keys(),
+        ]);
         const added = fetched.filter((item) => {
           if (known.has(item.id)) return false;
           known.add(item.id);
@@ -120,8 +144,9 @@ export function useVacancyList(
     setList((current) => {
       const index = current.items.findIndex((item) => item.id === id);
       if (index === -1) return current;
-      // Idempotent write, safe if React runs the updater twice
+      // Idempotent writes, safe if React runs the updater twice
       removedIndexesRef.current.set(id, index);
+      hasShiftedRef.current = true;
       return {
         items: current.items.filter((item) => item.id !== id),
         total: Math.max(0, current.total - 1),
@@ -135,11 +160,14 @@ export function useVacancyList(
     // the next load shows the card where the server puts it
     if (index === undefined) return;
     removedIndexesRef.current.delete(vacancy.id);
+    // Undo brings it back as seen; a New-only list must not show it (the server
+    // has it out of this filter, so the total stays as is too)
+    if (!matchesStateFilter(vacancy.state, state)) return;
     setList((current) => {
       if (current.items.some((item) => item.id === vacancy.id)) return current;
       return { items: insertAt(current.items, index, vacancy), total: current.total + 1 };
     });
-  }, []);
+  }, [state]);
 
   return {
     items,

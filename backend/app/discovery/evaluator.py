@@ -22,6 +22,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.core.prompt_fence import defang
 from app.discovery.types import RawPost
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,6 @@ MAX_COMPLETION_TOKENS = 2_000
 # post cannot close its own fence or open a fake one.
 _FENCE_OPEN = "<<<POST {key}>>>"
 _FENCE_CLOSE = "<<<END {key}>>>"
-_FENCE_CHARS_RE = re.compile(r"<{3,}|>{3,}")
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
 SYSTEM_PROMPT = """\
@@ -216,7 +216,7 @@ class BatchEvaluation:
 
 def _defang(text: str) -> str:
     """Remove fence-like sequences so untrusted text cannot break out of its fence."""
-    return _FENCE_CHARS_RE.sub(lambda m: m.group(0)[0] * 2, text)
+    return defang(text)
 
 
 _PROFILE_LABELS = {

@@ -42,9 +42,7 @@ async def _create_app(
     **extra: object,
 ) -> dict:
     payload: dict = {"company_name": company_name, "role_title": role_title, **extra}
-    resp = await client.post(
-        BASE_URL, json=payload, headers=_auth_header(token)
-    )
+    resp = await client.post(BASE_URL, json=payload, headers=_auth_header(token))
     assert resp.status_code == 201
     return resp.json()
 
@@ -87,9 +85,7 @@ async def test_create_application_with_all_fields(
         "notes": "Referred by a friend",
         "status": APPLIED,
     }
-    resp = await client.post(
-        BASE_URL, json=payload, headers=_auth_header(token)
-    )
+    resp = await client.post(BASE_URL, json=payload, headers=_auth_header(token))
     assert resp.status_code == 201
     data = resp.json()
 
@@ -160,9 +156,7 @@ async def test_get_application_detail(
     created = await _create_app(client, token)
     app_id = created["id"]
 
-    resp = await client.get(
-        f"{BASE_URL}/{app_id}", headers=_auth_header(token)
-    )
+    resp = await client.get(f"{BASE_URL}/{app_id}", headers=_auth_header(token))
     assert resp.status_code == 200
     data = resp.json()
     assert data["id"] == app_id
@@ -197,16 +191,12 @@ async def test_delete_application(
     created = await _create_app(client, token)
     app_id = created["id"]
 
-    resp = await client.delete(
-        f"{BASE_URL}/{app_id}", headers=_auth_header(token)
-    )
+    resp = await client.delete(f"{BASE_URL}/{app_id}", headers=_auth_header(token))
     assert resp.status_code == 200
     assert resp.json()["message"] == "Application deleted."
 
     # Subsequent GET should 404
-    resp = await client.get(
-        f"{BASE_URL}/{app_id}", headers=_auth_header(token)
-    )
+    resp = await client.get(f"{BASE_URL}/{app_id}", headers=_auth_header(token))
     assert resp.status_code == 404
 
 
@@ -243,9 +233,7 @@ async def test_status_change_creates_history(
     assert resp.json()["status"] == APPLIED
 
     # Fetch detail separately to get the freshly-loaded status_history
-    detail_resp = await client.get(
-        f"{BASE_URL}/{app_id}", headers=_auth_header(token)
-    )
+    detail_resp = await client.get(f"{BASE_URL}/{app_id}", headers=_auth_header(token))
     data = detail_resp.json()
     assert len(data["status_history"]) == 2
 
@@ -279,9 +267,7 @@ async def test_status_history_in_detail_response(
     created = await _create_app(client, token)
     app_id = created["id"]
 
-    resp = await client.get(
-        f"{BASE_URL}/{app_id}", headers=_auth_header(token)
-    )
+    resp = await client.get(f"{BASE_URL}/{app_id}", headers=_auth_header(token))
     data = resp.json()
     entry = data["status_history"][0]
     assert "id" in entry
@@ -398,9 +384,7 @@ async def test_cannot_access_other_users_application(
     user_b = await _register_user(client, email="userb@example.com")
     token_b = user_b["access_token"]
 
-    resp = await client.get(
-        f"{BASE_URL}/{app_id}", headers=_auth_header(token_b)
-    )
+    resp = await client.get(f"{BASE_URL}/{app_id}", headers=_auth_header(token_b))
     assert resp.status_code == 404
 
 
@@ -432,9 +416,7 @@ async def test_cannot_delete_other_users_application(
     user_b = await _register_user(client, email="userb@example.com")
     token_b = user_b["access_token"]
 
-    resp = await client.delete(
-        f"{BASE_URL}/{app_id}", headers=_auth_header(token_b)
-    )
+    resp = await client.delete(f"{BASE_URL}/{app_id}", headers=_auth_header(token_b))
     assert resp.status_code == 404
 
 
@@ -466,9 +448,7 @@ async def test_list_only_own_applications(
 # ---------------------------------------------------------------------------
 
 
-async def test_history_feed(
-    client: httpx.AsyncClient, registered_user: dict
-) -> None:
+async def test_history_feed(client: httpx.AsyncClient, registered_user: dict) -> None:
     token = registered_user["access_token"]
     created = await _create_app(client, token, company_name="FeedCo", role_title="Dev")
 
@@ -479,9 +459,7 @@ async def test_history_feed(
         headers=_auth_header(token),
     )
 
-    resp = await client.get(
-        f"{BASE_URL}/history", headers=_auth_header(token)
-    )
+    resp = await client.get(f"{BASE_URL}/history", headers=_auth_header(token))
     assert resp.status_code == 200
     data = resp.json()
     assert data["total"] == 2
@@ -526,9 +504,7 @@ async def test_delete_cascades_status_history(
     assert len(result.scalars().all()) == 2
 
     # Delete the application
-    resp = await client.delete(
-        f"{BASE_URL}/{app_id}", headers=_auth_header(token)
-    )
+    resp = await client.delete(f"{BASE_URL}/{app_id}", headers=_auth_header(token))
     assert resp.status_code == 200
 
     # Verify status history entries are also gone
@@ -538,3 +514,79 @@ async def test_delete_cascades_status_history(
         )
     )
     assert len(result.scalars().all()) == 0
+
+
+# ---------------------------------------------------------------------------
+# job_url scheme (pre-merge 009): only http(s) or scheme-less text is stored
+# ---------------------------------------------------------------------------
+
+DANGEROUS_JOB_URLS = [
+    "javascript:alert(1)",
+    "JavaScript:alert(1)",
+    "  javascript:alert(1)",
+    "java\tscript:alert(1)",
+    "data:text/html,<script>alert(1)</script>",
+    "vbscript:msgbox(1)",
+    "file:///etc/passwd",
+    "ftp://example.com/job",
+    "mailto:hr@example.com",
+]
+SAFE_JOB_URLS = [
+    "https://acme.com/jobs/1",
+    "HTTP://acme.com/jobs/1",
+    "acme.com/jobs/1",
+    "Referral from Bob",
+    "",
+]
+
+
+@pytest.mark.parametrize("job_url", DANGEROUS_JOB_URLS)
+async def test_create_rejects_dangerous_job_url(
+    client: httpx.AsyncClient, registered_user: dict, job_url: str
+) -> None:
+    resp = await client.post(
+        BASE_URL,
+        json={"company_name": "Acme", "role_title": "Dev", "job_url": job_url},
+        headers=_auth_header(registered_user["access_token"]),
+    )
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"][0]["loc"] == ["body", "job_url"]
+
+
+@pytest.mark.parametrize("job_url", DANGEROUS_JOB_URLS)
+async def test_patch_rejects_dangerous_job_url(
+    client: httpx.AsyncClient, registered_user: dict, job_url: str
+) -> None:
+    token = registered_user["access_token"]
+    created = await _create_app(client, token, job_url="https://acme.com/jobs/1")
+
+    resp = await client.patch(
+        f"{BASE_URL}/{created['id']}",
+        json={"job_url": job_url},
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 422
+    stored = await client.get(
+        f"{BASE_URL}/{created['id']}", headers=_auth_header(token)
+    )
+    assert stored.json()["job_url"] == "https://acme.com/jobs/1"
+
+
+@pytest.mark.parametrize("job_url", [*SAFE_JOB_URLS, None])
+async def test_create_and_patch_accept_safe_job_url(
+    client: httpx.AsyncClient, registered_user: dict, job_url: str | None
+) -> None:
+    token = registered_user["access_token"]
+    created = await _create_app(client, token, job_url=job_url)
+
+    resp = await client.patch(
+        f"{BASE_URL}/{created['id']}",
+        json={"job_url": job_url},
+        headers=_auth_header(token),
+    )
+
+    assert created["job_url"] == job_url
+    assert resp.status_code == 200
+    assert resp.json()["job_url"] == job_url

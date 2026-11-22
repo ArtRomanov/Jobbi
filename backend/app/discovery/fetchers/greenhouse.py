@@ -12,10 +12,13 @@ import httpx
 import structlog
 
 from app.discovery.fetchers.board_http import (
+    cap_name,
     cap_text,
     check_handle,
+    fits_columns,
     get_json,
     html_to_text,
+    loggable_id,
 )
 from app.discovery.fetchers.errors import UNKNOWN_POSTED_AT, BoardReadError
 from app.discovery.normalize import is_http_url, normalize_url
@@ -63,7 +66,8 @@ async def list_jobs(client: httpx.AsyncClient, token: str) -> list[dict[str, Any
 
     Each item has ``id, title, absolute_url, location, first_published,
     updated_at, company_name``; ``location`` is the location name string.
-    Entries without an id or an absolute http(s) URL are skipped.
+    Entries without an id or an absolute http(s) URL are skipped, and so are
+    entries whose seen-key or URL would not fit the DB columns.
 
     Raises:
         BoardReadError: see ``board_http.get_json``.
@@ -89,6 +93,11 @@ async def list_jobs(client: httpx.AsyncClient, token: str) -> list[dict[str, Any
             continue
         if not is_http_url(absolute_url):
             logger.info("greenhouse_job_url_rejected", board=token, job_id=job_id)
+            continue
+        if not fits_columns(job_key(token, {"id": job_id}), absolute_url):
+            logger.info(
+                "greenhouse_job_too_long", board=token, job_id=loggable_id(job_id)
+            )
             continue
         location = job.get("location")
         jobs.append(
@@ -160,8 +169,8 @@ def to_raw_post(
         external_key=job_key(token, job),
         url=absolute_url,
         job_link=normalize_url(absolute_url),
-        title=title if isinstance(title, str) and title else None,
-        company=company if isinstance(company, str) and company else None,
+        title=cap_name(title),
+        company=cap_name(company),
         text=cap_text(text),
         posted_at=posted_at,
     )

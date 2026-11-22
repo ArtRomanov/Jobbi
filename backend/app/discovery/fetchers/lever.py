@@ -14,10 +14,13 @@ import httpx
 import structlog
 
 from app.discovery.fetchers.board_http import (
+    cap_name,
     cap_text,
     check_handle,
+    fits_columns,
     get_json,
     html_to_text,
+    loggable_id,
 )
 from app.discovery.fetchers.errors import UNKNOWN_POSTED_AT, BoardReadError
 from app.discovery.normalize import is_http_url, normalize_url
@@ -65,7 +68,8 @@ async def list_postings(
 
     Stops at the first page shorter than ``page_size`` (or after ``MAX_PAGES``
     pages as a safety net). Items without a string ``id`` or ``hostedUrl``
-    are dropped, and so are items whose ``hostedUrl`` is not http(s).
+    are dropped, and so are items whose ``hostedUrl`` is not http(s) and items
+    whose seen-key or URL would not fit the DB columns.
 
     Raises:
         BoardReadError: see ``board_http.get_json``.
@@ -105,6 +109,14 @@ def _is_usable(kind: str, company: str, item: Any) -> bool:
             kind=kind,
             board=company,
             job_id=item["id"],
+        )
+        return False
+    if not fits_columns(posting_key(kind, company, item), item["hostedUrl"]):
+        logger.info(
+            "lever_posting_too_long",
+            kind=kind,
+            board=company,
+            job_id=loggable_id(item["id"]),
         )
         return False
     return True
@@ -182,8 +194,8 @@ def to_raw_post(
         external_key=posting_key(kind, company, posting),
         url=hosted_url,
         job_link=normalize_url(hosted_url),
-        title=title if isinstance(title, str) and title else None,
-        company=display_name_from_slug(company),
+        title=cap_name(title),
+        company=cap_name(display_name_from_slug(company)),
         text=_posting_text(posting),
         posted_at=posted_at,
     )
