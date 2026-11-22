@@ -1,5 +1,6 @@
 """Discovery worker runs against a file-backed SQLite, respx and a fake Groq."""
 
+import asyncio
 import json
 import re
 from collections.abc import AsyncGenerator, Callable
@@ -1215,6 +1216,44 @@ class TestAlerts:
         assert bot.sent == []
         [card] = await vacancies(db)
         assert card.alert_handled_at == NOW
+
+    @pytest.mark.parametrize(
+        ("error", "is_sent"),
+        [(RuntimeError("boom"), True), (asyncio.CancelledError(), False)],
+        ids=["error-alerts", "cancel-marks-only"],
+    )
+    async def test_interrupted_run_still_handles_cards_made_new(
+        self, factory, db, http, ai, sleep, bot, error: BaseException, is_sent: bool
+    ) -> None:
+        user_id = await make_user(db)
+        await link_telegram(db, user_id)
+        await make_pending(db, user_id, 6)  # two batches: 5 + 1
+        first_call = ai.chat.completions.create
+
+        async def fail_on_second_call(**kwargs: Any) -> Any:
+            if ai.calls:
+                raise error
+            return await first_call(**kwargs)
+
+        ai.chat.completions.create = fail_on_second_call
+
+        with pytest.raises(type(error)):
+            await check_all(
+                factory, http, ai, at(NOW), config=CONFIG, sleep=sleep, bot=bot
+            )
+
+        cards = await vacancies(db)
+        made_new = [card for card in cards if card.state == "new"]
+        assert len(made_new) == 5
+        assert {card.alert_handled_at for card in made_new} == {NOW}
+        assert [card.alert_handled_at for card in cards if card.state == "pending"] == [
+            None
+        ]
+        if is_sent:
+            [text] = bot.texts
+            assert text.splitlines()[0] == "🔎 5 new vacancies"
+        else:  # shutting down: no network, cards only marked handled
+            assert bot.sent == []
 
     async def test_without_bot_cards_are_still_handled(
         self, factory, db, channel, http, ai, sleep

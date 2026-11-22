@@ -62,8 +62,8 @@ Conventions for every slice:
 ---
 
 - [ ] **Slice 7: Telegram alerts and daily summary line**
-  - [ ] Move the RetryAfter send logic into `app/core/telegram_send.py` taking a `Bot`; bot uses it unchanged in behavior (existing bot tests green). **[Agent: python-backend]**
-  - [ ] `alerts.py`: one message per user per `check_all` run for cards that became new in this run (not from initial scans); exact text from functional spec 2.4; `alert_handled_at` set in every case. `summary_service`: "📥 N new vacancies in Inbox" incl. the zero-applications branch. Tests. **[Agent: python-backend]**
+  - [x] Move the RetryAfter send logic into `app/core/telegram_send.py` taking a `Bot`; bot uses it unchanged in behavior (existing bot tests green). **[Agent: python-backend]**
+  - [x] `alerts.py`: one message per user per `check_all` run for cards that became new in this run (not from initial scans); exact text from functional spec 2.4; `alert_handled_at` set in every case. `summary_service`: "📥 N new vacancies in Inbox" incl. the zero-applications branch. Tests. **[Agent: python-backend]**
   - [ ] Verify: live — with Telegram linked, a new matching post in a watched channel produces one grouped bot message after the next check; adding a source produces no message; `/summary` shows the Inbox line; unlink + new matches + relink → no message about old cards. **[Agent: qa-tester]**
 
 ---

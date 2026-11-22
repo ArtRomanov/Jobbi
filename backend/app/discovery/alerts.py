@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import TypeAlias
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Bot
 
@@ -27,6 +28,8 @@ from app.models.vacancy import Vacancy
 
 __all__ = [
     "MAX_ALERT_LINES",
+    "MAX_FIELD_CHARS",
+    "MAX_MESSAGE_CHARS",
     "AlertCard",
     "default_inbox_url",
     "format_alert",
@@ -36,6 +39,12 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 MAX_ALERT_LINES = 10
+# Telegram rejects longer messages ("Message is too long"). Telegram counts
+# UTF-16 code units (an emoji is 2), see `_telegram_len`.
+MAX_MESSAGE_CHARS = 4096
+# Role / company are cut to this length so one long title cannot crowd out
+# the rest of the alert.
+MAX_FIELD_CHARS = 80
 # Cards merged, dismissed or added before the alert went out are left out.
 _ALERTABLE_STATES = ("new", "seen")
 _FIT_LABELS = {"high": "High", "medium": "Medium", "low": "Low"}
@@ -66,23 +75,51 @@ def _ordered(cards: Sequence[AlertCard]) -> list[AlertCard]:
     )
 
 
+def _telegram_len(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _clip(value: str, limit: int = MAX_FIELD_CHARS) -> str:
+    value = " ".join(value.split())  # no line breaks inside one alert line
+    return value if len(value) <= limit else f"{value[: limit - 1].rstrip()}…"
+
+
 def _line(card: AlertCard) -> str:
     fit = _FIT_LABELS.get(card.fit or "", "Unrated")
-    role = (card.title or "").strip() or "Unknown role"
-    company = (card.company or "").strip() or "Unknown company"
+    role = _clip(card.title or "") or "Unknown role"
+    company = _clip(card.company or "") or "Unknown company"
     return f"{fit} · {role} — {company}"
 
 
-def format_alert(cards: Sequence[AlertCard], inbox_url: str) -> str:
-    """The alert text (functional spec 2.4). `cards` must not be empty."""
+def format_alert(
+    cards: Sequence[AlertCard], inbox_url: str, *, max_chars: int = MAX_MESSAGE_CHARS
+) -> str:
+    """The alert text (functional spec 2.4). `cards` must not be empty.
+
+    If the text would exceed `max_chars`, trailing card lines are dropped and
+    counted in "+M more in Inbox"; the header and the Inbox link always stay.
+    """
     count = len(cards)
     header = "🔎 1 new vacancy" if count == 1 else f"🔎 {count} new vacancies"
-    ordered = _ordered(cards)
-    lines = [header, "", *(_line(card) for card in ordered[:MAX_ALERT_LINES])]
-    if count > MAX_ALERT_LINES:
-        lines.append(f"+{count - MAX_ALERT_LINES} more in Inbox")
-    lines.extend(["", f"🔗 Open Inbox: {inbox_url}"])
-    return "\n".join(lines)
+    card_lines = [_line(card) for card in _ordered(cards)[:MAX_ALERT_LINES]]
+    link = f"🔗 Open Inbox: {inbox_url}"
+
+    def compose(shown: int) -> str:
+        lines = [header, "", *card_lines[:shown]]
+        if count > shown:
+            lines.append(f"+{count - shown} more in Inbox")
+        lines.extend(["", link])
+        return "\n".join(lines)
+
+    shown = len(card_lines)
+    text = compose(shown)
+    while shown > 0 and _telegram_len(text) > max_chars:
+        shown -= 1
+        text = compose(shown)
+    # Last resort (an absurdly long Inbox URL): a cut message beats none.
+    while _telegram_len(text) > max_chars:
+        text = text[:-1]
+    return text
 
 
 async def send_run_alerts(
@@ -106,15 +143,38 @@ async def send_run_alerts(
         card_ids = list(dict.fromkeys(raw_ids))
         if not card_ids:
             continue
-        cards, chat_id = await _load(session_factory, user_id, card_ids)
-        if cards and bot is not None and chat_id is not None:
-            if await send_text(bot, chat_id, format_alert(cards, url), sleep=sleep):
+        try:
+            if await _alert_user(
+                session_factory, bot, user_id, card_ids, clock, url, sleep
+            ):
                 sent += 1
-                logger.info("Alert sent to user %s: %d card(s)", user_id, len(cards))
-            else:
-                logger.warning("Alert for user %s could not be sent", user_id)
-        await _mark_handled(session_factory, user_id, card_ids, clock())
+        except SQLAlchemyError:
+            # One user's database trouble must not stop the others' alerts.
+            logger.exception("Alerts for user %s failed", user_id)
     return sent
+
+
+async def _alert_user(
+    session_factory: SessionFactory,
+    bot: Bot | None,
+    user_id: str,
+    card_ids: list[str],
+    clock: Clock,
+    inbox_url: str,
+    sleep: SleepFn,
+) -> bool:
+    """Send (maybe) and mark handled; True when a message was sent."""
+    is_sent = False
+    cards, chat_id = await _load(session_factory, user_id, card_ids)
+    if cards and bot is not None and chat_id is not None:
+        text = format_alert(cards, inbox_url)
+        is_sent = await send_text(bot, chat_id, text, sleep=sleep)
+        if is_sent:
+            logger.info("Alert sent to user %s: %d card(s)", user_id, len(cards))
+        else:
+            logger.warning("Alert for user %s could not be sent", user_id)
+    await _mark_handled(session_factory, user_id, card_ids, clock())
+    return is_sent
 
 
 async def _load(

@@ -190,17 +190,20 @@ async def run_initial_scans(
     config = config or DiscoveryConfig.from_settings()
     report = RunReport()
     sources = await _load_sources(session_factory, clock(), initial=True)
-    for source in sources:
-        await _scan_source(
-            session_factory,
-            http_client,
-            source,
-            clock(),
-            report,
-            initial=True,
-            sleep=sleep,
-        )
-    if sources:
+    if not sources:
+        return report
+
+    async def work() -> None:
+        for source in sources:
+            await _scan_source(
+                session_factory,
+                http_client,
+                source,
+                clock(),
+                report,
+                initial=True,
+                sleep=sleep,
+            )
         await evaluate_pending(
             session_factory,
             groq_client,
@@ -210,10 +213,9 @@ async def run_initial_scans(
             sleep=sleep,
             report=report,
         )
-        report.alerts_sent = await send_run_alerts(
-            session_factory, bot, report.new_card_ids, clock, sleep=sleep
-        )
-        _log_report("initial scans", report)
+
+    await _run_then_alert(work(), session_factory, bot, clock, report, sleep)
+    _log_report("initial scans", report)
     return report
 
 
@@ -237,24 +239,76 @@ async def check_all(
     """
     config = config or DiscoveryConfig.from_settings()
     report = RunReport()
-    for source in await _load_sources(session_factory, clock(), initial=False):
-        await _scan_source(
+
+    async def work() -> None:
+        for source in await _load_sources(session_factory, clock(), initial=False):
+            await _scan_source(
+                session_factory,
+                http_client,
+                source,
+                clock(),
+                report,
+                initial=False,
+                sleep=sleep,
+            )
+        await evaluate_pending(
             session_factory,
-            http_client,
-            source,
-            clock(),
-            report,
-            initial=False,
+            groq_client,
+            clock,
+            config=config,
             sleep=sleep,
+            report=report,
         )
-    await evaluate_pending(
-        session_factory, groq_client, clock, config=config, sleep=sleep, report=report
-    )
+
+    await _run_then_alert(work(), session_factory, bot, clock, report, sleep)
+    _log_report("hourly check", report)
+    return report
+
+
+async def _run_then_alert(
+    work: Awaitable[None],
+    session_factory: SessionFactory,
+    bot: Bot | None,
+    clock: Clock,
+    report: RunReport,
+    sleep: SleepFn,
+) -> None:
+    """Run `work`, then alert about the cards it made `new` — also when it
+    fails half way, so those cards are not left unannounced with
+    `alert_handled_at` NULL forever.
+
+    - Success or an ordinary exception: alert normally, then re-raise.
+    - Cancellation (worker shutting down): no network — the cards are only
+      marked handled (one short write), then the cancellation goes on. They
+      stay in the Inbox; they are just not announced.
+    """
+    try:
+        await work
+    except asyncio.CancelledError:
+        await _alert_safely(session_factory, None, clock, report, sleep)
+        raise
+    except Exception:
+        await _alert_safely(session_factory, bot, clock, report, sleep)
+        raise
     report.alerts_sent = await send_run_alerts(
         session_factory, bot, report.new_card_ids, clock, sleep=sleep
     )
-    _log_report("hourly check", report)
-    return report
+
+
+async def _alert_safely(
+    session_factory: SessionFactory,
+    bot: Bot | None,
+    clock: Clock,
+    report: RunReport,
+    sleep: SleepFn,
+) -> None:
+    """Alert step on the failure path: never hides the original error."""
+    try:
+        report.alerts_sent = await send_run_alerts(
+            session_factory, bot, report.new_card_ids, clock, sleep=sleep
+        )
+    except Exception:
+        logger.exception("Alerts after an interrupted run failed")
 
 
 async def evaluate_pending(

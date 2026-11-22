@@ -9,10 +9,12 @@ from typing import Any
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from telegram.error import Forbidden, NetworkError, RetryAfter
 
 from app.core.database import Base
+from app.discovery import alerts
 from app.discovery.alerts import AlertCard, format_alert, send_run_alerts
 from app.models.telegram_link import TelegramLink
 from app.models.user import User
@@ -116,11 +118,48 @@ class TestFormatAlert:
         assert body[10] == "+2 more in Inbox"
         assert lines[-2:] == ["", f"🔗 Open Inbox: {INBOX}"]
 
+    def test_long_role_and_company_are_shortened(self) -> None:
+        text = format_alert([card("high", "R" * 200, "C\nCorp " * 40)], INBOX)
+
+        line = text.splitlines()[2]
+        role, company = line.removeprefix("High · ").split(" — ")
+        assert role == "R" * 79 + "…"
+        # Line breaks collapsed (one alert line per card), cut with "…".
+        assert company.startswith("C Corp C Corp")
+        assert len(company) <= 80 and company.endswith("…")
+
+    def test_ten_huge_cards_fit_telegram_limit(self) -> None:
+        cards = [card("high", "R" * 200, "C" * 200) for _ in range(10)]
+
+        text = format_alert(cards, INBOX)
+
+        assert telegram_len(text) <= 4096
+        assert len(text.splitlines()) == 2 + 10 + 2
+
+    def test_over_limit_drops_trailing_lines_and_counts_them(self) -> None:
+        cards = [card("high", f"Role {n}", hours_ago=n) for n in range(1, 13)]
+        full = format_alert(cards, INBOX)
+
+        text = format_alert(cards, INBOX, max_chars=len(full) - 30)
+
+        lines = text.splitlines()
+        assert lines[0] == "🔎 12 new vacancies"
+        assert lines[-1] == f"🔗 Open Inbox: {INBOX}"
+        shown = [line for line in lines if line.startswith("High · ")]
+        assert len(shown) < 10
+        assert shown == [f"High · Role {n} — Acme" for n in range(1, len(shown) + 1)]
+        assert lines[-3] == f"+{12 - len(shown)} more in Inbox"
+        assert telegram_len(text) <= len(full) - 30
+
     def test_exactly_ten_cards_has_no_more_line(self) -> None:
         text = format_alert([card() for _ in range(10)], INBOX)
 
         assert "more in Inbox" not in text
         assert len(text.splitlines()) == 2 + 10 + 2
+
+
+def telegram_len(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
 
 
 # --- send_run_alerts ---------------------------------------------------------------
@@ -430,3 +469,37 @@ class TestSendRunAlerts:
 
         assert "Telegram error sending" in caplog.text
         assert bot.token not in caplog.text
+
+    async def test_ten_huge_cards_are_still_sent(self, factory, db, bot) -> None:
+        user_id = await make_user(db)
+        ids = [await make_card(db, user_id, title="Role " * 60) for _ in range(10)]
+
+        assert await run(factory, bot, {user_id: ids}) == 1
+
+        [text] = bot.texts
+        assert telegram_len(text) <= 4096
+
+    async def test_database_error_for_one_user_does_not_stop_others(
+        self, factory, db, bot, monkeypatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        broken = await make_user(db, chat_id=1)
+        fine = await make_user(db, chat_id=2)
+        broken_ids = [await make_card(db, broken)]
+        fine_ids = [await make_card(db, fine)]
+        real_load = alerts._load
+
+        async def flaky_load(session_factory, user_id, card_ids):  # type: ignore[no-untyped-def]
+            if user_id == broken:
+                raise OperationalError("SELECT", {}, Exception("database is locked"))
+            return await real_load(session_factory, user_id, card_ids)
+
+        monkeypatch.setattr(alerts, "_load", flaky_load)
+
+        with caplog.at_level(logging.ERROR, logger=alerts.__name__):
+            sent = await run(factory, bot, {broken: broken_ids, fine: fine_ids})
+
+        assert sent == 1
+        assert [chat for chat, _ in bot.sent] == [2]
+        assert f"Alerts for user {broken} failed" in caplog.text
+        assert bot.token not in caplog.text
+        assert await handled_at(db, fine_ids) == [NOW]

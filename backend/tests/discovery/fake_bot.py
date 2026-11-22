@@ -3,6 +3,11 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from telegram.error import BadRequest
+
+# Telegram's limit, counted in UTF-16 code units.
+MAX_MESSAGE_LENGTH = 4096
+
 
 @dataclass
 class FakeBot:
@@ -23,6 +28,8 @@ class FakeBot:
             self.violations += 1
         if self.errors:
             raise self.errors.pop(0)
+        if len(text.encode("utf-16-le")) // 2 > MAX_MESSAGE_LENGTH:
+            raise BadRequest("Message is too long")
         self.sent.append((chat_id, text))
 
     @property
