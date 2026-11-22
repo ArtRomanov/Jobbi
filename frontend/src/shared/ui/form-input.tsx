@@ -41,7 +41,6 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
             border: `1px solid ${error ? colors.error : colors.border}`,
             borderRadius: "0.375rem",
             fontSize: "0.875rem",
-            outline: "none",
             boxSizing: "border-box",
           }}
           {...rest}

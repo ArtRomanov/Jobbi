@@ -171,6 +171,34 @@ class TestAddToTracker:
         assert application.job_url == "https://t.me/jobs/a"
 
     @pytest.mark.parametrize(
+        ("job_link", "url", "expected"),
+        [
+            ("javascript:alert(1)", "https://t.me/jobs/a", None),
+            ("data:text/html,hi", "https://t.me/jobs/a", None),
+            ("/jobs/1", "https://t.me/jobs/a", None),
+            (None, "javascript:alert(1)", None),
+            (
+                "HTTPS://Acme.example/jobs/1",
+                "https://t.me/jobs/a",
+                "HTTPS://Acme.example/jobs/1",
+            ),
+        ],
+    )
+    async def test_only_http_job_url_is_copied(
+        self, client, token, user_id, db_session, job_link, url, expected
+    ) -> None:
+        card = await add_card(db_session, user_id, "a")
+        card.job_link = job_link
+        card.url = url
+        await db_session.commit()
+
+        resp = await _add(client, token, card.id)
+
+        assert resp.status_code == 201
+        application = await db_session.get(Application, resp.json()["application_id"])
+        assert application.job_url == expected
+
+    @pytest.mark.parametrize(
         "body",
         [
             {"company_name": "", "role_title": "Dev"},

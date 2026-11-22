@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 import pytest
 import respx
+import structlog
 
 from app.discovery.fetchers import lever
 from app.discovery.fetchers.errors import UNKNOWN_POSTED_AT, BoardReadError
@@ -166,6 +167,34 @@ async def test_list_postings_drops_items_without_id_or_url(
     postings = await lever.list_postings(client, "lever", "acme")
 
     assert [p["id"] for p in postings] == ["id-0"]
+
+
+@respx.mock
+async def test_list_postings_drops_non_http_urls(client: httpx.AsyncClient) -> None:
+    respx.get(US_ACME).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"id": "js", "hostedUrl": "javascript:alert(1)"},
+                {"id": "data", "hostedUrl": "data:text/html,hi"},
+                {"id": "rel", "hostedUrl": "/acme/rel"},
+                {"id": "upper", "hostedUrl": "HTTPS://Jobs.Lever.co/acme/upper"},
+                *_postings(1),
+            ],
+        )
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        postings = await lever.list_postings(client, "lever", "acme")
+
+    assert [p["id"] for p in postings] == ["upper", "id-0"]
+    rejected = [e for e in logs if e["event"] == "lever_posting_url_rejected"]
+    assert [(e["board"], e["job_id"], e["log_level"]) for e in rejected] == [
+        ("acme", "js", "info"),
+        ("acme", "data", "info"),
+        ("acme", "rel", "info"),
+    ]
+    assert all("javascript" not in str(e) for e in rejected)
 
 
 @pytest.mark.parametrize("company", ["../admin", "a/b", "a.b", ""])

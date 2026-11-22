@@ -128,3 +128,32 @@ def test_empty_page() -> None:
 def test_invalid_channel_name_rejected(channel: str) -> None:
     with pytest.raises(ValueError):
         parse_channel_page("", channel)
+
+
+def test_job_link_only_from_http_links() -> None:
+    """`javascript:`, `data:` and relative hrefs are skipped; the first
+    http(s) link (any scheme case) wins."""
+    links = (
+        '<a href="javascript:alert(1)">x</a>'
+        '<a href="data:text/html,hi">x</a>'
+        '<a href="/jobs/1">x</a>'
+        '<a href="HTTPS://Jobs.Example.com/1">x</a>'
+    )
+    html = (
+        '<div class="tgme_widget_message" data-post="jobbi_test/1">'
+        f'<div class="tgme_widget_message_text js-message_text">{links}</div>'
+        '<time datetime="2026-11-22T00:00:00+00:00"></time></div>'
+    )
+    posts, _ = parse_channel_page(html, "jobbi_test")
+    assert posts[0].job_link == "https://jobs.example.com/1"
+
+
+def test_no_http_link_means_no_job_link() -> None:
+    html = (
+        '<div class="tgme_widget_message" data-post="jobbi_test/1">'
+        '<div class="tgme_widget_message_text js-message_text">'
+        '<a href="javascript:alert(1)">x</a></div>'
+        '<time datetime="2026-11-22T00:00:00+00:00"></time></div>'
+    )
+    posts, _ = parse_channel_page(html, "jobbi_test")
+    assert posts[0].job_link is None

@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 import pytest
 import respx
+import structlog
 
 from app.discovery.fetchers import greenhouse
 from app.discovery.fetchers.errors import UNKNOWN_POSTED_AT, BoardReadError
@@ -83,6 +84,36 @@ async def test_list_jobs_skips_malformed_entries(client: httpx.AsyncClient) -> N
 
     assert [job["id"] for job in jobs] == [2]
     assert jobs[0]["location"] is None
+
+
+@respx.mock
+async def test_list_jobs_skips_non_http_urls(client: httpx.AsyncClient) -> None:
+    respx.get(f"{API}/jobs").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "jobs": [
+                    {"id": 1, "absolute_url": "javascript:alert(1)"},
+                    {"id": 2, "absolute_url": "data:text/html,hi"},
+                    {"id": 3, "absolute_url": "/jobs/3"},
+                    {"id": 4, "absolute_url": "HTTPS://Job-Boards.Greenhouse.io/x/4"},
+                    {"id": 5, "absolute_url": "http://x.example/5"},
+                ]
+            },
+        )
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        jobs = await greenhouse.list_jobs(client, "raisin")
+
+    assert [job["id"] for job in jobs] == [4, 5]
+    rejected = [e for e in logs if e["event"] == "greenhouse_job_url_rejected"]
+    assert [(e["board"], e["job_id"], e["log_level"]) for e in rejected] == [
+        ("raisin", 1, "info"),
+        ("raisin", 2, "info"),
+        ("raisin", 3, "info"),
+    ]
+    assert all("javascript" not in str(e) for e in rejected)
 
 
 @respx.mock

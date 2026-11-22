@@ -3,7 +3,7 @@
 Inbox card actions: "Open source", "Add to tracker" (dialog) and "Dismiss" with a 5 s Undo (functional spec 2.3). `VacancyActions` goes into `VacancyCard`'s `actions` slot; the page owns the list and passes `onUpdate` / `onRemove` / `onRestore` to `useVacancyActions`, then wires its `markSeen` / `completeAdd` into `VacancyActions` (`onMarkSeen` / `onAdded`).
 
 - Mount `useVacancyActions` once per list, not per card: a dismissed card unmounts but its Undo must live on. Unmounting the hook (leaving the Inbox) closes open Undo toasts; the dismiss stays.
-- "Open source" opens only http(s) URLs (`lib/helpers.ts`; URLs come from scraped posts) via `window.open(url, "_blank", "noopener,noreferrer")`, synchronously in the click so popup blockers allow it. Only a `new` card sends `POST /seen` (`markSeen`); a failure flips the card back to new, no toast.
+- "Open source" opens only http(s) URLs (`isSafeExternalUrl` from `@/shared/lib`, shared with application-panel; URLs come from scraped posts) via `window.open(url, "_blank", "noopener,noreferrer")`, synchronously in the click so popup blockers allow it. Only a `new` card sends `POST /seen` (`markSeen`); a failure flips the card back to new, no toast.
 - Dismiss is optimistic. Undo waits for the dismiss request before calling restore (requests never cross) and re-inserts the card as `seen` after restore succeeds. A failed dismiss closes the Undo toast, puts the card back and shows an error toast.
 - Every server change calls `notifyVacanciesChanged()` (nav badge).
 
@@ -16,3 +16,4 @@ Inbox card actions: "Open source", "Add to tracker" (dialog) and "Dismiss" with 
 - 409 "Already added" (added in another tab): not an error — dialog closes, card leaves, info toast "Already in your tracker".
 - Other failures: inline error — `getErrorMessage` for 404/409 (server text), else "Could not add this vacancy. Please try again.". A ref blocks double submits; Escape/backdrop are blocked while submitting.
 - URLs come from `ROUTES` in `@/shared/config` (features cannot import pages).
+- Card buttons carry per-card accessible names ("Dismiss <role> at <company>", "Open source for …", "Add to tracker: …") via `getVacancyLabel` from the entity; the visible label stays first (WCAG 2.5.3).

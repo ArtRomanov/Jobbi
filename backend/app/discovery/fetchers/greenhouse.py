@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
+import structlog
 
 from app.discovery.fetchers.board_http import (
     cap_text,
@@ -17,8 +18,10 @@ from app.discovery.fetchers.board_http import (
     html_to_text,
 )
 from app.discovery.fetchers.errors import UNKNOWN_POSTED_AT, BoardReadError
-from app.discovery.normalize import normalize_url
+from app.discovery.normalize import is_http_url, normalize_url
 from app.discovery.types import RawPost
+
+logger = structlog.get_logger()
 
 API_BASE = "https://boards-api.greenhouse.io/v1/boards"
 # Pause between two job-detail requests to the same board (politeness).
@@ -60,7 +63,7 @@ async def list_jobs(client: httpx.AsyncClient, token: str) -> list[dict[str, Any
 
     Each item has ``id, title, absolute_url, location, first_published,
     updated_at, company_name``; ``location`` is the location name string.
-    Entries without an id or URL are skipped.
+    Entries without an id or an absolute http(s) URL are skipped.
 
     Raises:
         BoardReadError: see ``board_http.get_json``.
@@ -83,6 +86,9 @@ async def list_jobs(client: httpx.AsyncClient, token: str) -> list[dict[str, Any
             or not isinstance(absolute_url, str)
             or not absolute_url
         ):
+            continue
+        if not is_http_url(absolute_url):
+            logger.info("greenhouse_job_url_rejected", board=token, job_id=job_id)
             continue
         location = job.get("location")
         jobs.append(

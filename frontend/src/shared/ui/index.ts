@@ -19,6 +19,7 @@ export { SectionHeader } from "./section-header";
 export { EmptyState } from "./empty-state";
 export { ChipInput } from "./chip-input";
 export { Badge } from "./badge";
+export { VisuallyHidden, VISUALLY_HIDDEN_STYLE } from "./visually-hidden";
 export type { BadgeTone } from "./badge";
 export { SegmentedControl } from "./segmented-control";
 export { Modal } from "./modal";

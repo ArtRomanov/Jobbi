@@ -98,7 +98,7 @@ async function openDialog() {
   const user = userEvent.setup();
   renderApp();
   const card = await findCard();
-  await user.click(within(card).getByRole("button", { name: "Add to tracker" }));
+  await user.click(within(card).getByRole("button", { name: /^Add to tracker: / }));
   const dialog = screen.getByRole("dialog", { name: "Add to tracker" });
   return { user, card, dialog };
 }
@@ -371,7 +371,7 @@ describe("Add to tracker — review follow-ups", () => {
 
     await screen.findByRole("link", { name: "Open application" });
     const nextCard = screen.getByRole("heading", { name: "Frontend Engineer" }).closest("article")!;
-    await waitFor(() => expect(within(nextCard).getByRole("button", { name: "Dismiss" })).toHaveFocus());
+    await waitFor(() => expect(within(nextCard).getByRole("button", { name: /^Dismiss / })).toHaveFocus());
   });
 
   it("keeps focus inside the dialog while the request runs", async () => {

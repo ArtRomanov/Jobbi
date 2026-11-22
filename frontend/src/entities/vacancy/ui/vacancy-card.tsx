@@ -1,14 +1,17 @@
 import { memo, useId, useState, type ReactNode } from "react";
-import { Badge, colors } from "@/shared/ui";
+import { Badge, VisuallyHidden, colors } from "@/shared/ui";
 import { formatTimeAgo } from "@/shared/lib";
 import {
   FIT_LABELS,
+  FIT_PREFIX,
   FIT_TONES,
   NEW_LABEL,
+  SHOW_LESS_LABEL,
+  SHOW_MORE_LABEL,
   UNKNOWN_COMPANY,
   UNKNOWN_ROLE,
 } from "../lib/constants";
-import { formatCardSources, getTextPreview } from "../lib/helpers";
+import { formatCardSources, getTextPreview, getVacancyLabel } from "../lib/helpers";
 import type { Vacancy } from "../model/types";
 
 interface VacancyCardProps {
@@ -28,6 +31,7 @@ export const VacancyCard = memo(function VacancyCard({ vacancy, actions }: Vacan
   const [isExpanded, setIsExpanded] = useState(false);
   const { preview, isTruncated } = getTextPreview(vacancy.text);
   const isNew = vacancy.state === "new";
+  const toggleLabel = isExpanded ? SHOW_LESS_LABEL : SHOW_MORE_LABEL;
 
   return (
     <article
@@ -86,7 +90,10 @@ export const VacancyCard = memo(function VacancyCard({ vacancy, actions }: Vacan
             color: colors.textSecondary,
           }}
         >
-          <Badge tone={FIT_TONES[vacancy.fit]}>{FIT_LABELS[vacancy.fit]}</Badge>
+          <Badge tone={FIT_TONES[vacancy.fit]}>
+            <VisuallyHidden>{`${FIT_PREFIX} `}</VisuallyHidden>
+            {FIT_LABELS[vacancy.fit]}
+          </Badge>
           {vacancy.fit_reason ? <span>{vacancy.fit_reason}</span> : null}
         </p>
       ) : null}
@@ -108,6 +115,7 @@ export const VacancyCard = memo(function VacancyCard({ vacancy, actions }: Vacan
           type="button"
           aria-expanded={isExpanded}
           aria-controls={textId}
+          aria-label={`${toggleLabel} about ${getVacancyLabel(vacancy)}`}
           onClick={() => setIsExpanded((value) => !value)}
           style={{
             marginTop: "0.25rem",
@@ -119,7 +127,7 @@ export const VacancyCard = memo(function VacancyCard({ vacancy, actions }: Vacan
             cursor: "pointer",
           }}
         >
-          {isExpanded ? "Show less" : "Show more"}
+          {toggleLabel}
         </button>
       ) : null}
 

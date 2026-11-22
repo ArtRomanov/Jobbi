@@ -5,20 +5,6 @@ import type { AddToTrackerFormValues } from "../model/schemas";
 import type { AddMode } from "../model/types";
 import { ADD_ERROR_MESSAGE, ALREADY_ADDED_DETAIL, SPECIFIC_ERROR_STATUSES } from "./constants";
 
-const SAFE_PROTOCOLS = new Set(["http:", "https:"]);
-
-/**
- * True only for absolute http(s) URLs. Source URLs come from scraped posts,
- * so `javascript:`, `data:` and the like must never reach `window.open`.
- */
-export function isSafeExternalUrl(url: string): boolean {
-  try {
-    return SAFE_PROTOCOLS.has(new URL(url).protocol);
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Id of the most recently updated CV (the default base for "Add & tailor CV"),
  * or null when there are none. ISO timestamps from the API compare as strings.

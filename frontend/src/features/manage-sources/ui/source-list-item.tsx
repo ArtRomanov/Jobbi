@@ -54,7 +54,8 @@ export function SourceListItem({
         >
           {source.display_name}
         </p>
-        <p style={{ fontSize: "0.75rem", color: colors.textMuted }}>
+        {/* textMuted is 3.96:1 on the danger tint; textSecondary keeps AA on it */}
+        <p style={{ fontSize: "0.75rem", color: unavailable ? colors.textSecondary : colors.textMuted }}>
           {SOURCE_KIND_LABELS[source.kind]}
           {source.scanning ? ` · ${SCANNING_LABEL}` : null}
           {!source.scanning && source.last_checked_at

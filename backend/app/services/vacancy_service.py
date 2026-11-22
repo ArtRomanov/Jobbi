@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.constants import ApplicationStatus
 from app.core.pagination import paginate
 from app.core.timezones import local_day_bounds, zone_or_utc
-from app.discovery.normalize import normalize_url
+from app.discovery.normalize import is_http_url, normalize_url
 from app.models.application import Application
 from app.models.cv import Cv
 from app.models.user import User
@@ -422,7 +422,8 @@ async def add_to_tracker(
     1. Conditional UPDATE `new|seen -> added` (race guard: of two concurrent
        adds exactly one changes the row; SELECT-then-UPDATE would let both).
     2. Duplicate check by normalized job link, unless `allow_duplicate`.
-    3. Application in status researching; `job_url` = job link or post URL;
+    3. Application in status researching; `job_url` = job link or post URL
+       (None unless it is an http(s) URL);
        notes = the given notes, else the card text.
     4. With `base_cv_id`: a copy named "<CV> — <Company> <Role>", linked.
     5. Card linked to the application; commit.
@@ -462,9 +463,11 @@ async def add_to_tracker(
                 )
             )
         ).one()
-        job_url = row.job_link or row.url
+        link = row.job_link or row.url
+        # Defence in depth: only an http(s) link may reach Application.job_url.
+        job_url = link if link and is_http_url(link) else None
 
-        if not allow_duplicate:
+        if not allow_duplicate and job_url is not None:
             index = await _application_index(db, user_id)
             existing = index.get(normalize_url(job_url))
             if existing is not None:

@@ -11,6 +11,7 @@ import {
 import { listCvs, duplicateCv, type Cv } from "@/entities/cv";
 import { Button, FormInput, FormSelect, FormTextarea, colors, useToast } from "@/shared/ui";
 import { handleApiError, isApiError } from "@/shared/api";
+import { isSafeExternalUrl } from "@/shared/lib";
 import type { FormValues } from "../model/types";
 import {
   APPLICATION_LOAD_ERROR_MESSAGE,
@@ -339,21 +340,23 @@ export function ApplicationPanel({
                 {...register("job_url")}
               />
 
-              {/* Display job URL as clickable link when set */}
+              {/* Job URL: a link only for absolute http(s); anything else (javascript:, relative…) is plain text */}
               {detail.job_url && (
-                <div style={{ marginTop: "-0.5rem", marginBottom: "1rem" }}>
-                  <a
-                    href={detail.job_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{
-                      fontSize: "0.75rem",
-                      color: colors.primary,
-                      textDecoration: "underline",
-                    }}
-                  >
-                    Open job posting
-                  </a>
+                <div style={{ marginTop: "-0.5rem", marginBottom: "1rem", fontSize: "0.75rem" }}>
+                  {isSafeExternalUrl(detail.job_url) ? (
+                    <a
+                      href={detail.job_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ color: colors.primary, textDecoration: "underline" }}
+                    >
+                      Open job posting
+                    </a>
+                  ) : (
+                    <span style={{ color: colors.textMuted, overflowWrap: "anywhere" }}>
+                      {detail.job_url}
+                    </span>
+                  )}
                 </div>
               )}
 

@@ -119,7 +119,7 @@ describe("Inbox card actions", () => {
       const card = await findCard("Senior React Developer");
       await waitFor(() => expect(newCountCalls()).toBe(1));
 
-      await user.click(within(card).getByRole("button", { name: "Open source" }));
+      await user.click(within(card).getByRole("button", { name: /^Open source for / }));
 
       expect(openSpy).toHaveBeenCalledWith(
         "https://t.me/frontend_jobs/101",
@@ -139,7 +139,7 @@ describe("Inbox card actions", () => {
       renderWithProviders(<InboxPage />);
       const card = await findCard("Senior React Developer");
 
-      await user.click(within(card).getByRole("button", { name: "Open source" }));
+      await user.click(within(card).getByRole("button", { name: /^Open source for / }));
 
       expect(openSpy).toHaveBeenCalledTimes(1);
       expect(recorded).toEqual([]);
@@ -152,7 +152,7 @@ describe("Inbox card actions", () => {
       renderWithProviders(<InboxPage />);
       const card = await findCard("Senior React Developer");
 
-      const button = within(card).getByRole("button", { name: "Open source" });
+      const button = within(card).getByRole("button", { name: /^Open source for / });
       expect(button).toBeDisabled();
       await user.click(button);
 
@@ -167,7 +167,7 @@ describe("Inbox card actions", () => {
       renderWithProviders(<InboxPage />);
       const card = await findCard("Senior React Developer");
 
-      await user.click(within(card).getByRole("button", { name: "Open source" }));
+      await user.click(within(card).getByRole("button", { name: /^Open source for / }));
 
       expect(openSpy).toHaveBeenCalledTimes(1);
       await waitFor(() => expect(within(card).getByText("New")).toBeInTheDocument());
@@ -190,7 +190,7 @@ describe("Inbox card actions", () => {
       const card = await findCard("Senior React Developer");
       await waitFor(() => expect(newCountCalls()).toBe(1));
 
-      await user.click(within(card).getByRole("button", { name: "Dismiss" }));
+      await user.click(within(card).getByRole("button", { name: /^Dismiss / }));
 
       expect(screen.queryByRole("heading", { name: "Senior React Developer" })).not.toBeInTheDocument();
       expect(screen.getByText("Dismissed")).toBeInTheDocument();
@@ -219,7 +219,7 @@ describe("Inbox card actions", () => {
       renderWithProviders(<InboxPage />);
       const card = await findCard("Senior React Developer");
 
-      await user.click(within(card).getByRole("button", { name: "Dismiss" }));
+      await user.click(within(card).getByRole("button", { name: /^Dismiss / }));
       expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
 
       await act(() => vi.advanceTimersByTimeAsync(5000));
@@ -237,7 +237,7 @@ describe("Inbox card actions", () => {
       renderWithProviders(<LeavableInbox />);
       const card = await findCard("Senior React Developer");
 
-      await user.click(within(card).getByRole("button", { name: "Dismiss" }));
+      await user.click(within(card).getByRole("button", { name: /^Dismiss / }));
       expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
 
       await user.click(screen.getByRole("button", { name: "Leave inbox" }));
@@ -261,7 +261,7 @@ describe("Inbox card actions", () => {
       const card = await findCard("Senior React Developer");
       await waitFor(() => expect(newCountCalls()).toBe(1));
 
-      await user.click(within(card).getByRole("button", { name: "Dismiss" }));
+      await user.click(within(card).getByRole("button", { name: /^Dismiss / }));
 
       expect(await screen.findByText("Something went wrong. Please try again.")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
@@ -280,7 +280,7 @@ describe("Inbox card actions", () => {
       renderWithProviders(<InboxPage />);
       const card = await findCard("Senior React Developer");
 
-      await user.click(within(card).getByRole("button", { name: "Dismiss" }));
+      await user.click(within(card).getByRole("button", { name: /^Dismiss / }));
       await user.click(screen.getByRole("button", { name: "Undo" }));
 
       expect(await screen.findByText("Something went wrong. Please try again.")).toBeInTheDocument();
@@ -306,7 +306,7 @@ describe("Inbox card actions", () => {
       renderWithProviders(<InboxPage />);
       const card = await findCard("Senior React Developer");
 
-      await user.click(within(card).getByRole("button", { name: "Dismiss" }));
+      await user.click(within(card).getByRole("button", { name: /^Dismiss / }));
       await user.click(screen.getByRole("button", { name: "Undo" }));
       await waitFor(() => expect(recorded).toEqual([{ id: "vac-1", action: "dismiss" }]));
 
@@ -333,7 +333,7 @@ describe("Inbox card actions", () => {
       renderWithProviders(<InboxPage />);
       const card = await findCard("Senior React Developer");
 
-      await user.click(within(card).getByRole("button", { name: "Dismiss" }));
+      await user.click(within(card).getByRole("button", { name: /^Dismiss / }));
       await user.click(screen.getByRole("radio", { name: "New" }));
       await waitFor(() => expect(cardHeadings()).toEqual(["Frontend Engineer"]));
       await user.click(screen.getByRole("button", { name: "Undo" }));
@@ -355,10 +355,10 @@ describe("Inbox card actions", () => {
       const first = await findCard("Senior React Developer");
       const second = await findCard("Frontend Engineer");
 
-      await user.click(within(first).getByRole("button", { name: "Dismiss" }));
-      expect(within(second).getByRole("button", { name: "Dismiss" })).toHaveFocus();
+      await user.click(within(first).getByRole("button", { name: /^Dismiss / }));
+      expect(within(second).getByRole("button", { name: /^Dismiss / })).toHaveFocus();
 
-      await user.click(within(second).getByRole("button", { name: "Dismiss" }));
+      await user.click(within(second).getByRole("button", { name: /^Dismiss / }));
       expect(screen.getByRole("heading", { level: 1, name: "Inbox" })).toHaveFocus();
     });
 
@@ -370,8 +370,8 @@ describe("Inbox card actions", () => {
       const first = await findCard("Senior React Developer");
       const second = await findCard("Frontend Engineer");
 
-      await user.click(within(second).getByRole("button", { name: "Dismiss" }));
-      expect(within(first).getByRole("button", { name: "Dismiss" })).toHaveFocus();
+      await user.click(within(second).getByRole("button", { name: /^Dismiss / }));
+      expect(within(first).getByRole("button", { name: /^Dismiss / })).toHaveFocus();
     });
   });
 
@@ -405,7 +405,7 @@ describe("Inbox card actions", () => {
       renderWithProviders(<InboxPage />);
       const card = await findCard("A");
 
-      await user.click(within(card).getByRole("button", { name: "Dismiss" }));
+      await user.click(within(card).getByRole("button", { name: /^Dismiss / }));
       await waitFor(() => expect(dismissed.has("vac-1")).toBe(true));
       await user.click(screen.getByRole("button", { name: "Load more" }));
 
