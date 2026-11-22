@@ -10,6 +10,9 @@ import httpx
 import structlog
 from bs4 import BeautifulSoup
 
+from app.discovery.fetchers import greenhouse, lever
+from app.discovery.fetchers.errors import BoardReadError
+
 logger = structlog.get_logger()
 
 TELEGRAM_PREVIEW_URL = "https://t.me/s/{handle}"
@@ -21,6 +24,7 @@ MAX_DISPLAY_NAME_LENGTH = 255
 
 CHANNEL_NOT_PUBLIC_MESSAGE = "This channel is not public or does not exist"
 TELEGRAM_UNREACHABLE_MESSAGE = "Could not reach Telegram. Please try again."
+BOARD_UNREADABLE_MESSAGE = "Could not read this job board"
 
 
 class SourceCheckError(Exception):
@@ -42,6 +46,12 @@ class SourceUnreachableError(SourceCheckError):
     """Network error or timeout: we could not tell either way."""
 
     message = TELEGRAM_UNREACHABLE_MESSAGE
+
+
+class BoardUnreadableError(SourceCheckError):
+    """The job board does not exist (404) or could not be read in time."""
+
+    message = BOARD_UNREADABLE_MESSAGE
 
 
 async def _fetch_capped(client: httpx.AsyncClient, url: str) -> tuple[int, bytes]:
@@ -105,3 +115,54 @@ async def fetch_telegram_channel_title(handle: str) -> str:
     if title is None:
         raise SourceNotPublicError
     return title
+
+
+async def fetch_greenhouse_board_name(token: str) -> str:
+    """Check that the Greenhouse board exists and return its published name.
+
+    Raises:
+        BoardUnreadableError: unknown board (404), network error, timeout, an
+            unexpected response, or the 10 s total budget ran out.
+    """
+    try:
+        async with (
+            asyncio.timeout(CHECK_TIMEOUT_SECONDS),
+            httpx.AsyncClient(timeout=CHECK_TIMEOUT_SECONDS) as client,
+        ):
+            name = await greenhouse.fetch_board_name(client, token)
+    except (TimeoutError, BoardReadError) as exc:
+        logger.warning(
+            "greenhouse_board_check_failed",
+            token=token,
+            error=getattr(exc, "reason", type(exc).__name__),
+        )
+        raise BoardUnreadableError from exc
+    return name[:MAX_DISPLAY_NAME_LENGTH]
+
+
+async def check_lever_board(kind: str, company: str) -> str:
+    """Check that the Lever company exists in its region; return its display name.
+
+    Lever's postings API has no company-name field, so the name is derived
+    from the slug (`acme-labs` -> "Acme Labs").
+
+    Raises:
+        BoardUnreadableError: unknown company in this region (404; the other
+            region is not tried), network error, timeout, an unexpected
+            response, or the 10 s total budget ran out.
+    """
+    try:
+        async with (
+            asyncio.timeout(CHECK_TIMEOUT_SECONDS),
+            httpx.AsyncClient(timeout=CHECK_TIMEOUT_SECONDS) as client,
+        ):
+            await lever.check_company(client, kind, company)
+    except (TimeoutError, BoardReadError) as exc:
+        logger.warning(
+            "lever_board_check_failed",
+            kind=kind,
+            company=company,
+            error=getattr(exc, "reason", type(exc).__name__),
+        )
+        raise BoardUnreadableError from exc
+    return lever.display_name_from_slug(company)[:MAX_DISPLAY_NAME_LENGTH]

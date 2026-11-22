@@ -1,0 +1,86 @@
+[
+  {
+    "additionalPlain": "IS THIS ROLE NOT AN EXACT FIT?  \nSign up to stay in touch, we’ll let you know when we have new positions on the team.\n\n\nTHE LEVER STORY\nLever builds modern recruiting software for teams to source, interview, and hire top talent. Our team strives to set a new bar for enterprise software with modern, well-designed, real-time apps. We participated in Y Combinator in summer 2012, and since then have raised $73 million. As the applicant tracking system of choice for Netflix, Eventbrite, ClearSlide, change.org, and thousands more leading companies.\n\nUnder the hood, we're a technology company with a powerful open-source web framework: DerbyJS. It is the first and only open-source MVC framework that syncs all data via an Operational Transformation backend, using the same algorithm that powers Google Docs. DerbyJS is also uniquely optimized to render everything on the server as well as the client.\n\nLever is an equal opportunity employer. We are committed to providing reasonable accommodations and will work with you to meet your needs. If you are a person with a disability and require assistance during the application process, please don’t hesitate to reach out! We celebrate our inclusive work environment and welcome members of all backgrounds and perspectives. Learn more about our team culture and commitment to diversity and inclusion. or learn more about what Lever Engineering is up to on the Engineering Blog.",
+    "categories": {
+      "commitment": "Full-time",
+      "department": "Engineering",
+      "location": "Toronto",
+      "team": "Engineering",
+      "allLocations": [
+        "Toronto"
+      ]
+    },
+    "createdAt": 1593035939222,
+    "descriptionPlain": "A BIT ABOUT US\nLever was founded eight years ago to tackle the most strategic challenge that companies face: how to recruit and hire top talent. We’re building the next generation of hiring software that companies like Netflix, Cirque du Soleil, Shopify, and Eventbrite rely on to grow their teams. We've rethought the talent acquisition paradigm and are the innovation leaders in our space and looking for the right people to join us as we scale. \n\nTHE OPPORTUNITY\nAs a Software Engineer on the API & Integrations team, you’ll leverage your expertise to design and build Lever’s APIs Partner Ecosystem. You’ll work collaboratively with product managers and designers to drive the implementation and release of major features, and be a champion of best practices for writing well-tested, well-organized code. \n\nYou’ll become familiar with all parts of our stack from end to end. You’ll design and implement your features to be scalable and resilient. That might include challenges like the complexities of a real-time, single-page web application, scaling backend services under high load, and developing search algorithms to enable unique features.  You’ll be a driver for positive change to Lever’s engineering culture, processes and technology.  \n\nTHE TEAM\nYou’ll join a team where everyone—including you—is striving to constantly improve their knowledge of infrastructure, systems, and cares about minimizing downtime. We are an incredibly supportive team–we love to pitch in when problems arise and give great peer feedback to help each other grow. We are passionate about lots of things--automation, friendly chat bots, creating a great hiring experience, and a great user experience--and we love sharing those passions with each other. Read about what our team values and why here. \n\nTHE TECH STACK\nLever uses our own open source MVC framework called Derby that syncs all data via Operational Transformation (the algorithm behind Google Docs). OT is the way we handle concurrency conflicts for any piece of data that is edited at the same time. In addition to real-time sync, OT allows us to provide a smoother UI since we can render updates on the client instantly without waiting for our backend to respond, while still guaranteeing consistency. \n\nLever makes extensive use of AWS, Docker, Node, Mongo, ElasticSearch, and Redis within our infrastructure. We use tools like Hubot to streamline deployments and Grafana to see what’s going on under the hood. In addition to automating all the things, we love to version them too! Our systems are all created using Terraform and Chef, working together to ensure consistency at all costs. \n\nRead more about The Lever Tech Stack from our Software Engineer, Eric Hwang. \n\nLearn more about Lever’s interview process and read about what our engineering has been up to on our engineering team blog.\n",
+    "id": "065f4538-7347-4207-909f-4ea68f63b4af",
+    "lists": [
+      {
+        "text": "THE SKILL SET",
+        "content": "<li>5+ years of experience as a Software Engineer in a tech company with a track record of delivering software with high business impact</li><li>Exposure to mentorship or technical leadership responsibilities</li><li>Experience designing and building API management tools and APIs</li><li>Experience building enterprise software preferred</li>"
+      },
+      {
+        "text": "WITHIN 1 MONTH, YOU'LL:",
+        "content": "<li>Complete Ramp Camp, Lever’s company-wide onboarding program. You’ll meet other new Leveroos in your cohort, and learn the nuts and bolts of the business, our history, and where we’re going.</li><li>You'll also complete your Starter Project, designed to help you build bridges with other Leveroos and positively contribute to your team’s processes and knowledge</li><li>Tackle your first ticket!</li><li>Dive into Lever’s technology by pair-programming with your teammates and attending engineering training sessions designed and presented by your peers.</li>"
+      },
+      {
+        "text": "WITHIN 3 MONTHS, YOU'LL:",
+        "content": "<li>Learn Lever’s technical stack and apply development patterns through your work.</li><li>Contribute to the design of Lever’s application platform, while capturing decisions to bring other engineers and stakeholders along.</li><li>Ship your first feature to partners and customers.</li><li>Engage in your first on-call rotation in Support Engineering to help diagnose and resolve production problems and customer issues.</li>"
+      },
+      {
+        "text": "WITHIN 6 MONTHS, YOU'LL:",
+        "content": "<li>Build, launch, and support your first big feature. You’ll partner cross-functionally with Product and Design and focus on keeping your stakeholders apprised of progress and updates.</li><li>Have made a visible impact on the platform for all the partners and users of Lever.</li><li>Own major feature areas of the application.</li><li>Be comfortable navigating most of our stack and infrastructure.</li><li>Be responsible for the planning, scoping, design, and implementation of new features.</li>"
+      },
+      {
+        "text": "WITHIN 12 MONTHS, YOU'LL:",
+        "content": "<li>Individually contribute and lead teams to reliably ship full features to customers.</li><li>Own major product areas and take features from mock to deploy.</li><li>Estimate technical scope and time to complete major features and initiatives.</li><li>Help grow other engineers technically by mentoring, pairing and developing other learning opportunities.</li><li>Collaborate with engineering and product leadership to define priorities and set delivery goals.</li>"
+      }
+    ],
+    "text": "API Engineer",
+    "country": "CA",
+    "workplaceType": "unspecified",
+    "hostedUrl": "https://jobs.eu.lever.co/lever/065f4538-7347-4207-909f-4ea68f63b4af",
+    "applyUrl": "https://jobs.eu.lever.co/lever/065f4538-7347-4207-909f-4ea68f63b4af/apply"
+  },
+  {
+    "additionalPlain": "IS THIS ROLE NOT AN EXACT FIT?  \nSign up to stay in touch, we’ll let you know when we have new positions on the team.\n\n\nTHE LEVER STORY\nLever builds modern recruiting software for teams to source, interview, and hire top talent. Our team strives to set a new bar for enterprise software with modern, well-designed, real-time apps. We participated in Y Combinator in summer 2012, and since then have raised $73 million. As the applicant tracking system of choice for Netflix, Eventbrite, ClearSlide, change.org, and thousands more leading companies, Lever means you hire the best by hiring together. \n\nLever is an equal opportunity employer. We are committed to providing reasonable accommodations and will work with you to meet your needs. If you are a person with a disability and require assistance during the application process, please don’t hesitate to reach out! We celebrate our inclusive work environment and welcome members of all backgrounds and perspectives. Learn more about our team culture and commitment to diversity and inclusion. \n\nCalifornia residents applying for positions at Lever can see our privacy policy here.",
+    "categories": {
+      "commitment": "Full-time",
+      "department": "Product",
+      "location": "Flexible",
+      "team": "Product",
+      "allLocations": [
+        "Flexible"
+      ]
+    },
+    "createdAt": 1595367103996,
+    "descriptionPlain": "A BIT ABOUT US\nLever was founded eight years ago to tackle the most strategic challenge that companies face: how to recruit and hire top talent. We’re building the next generation of hiring software that companies like Netflix, Cirque du Soleil, Shopify, and Eventbrite rely on to grow their teams. We've rethought the talent acquisition paradigm and are the innovation leaders in our space and looking for the right people to join us as we scale.\n\nTHE OPPORTUNITY\nAs a Business Intelligence Developer you will work on a variety of analytics projects, both customer facing and internal. Analytics is a key component of the modern recruiting stack. You might alternate between helping to build new analytics features for the core Lever product and tackling cross functional projects across People Ops, Customer Success, Recruiting, Engineering, Sales... with the mission of unlocking business value through data analysis and visualization.\n\nYou will be supporting our internal BI strategy and tools, facilitate high bandwidth conversations across teams and stakeholders and bring rigor and insights to our business decisions. You should have a strong passion for data, analytics, insights and technology and a desire to have a broad impact.\n\nIn this position you will be manipulating large, disparate datasets and build easy-to-digest BI dashboards, reports and analysis. The position will be a core technical contributor to the team with deep expertise in combining disparate data sources (e.g., via SQL and API calls) and building accessible dashboards to drive business outcomes.\n\nTHE TEAM\nWe’re building a world-class product-first organization and assembling the right team to begin scaling aggressively.  You’ll join a growing team of dedicated, smart product managers, engineers, and designers - each owning a portion of the platform, but working together to solve our clients’ needs. Lever has grown internationally with teammates in SF, Toronto, and Bogota.\n",
+    "id": "1e2d50d7-e502-47b7-99b9-a184cfb5816d",
+    "lists": [
+      {
+        "text": "THE SKILL SET",
+        "content": "<li>Excellent fluency with SQL (any dialect will do, we use Postgres and Redshift)</li><li>Solid hands-on experience with Looker</li><li>Ability to translate requirements and constraints to technical and non-technical stakeholders</li><li>Demonstrable experience with data visualization and data migration</li><li>Strong experience with ETL and Data Warehouse systems</li><li>Hands-on experience in database / systems administration</li><li>Experience with data manipulation/processing, preferably in Python (e.g., with Pandas)</li><li>Knowledge of Machine Learning (ML) is not required but appreciat"
+      },
+      {
+        "text": "WITHIN 1 MONTH, YOU’LL",
+        "content": "<li>Complete Lever’s new-hire training week (a.k.a. Ramp Camp), and learn what it means to build a powerful recruiting platform</li>"
+      },
+      {
+        "text": "WITHIN 3 MONTHS, YOU’LL",
+        "content": "<li>Learn Lever’s product and business.&nbsp;</li><li>Map our data sources and business processes.&nbsp;</li><li>Identify growth opportunities for how Lever uses data.</li>"
+      },
+      {
+        "text": "WITHIN 6 MONTHS, YOU’LL",
+        "content": "<li>Build a new reporting feature for Lever’s product.</li><li>Finish a cross functional analysis project to improve a business process at Lever.</li><li>Partner with product and engineering to improve our data infrastructure and metrics collection leading to improved insights.</li>"
+      },
+      {
+        "text": "WITHIN 9 MONTHS, YOU’LL",
+        "content": "<li>Present conclusions and recommendations to senior leadership for strategic opportunities.</li><li>Identify product recommendations and insights to empower key stakeholders to better meet our customers’ needs.</li>"
+      }
+    ],
+    "text": "BI Developer",
+    "workplaceType": "unspecified",
+    "country": null,
+    "hostedUrl": "https://jobs.eu.lever.co/lever/1e2d50d7-e502-47b7-99b9-a184cfb5816d",
+    "applyUrl": "https://jobs.eu.lever.co/lever/1e2d50d7-e502-47b7-99b9-a184cfb5816d/apply"
+  }
+]
