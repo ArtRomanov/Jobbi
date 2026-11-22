@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.constants import ApplicationStatus
 from app.models.application import Application, ApplicationStatusHistory
+from app.services.vacancy_service import count_new
 
 RECENT_ACTIVITY_WINDOW = timedelta(hours=24)
 FOLLOW_UP_AFTER = timedelta(days=7)
@@ -118,6 +119,11 @@ def _format_follow_up(count: int) -> str:
     return f"⏭️ {_plural(count, 'application')} {verb} follow-up"
 
 
+def _format_inbox(count: int) -> str:
+    word = "vacancy" if count == 1 else "vacancies"
+    return f"📥 {count} new {word} in Inbox"
+
+
 def _dashboard_line() -> str:
     base_url = get_settings().JOBBI_PUBLIC_URL.rstrip("/")
     return f"🔗 Open your dashboard: {base_url}/dashboard"
@@ -137,8 +143,14 @@ async def build_summary(
     reference = _to_naive_utc(now or datetime.now(timezone.utc))
 
     counts = await _count_by_status(db, user_id)
+    # Same number as the Inbox badge.
+    new_vacancies = await count_new(db, user_id)
     if sum(counts.values()) == 0:
-        return f"{EMPTY_STATE_MESSAGE}\n\n{_dashboard_line()}"
+        lines = [EMPTY_STATE_MESSAGE]
+        if new_vacancies:
+            lines.append(_format_inbox(new_vacancies))
+        lines.extend(["", _dashboard_line()])
+        return "\n".join(lines)
 
     recent = await _count_recent_status_changes(
         db, user_id, reference - RECENT_ACTIVITY_WINDOW
@@ -153,5 +165,7 @@ async def build_summary(
     ]
     if follow_ups:
         lines.append(_format_follow_up(follow_ups))
+    if new_vacancies:
+        lines.append(_format_inbox(new_vacancies))
     lines.extend(["", _dashboard_line()])
     return "\n".join(lines)

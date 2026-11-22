@@ -4,6 +4,8 @@ from typing import Any
 
 import httpx
 import pytest
+from telegram import Bot
+from telegram.error import InvalidToken, NetworkError
 
 from app.discovery import __main__ as worker
 from app.discovery.service import DiscoveryConfig
@@ -83,6 +85,10 @@ async def test_run_worker_scans_at_start_and_stops(
     async def fake_check(*args: Any, **kwargs: Any) -> None:  # pragma: no cover
         calls.append("check")
 
+    async def no_bot(token: str) -> None:
+        return None
+
+    monkeypatch.setattr(worker, "open_bot", no_bot)
     monkeypatch.setattr(worker, "run_initial_scans", fake_initial)
     monkeypatch.setattr(worker, "check_all", fake_check)
     stop = asyncio.Event()
@@ -93,3 +99,67 @@ async def test_run_worker_scans_at_start_and_stops(
     await asyncio.wait_for(task, timeout=5)
 
     assert calls == ["initial"]
+
+
+# --- Telegram bot for alerts ----------------------------------------------------
+
+TOKEN = "123456:SECRET-TOKEN"
+
+
+async def test_open_bot_without_token_disables_alerts() -> None:
+    assert await worker.open_bot("") is None
+
+
+async def test_open_bot_initializes_and_close_shuts_down(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    async def initialize(self: Bot) -> None:
+        calls.append("initialize")
+
+    async def shutdown(self: Bot) -> None:
+        calls.append("shutdown")
+
+    monkeypatch.setattr(Bot, "initialize", initialize)
+    monkeypatch.setattr(Bot, "shutdown", shutdown)
+
+    bot = await worker.open_bot(TOKEN)
+    assert isinstance(bot, Bot)
+    await worker.close_bot(bot)
+    await worker.close_bot(None)
+
+    assert calls == ["initialize", "shutdown"]
+
+
+async def test_open_bot_rejected_token_disables_alerts_without_logging_it(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def initialize(self: Bot) -> None:
+        raise InvalidToken(f"The token `{TOKEN}` was rejected by the server.")
+
+    monkeypatch.setattr(Bot, "initialize", initialize)
+
+    # INFO as in the worker (PTB itself logs the token at DEBUG).
+    with caplog.at_level(logging.INFO):
+        assert await worker.open_bot(TOKEN) is None
+
+    assert "rejected the bot token" in caplog.text
+    assert TOKEN not in caplog.text
+
+
+async def test_open_bot_unreachable_telegram_keeps_the_bot(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def initialize(self: Bot) -> None:
+        raise NetworkError(f"https://api.telegram.org/bot{TOKEN}/getMe unreachable")
+
+    monkeypatch.setattr(Bot, "initialize", initialize)
+
+    # INFO as in the worker (PTB itself logs the token at DEBUG).
+    with caplog.at_level(logging.INFO):
+        bot = await worker.open_bot(TOKEN)
+
+    assert isinstance(bot, Bot)
+    assert "Could not reach Telegram" in caplog.text
+    assert TOKEN not in caplog.text
