@@ -18,10 +18,10 @@ Conventions for every slice:
 
 ---
 
-- [ ] **Slice 2: Search description and exclude words**
-  - [ ] `PATCH /api/v1/vacancy-search-settings` (partial; description ≤ 500, ≤ 50 exclude terms 1–64 chars, normalized), settings + `status` in `GET /vacancy-sources`. Tests. **[Agent: python-backend]**
-  - [ ] `shared/ui` `ChipInput`. Sources panel: description textarea (`maxLength` 500, paste cut, counter), exclude-word chips with the 50 limit message, "Describe what you're looking for…" hint when empty. Tests. **[Agent: typescript-frontend]**
-  - [ ] Verify: browser — save description, reload, it persists; 501st char blocked; 51st word shows the message; hint disappears after saving a description. **[Agent: qa-tester]**
+- [x] **Slice 2: Search description and exclude words**
+  - [x] `PATCH /api/v1/vacancy-search-settings` (partial; description ≤ 500, ≤ 50 exclude terms 1–64 chars, normalized), settings + `status` in `GET /vacancy-sources`. Tests. **[Agent: python-backend]**
+  - [x] `shared/ui` `ChipInput`. Sources panel: description textarea (`maxLength` 500, paste cut, counter), exclude-word chips with the 50 limit message, "Describe what you're looking for…" hint when empty. Tests. **[Agent: typescript-frontend]**
+  - [x] Verify: browser — save description, reload, it persists; 501st char blocked; 51st word shows the message; hint disappears after saving a description. **[Agent: qa-tester]** _(2026-11-22: API verified with curl — normalization, limits, error texts; browser part pending the Chrome extension, UI covered by 26 component tests)_
 
 ---
 

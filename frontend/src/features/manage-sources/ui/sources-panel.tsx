@@ -1,18 +1,24 @@
 import { useCallback, useId, useRef, type ReactNode } from "react";
 import { Button, SectionHeader, colors } from "@/shared/ui";
-import { LOAD_ERROR_MESSAGE } from "../lib/constants";
+import { LOAD_ERROR_MESSAGE, NO_DESCRIPTION_HINT } from "../lib/constants";
 import { pickFocusAfterRemove } from "../lib/helpers";
 import { useManageSources } from "../model/use-manage-sources";
 import { AddSourceForm } from "./add-source-form";
+import { SearchSettingsForm } from "./search-settings-form";
 import { SourceList } from "./source-list";
 
-/** Inbox "Sources" panel: add a Telegram channel and manage watched sources. */
+/**
+ * Inbox "Sources" panel: add a Telegram channel, manage watched sources and
+ * edit the search description + exclude words.
+ */
 export function SourcesPanel() {
   const headingId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const removeButtonsRef = useRef(new Map<string, HTMLButtonElement>());
   const {
     sources,
+    settings,
+    setSettings,
     loadState,
     input,
     setInput,
@@ -93,6 +99,12 @@ export function SourcesPanel() {
         title="Sources"
         subtitle="Telegram channels Jobbi watches for vacancies"
       />
+      {/* Based on the saved description, not the unsaved draft */}
+      {settings !== null && !settings.description ? (
+        <p style={{ fontSize: "0.875rem", color: colors.textSecondary, marginBottom: "1rem" }}>
+          {NO_DESCRIPTION_HINT}
+        </p>
+      ) : null}
       <AddSourceForm
         value={input}
         error={addError}
@@ -103,6 +115,12 @@ export function SourcesPanel() {
         onSubmit={() => void handleAdd()}
       />
       {list}
+      {/* Re-mounts once settings load so the drafts start from the saved values */}
+      <SearchSettingsForm
+        key={settings === null ? "loading" : "loaded"}
+        initialSettings={settings}
+        onSaved={setSettings}
+      />
     </section>
   );
 }

@@ -567,4 +567,15 @@ export const handlers = [
   http.delete(`${BASE_URL}/api/v1/vacancy-sources/:id`, () => {
     return new HttpResponse(null, { status: 204 });
   }),
+
+  // Echoes the update normalized like the backend: trimmed, empty description →
+  // null, exclude terms trimmed + lowercased + deduplicated (no limit checks)
+  http.patch(`${BASE_URL}/api/v1/vacancy-search-settings`, async ({ request }) => {
+    const body = (await request.json()) as { description?: string | null; exclude?: string[] };
+    const description = body.description?.trim() || null;
+    const exclude = [
+      ...new Set((body.exclude ?? []).map((term) => term.trim().toLowerCase()).filter(Boolean)),
+    ];
+    return HttpResponse.json({ description, exclude });
+  }),
 ];
