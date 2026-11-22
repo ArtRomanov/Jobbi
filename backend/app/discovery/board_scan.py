@@ -10,9 +10,17 @@ cards). A job without a usable date counts as old.
 
 Hourly check: every listed job that is not yet known becomes a post. A job
 without a date gets the check time as its `posted_at`.
+
+Greenhouse job details: only the `/jobs` listing decides whether the board is
+readable. A failed detail request skips that one job without recording it (so
+the next run retries it) and the other jobs go on. If more than half of a
+run's detail requests fail (not counting 404 = job closed), the board is
+treated as unreachable for this run, so an outage does not store a random
+subset of its jobs.
 """
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -26,7 +34,11 @@ from app.discovery.types import RawPost
 
 __all__ = ["BOARD_KINDS", "BoardFetch", "board_key_prefix", "fetch_board"]
 
+logger = logging.getLogger(__name__)
+
 BOARD_KINDS = frozenset({"greenhouse", "lever", "lever_eu"})
+# More than this share of failed job-detail requests in one run = outage.
+MAX_DETAIL_FAILURE_SHARE = 0.5
 
 SleepFn: TypeAlias = Callable[[float], Awaitable[None]]
 
@@ -75,8 +87,9 @@ async def fetch_board(
 
     Raises:
         BoardReadError: the board could not be read (`not_found` /
-            `unreachable`). A Greenhouse job that 404s between the listing
-            and its detail request (closed meanwhile) is skipped instead.
+            `unreachable`): the listing failed, or more than half of the
+            Greenhouse detail requests failed. A single failed detail request
+            only skips that job.
         ValueError: `kind` is not a board kind.
     """
     if kind == "greenhouse":
@@ -112,6 +125,7 @@ async def _fetch_greenhouse(
     result = BoardFetch()
     handled: set[str] = set()
     detail_requests = 0
+    detail_failures = 0
     for job in await greenhouse.list_jobs(client, token):
         key = greenhouse.job_key(token, job)
         if key in known_keys or key in handled:
@@ -127,14 +141,24 @@ async def _fetch_greenhouse(
         try:
             text = await greenhouse.fetch_job_text(client, token, job["id"])
         except BoardReadError as exc:
+            # Not recorded as seen either way, so a later run retries it.
             if exc.reason == "not_found":
-                # Closed between the listing and now; not recorded, so it is
-                # picked up again if it reappears.
-                continue
-            raise
+                logger.info("Greenhouse job %s closed before its detail", key)
+            else:
+                detail_failures += 1
+                logger.warning("Greenhouse job %s detail failed: %s", key, exc)
+            continue
         result.posts.append(
             greenhouse.to_raw_post(token, job, text, posted_at=posted_at or now)
         )
+    if detail_failures > detail_requests * MAX_DETAIL_FAILURE_SHARE:
+        logger.warning(
+            "Greenhouse board %s: %d of %d job details failed; board unreachable",
+            token,
+            detail_failures,
+            detail_requests,
+        )
+        raise BoardReadError("unreachable")
     return result
 
 

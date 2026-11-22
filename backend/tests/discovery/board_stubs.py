@@ -20,7 +20,8 @@ class GreenhouseBoard:
     """Serves `/jobs` (list without content) and `/jobs/<id>` for one token.
 
     `jobs[id] = (title, text, first_published or None)`. `fail_list` makes the
-    listing answer with that status; `missing_details` 404 on the detail.
+    listing answer with that status; `missing_details` 404 and
+    `failing_details` 503 on the detail.
     """
 
     token: str = "acme"
@@ -28,6 +29,7 @@ class GreenhouseBoard:
     jobs: dict[int, tuple[str, str, datetime | None]] = field(default_factory=dict)
     fail_list: int | None = None
     missing_details: set[int] = field(default_factory=set)
+    failing_details: set[int] = field(default_factory=set)  # answer 503
     list_requests: int = 0
     detail_requests: list[int] = field(default_factory=list)
     on_request: Hook | None = None
@@ -80,6 +82,8 @@ class GreenhouseBoard:
         if self.on_request is not None:
             self.on_request(request)
         self.detail_requests.append(int(job_id))
+        if int(job_id) in self.failing_details:
+            return httpx.Response(503)
         if int(job_id) in self.missing_details or int(job_id) not in self.jobs:
             return httpx.Response(404, json={"status": 404})
         _, text, _ = self.jobs[int(job_id)]

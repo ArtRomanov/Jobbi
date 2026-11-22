@@ -329,25 +329,91 @@ class TestBoardReadErrors:
         assert source.last_error is None
         assert source.failing_since is None
 
-    async def test_unreachable_detail_fails_the_source_and_stores_nothing(
-        self, factory, db, respx_mock, http, ai, sleep
+    async def test_failed_job_detail_skips_only_that_job_and_is_retried(
+        self, factory, db, gh, http, ai, sleep
     ) -> None:
         user_id = await make_user(db, description=None)
         source_id = await make_board(db, user_id, "greenhouse", "acme", "Acme Corp")
-        board = GreenhouseBoard()
-        board.add(1, "job", RECENT)
-        respx_mock.get("https://boards-api.greenhouse.io/v1/boards/acme/jobs/1").mock(
-            return_value=httpx.Response(503)
-        )
-        board.mount(respx_mock)
+        gh.add(1, "first", RECENT)
+        gh.add(2, "flaky", RECENT)
+        gh.add(3, "third", RECENT)
+        gh.failing_details.add(2)
 
         await run_initial_scans(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep)
 
+        # 1 of 3 details failed: the others are stored, the source is fine.
+        assert [r.external_key for r in await vacancies(db)] == [
+            "gh:acme/1",
+            "gh:acme/3",
+        ]
+        assert set(await seen_keys(db)) == {"gh:acme/1", "gh:acme/3"}
+        source = await get_source(db, source_id)
+        assert source.initial_scan_completed_at == NOW
+        assert source.last_error is None
+        assert source.failing_since is None
+
+        # The next run retries the skipped job (its key was not recorded).
+        gh.failing_details.clear()
+        gh.detail_requests.clear()
+        await check_all(factory, http, ai, at(LATER), config=CONFIG, sleep=sleep)
+
+        assert gh.detail_requests == [2]
+        assert "gh:acme/2" in await seen_keys(db)
+        assert len(await vacancies(db)) == 3
+
+    @pytest.mark.parametrize("failing", [{1}, {1, 2}, {1, 2, 3}])
+    async def test_most_job_details_failing_makes_the_board_unreachable(
+        self, factory, db, gh, http, ai, sleep, failing
+    ) -> None:
+        user_id = await make_user(db, description=None)
+        source_id = await make_board(db, user_id, "greenhouse", "acme", "Acme Corp")
+        for job_id in range(1, 4 if len(failing) > 1 else 2):
+            gh.add(job_id, f"job {job_id}", RECENT)
+        gh.add(10, "old job", OLD)
+        gh.failing_details.update(failing)
+
+        await run_initial_scans(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep)
+
+        # More than half failed: an outage, so nothing at all is stored
+        # (not even the seen-only key of the old job).
         source = await get_source(db, source_id)
         assert source.last_error == "Could not reach the source"
+        assert source.failing_since == NOW
         assert source.initial_scan_completed_at is None
         assert await seen_keys(db) == {}
         assert await vacancies(db) == []
+
+    async def test_closed_jobs_do_not_count_as_detail_failures(
+        self, factory, db, gh, http, ai, sleep
+    ) -> None:
+        user_id = await make_user(db, description=None)
+        source_id = await make_board(db, user_id, "greenhouse", "acme", "Acme Corp")
+        for job_id in range(1, 5):
+            gh.add(job_id, f"job {job_id}", RECENT)
+        gh.missing_details.update({1, 2, 3})  # closed meanwhile (404)
+
+        await run_initial_scans(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep)
+
+        assert [r.external_key for r in await vacancies(db)] == ["gh:acme/4"]
+        source = await get_source(db, source_id)
+        assert source.last_error is None
+        assert source.initial_scan_completed_at == NOW
+
+    async def test_failing_listing_still_fails_the_source_on_hourly_check(
+        self, factory, db, gh, http, ai, sleep
+    ) -> None:
+        user_id = await make_user(db, description=None)
+        source_id = await make_board(db, user_id, "greenhouse", "acme", "Acme Corp")
+        await run_initial_scans(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep)
+
+        gh.fail_list = 503
+        gh.add(1, "new job", LATER)
+        await check_all(factory, http, ai, at(LATER), config=CONFIG, sleep=sleep)
+
+        source = await get_source(db, source_id)
+        assert source.last_error == "Could not reach the source"
+        assert source.failing_since == LATER
+        assert gh.detail_requests == []
 
 
 # --- Lever ---------------------------------------------------------------------------
