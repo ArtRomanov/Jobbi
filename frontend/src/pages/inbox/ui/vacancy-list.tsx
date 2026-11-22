@@ -1,4 +1,4 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { VacancyCard } from "@/entities/vacancy";
 import type { Vacancy } from "@/entities/vacancy";
 import { VacancyActions, useVacancyActions } from "@/features/vacancy-actions";
@@ -41,7 +41,7 @@ export function VacancyList({ refreshKey, filters, onListEmptied }: VacancyListP
     removeItem,
     restoreItem,
   } = useVacancyList(refreshKey, filters);
-  const { openSource, dismiss } = useVacancyActions({
+  const { openSource, dismiss, markSeen, completeAdd } = useVacancyActions({
     onUpdate: updateItem,
     onRemove: removeItem,
     onRestore: restoreItem,
@@ -56,18 +56,40 @@ export function VacancyList({ refreshKey, filters, onListEmptied }: VacancyListP
     [],
   );
 
-  const handleDismiss = useCallback(
-    (vacancy: Vacancy): void => {
-      const nextId = pickFocusAfterRemove(
-        items.map((item) => item.id),
-        vacancy.id,
-      );
-      dismiss(vacancy);
-      const target = nextId === null ? undefined : dismissButtonsRef.current.get(nextId);
-      if (target) target.focus();
-      else onListEmptied();
+  // Where focus goes once the removed card (and any dialog it owned) is gone
+  const pendingFocusRef = useRef<{ nextId: string | null } | null>(null);
+  useEffect(() => {
+    const pending = pendingFocusRef.current;
+    if (!pending) return;
+    pendingFocusRef.current = null;
+    const target = pending.nextId === null ? undefined : dismissButtonsRef.current.get(pending.nextId);
+    if (target) target.focus();
+    else onListEmptied();
+  }, [items, onListEmptied]);
+
+  // Runs a card-removing action; focus moves after the re-render, so a closing
+  // dialog's focus guard and focus return cannot take it back
+  const removeWithFocus = useCallback(
+    (vacancy: Vacancy, remove: (vacancy: Vacancy) => void): void => {
+      pendingFocusRef.current = {
+        nextId: pickFocusAfterRemove(
+          items.map((item) => item.id),
+          vacancy.id,
+        ),
+      };
+      remove(vacancy);
     },
-    [items, dismiss, onListEmptied],
+    [items],
+  );
+
+  const handleDismiss = useCallback(
+    (vacancy: Vacancy): void => removeWithFocus(vacancy, dismiss),
+    [removeWithFocus, dismiss],
+  );
+
+  const handleAdded = useCallback(
+    (vacancy: Vacancy): void => removeWithFocus(vacancy, completeAdd),
+    [removeWithFocus, completeAdd],
   );
 
   if (loadState === "loading") {
@@ -121,6 +143,8 @@ export function VacancyList({ refreshKey, filters, onListEmptied }: VacancyListP
                   vacancy={vacancy}
                   onOpenSource={openSource}
                   onDismiss={handleDismiss}
+                  onMarkSeen={markSeen}
+                  onAdded={handleAdded}
                   onRegisterDismissButton={registerDismissButton}
                 />
               }
