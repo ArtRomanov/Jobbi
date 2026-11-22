@@ -99,5 +99,5 @@ The AI assistant currently only produces text. When the user asks "tighten my su
 - **Undo of Accepted changes via the chat surface** — there is no Undo toast or "rewind to before this card." The application/CV history exists in the existing audit log; revert is a separate concern.
 - **Multi-turn tool plans** — the assistant proposes changes in a single turn. Plans like "let me first read X, then I'll update Y" are not modeled here; tools are stateless one-shots.
 - **Non-data tools** — no tools for fetching external URLs, scraping job postings, sending emails, or running code. Only the application/CV mutation tools described above.
-- **Quality guarantees on the AI's suggestions** — output quality depends on the underlying LLM (Groq Llama 3.3 70B per spec 007). The user is the final arbiter via Accept/Reject.
+- **Quality guarantees on the AI's suggestions** — output quality depends on the underlying LLM (Groq, model set by `GROQ_MODEL`; `qwen/qwen3.8-27b` since 2026-11-22 after Llama 3.3 70B became unavailable on the account). The user is the final arbiter via Accept/Reject.
 - **Other roadmap items:** User Account Essentials, Application Tracker, CV Constructor, Metrics Dashboard, Telegram/HeadHunter/LinkedIn integrations.
