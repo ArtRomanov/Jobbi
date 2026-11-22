@@ -115,6 +115,7 @@ class TestListVacancies:
             "fit": "medium",
             "fit_reason": "Remote React role",
             "sources": [{"key": "telegram:jobs", "label": "@jobs"}],
+            "existing_application": None,
         }
 
     async def test_state_filter(self, client, token, user_id, db_session) -> None:
