@@ -32,7 +32,8 @@ The API gets a new `vacancies` domain: sources CRUD with synchronous validation 
 - **Lever:**
   - `GET api.lever.co/v0/postings/{company}?mode=json` → 200 array with `id, text, hostedUrl, categories, descriptionPlain, createdAt`. An unknown company → 404.
   - The EU region `api.eu.lever.co` exists and behaves the same.
-- **Greenhouse EU:** `boards-api.eu.greenhouse.io` does not resolve, so the EU board API host is unverified (see 2.2).
+- **Greenhouse EU (pre-check 2026-11-22):** `boards-api.eu.greenhouse.io` does not exist; the standard `boards-api.greenhouse.io` serves EU board tokens (raisin, jointqg, timeleft, zenrows → 200 with jobs; job detail too). Only the job URLs use `job-boards.eu.greenhouse.io`.
+- **Response sizes (pre-check 2026-11-22):** Lever `mode=json` has no compression and always includes descriptions (palantir: 5.98 MB / 308 postings; zoox 2.5 MB); `skip`/`limit` pagination works. Greenhouse `/jobs` without content stays < 1 MB even at 895 jobs (databricks); `?content=true` reaches 9.8 MB but gzip cuts it ~3×. EU Lever boards exist only on `api.eu.lever.co` (e.g. slug `lever`).
 
 **Invariant for every writer (API, bot, worker share one SQLite file):** no network I/O inside a database transaction. Fetch, then open a short transaction, write, commit. The worker commits per source step and per evaluated batch. This keeps write locks to milliseconds and avoids "database is locked" without SQLite-specific settings (project rule: standard SQLAlchemy only).
 
@@ -113,7 +114,7 @@ This needs non-committing builders: `application_service.build_application(db, u
 
 Requests go only to fixed hosts: `t.me`, `boards-api.greenhouse.io`, `api.lever.co`, `api.eu.lever.co`. A Lever link that 404s in its own region is not retried in the other region.
 
-**Greenhouse EU boards:** before implementing, verify whether `boards-api.greenhouse.io` serves EU board tokens. If it does not, reject EU links with "EU Greenhouse boards are not supported yet" and note it in the functional spec.
+**Greenhouse EU boards:** supported with no host switch — EU links (`job-boards.eu.greenhouse.io/<token>`, `boards.eu.greenhouse.io/<token>`) only yield the token; all requests go to `boards-api.greenhouse.io` (verified 2026-11-22).
 
 ### 2.3 Discovery Worker (`backend/app/discovery/`)
 
@@ -121,15 +122,15 @@ Requests go only to fixed hosts: `t.me`, `boards-api.greenhouse.io`, `api.lever.
 |---|---|
 | `__main__.py` | Logging (httpx at WARNING, as in `app/bot/__main__.py`), event loop, `AsyncIOScheduler` with three jobs: hourly `check_all`, every-minute `run_initial_scans` (only sources whose `next_initial_attempt_at` has passed), daily `cleanup`. All jobs `max_instances=1`, `coalesce=True`; `check_all` and `run_initial_scans` share one `asyncio.Lock`, so they never run at the same time. Exactly one worker per deployment |
 | `fetchers/telegram.py` | `t.me/s/<channel>`, paging with `?before=<id>`. Hourly: page back until a known key or the 7-day cutoff (max 10 pages). Initial scan: back to the 7-day cutoff (max 10 pages). BeautifulSoup → `RawPost{external_key, url, job_link, text, posted_at}` |
-| `fetchers/greenhouse.py` | List `/jobs` without content (small response). Fetch `/jobs/{id}` content only for keys not yet seen. `posted_at` = `first_published` |
-| `fetchers/lever.py` | `/v0/postings/<company>?mode=json` on the region host from the source kind; `descriptionPlain`; `posted_at` = `createdAt` |
+| `fetchers/greenhouse.py` | List `/jobs` without content (small response), `Accept-Encoding: gzip`. Fetch `/jobs/{id}` content only for keys not yet seen. `posted_at` = `first_published` |
+| `fetchers/lever.py` | `/v0/postings/<company>?mode=json&limit=50&skip=N` on the region host from the source kind, paging until a short page (Lever sends no gzip and always includes descriptions); `descriptionPlain`; `posted_at` = `createdAt` |
 | `prefilter.py` | Whole-word, case-insensitive exclude check on title + text. A hit records a seen key without calling the AI |
 | `evaluator.py` | Groq JSON mode on `GROQ_DISCOVERY_MODEL` (default `qwen/qwen3.8-27b`; chat uses `GROQ_MODEL`). Batches of up to 5, at most one batch every 30 s (stays under 8 000 tokens/min); on HTTP 429 the run stops evaluating and posts wait for the next run. Input: description + profile (`users.desired_role`, `desired_location`, `remote_preference`, `salary_*`) + post text cut to 1 500 chars (Cyrillic costs ~2× more tokens per character than English), fenced as data. The prompt encodes the match rule and fit levels from functional spec 2.2: role/field decides `match`; points marked "only"/"must" are hard requirements; other description and profile points only set `fit` (High = all fit, Medium = one off or unknown, Low = two or more off); the reason is in English. Output wrapped in an object `{"results": [{key, is_vacancy, match, fit, reason ≤ 200, company?, title?}]}` (JSON mode returns an object, not an array), validated with Pydantic. Keys missing from a valid response stay `pending`. Match → card `new` (or merged); no match → card deleted, key kept. Transport error → batch stays `pending`, `ai_failing_since` set. Invalid output for a batch → retried one post per request; each failing post gets `eval_attempts += 1` and after 3 is treated as rejected (logged), so a poison post cannot block the queue or look like an outage |
 | `service.py` | Per user, per source: fetch (no transaction) → drop known keys → pre-filter → insert `pending` rows and seen keys (short transaction). Then, only if the user has a description, evaluate pending, oldest first, within the daily cap `DISCOVERY_DAILY_EVAL_LIMIT` (default 150) per local day; without a description, posts stay `pending` (retention drops them after 7 days). Then alert. `check_all` skips sources with `initial_scan_completed_at IS NULL`. A source read failure sets `failing_since`/`last_error` and does not stop the run |
 | `initial_scan.py` | For sources with `initial_scan_completed_at IS NULL`: Telegram reads the last 7 days; boards record every currently listed job as seen, and only jobs published within 7 days become `pending`. Rows get `from_initial_scan = true` and are never alerted. Evaluation runs through the same evaluator and counts toward the daily cap |
 | `alerts.py` | At the end of each `check_all` run, per user: take cards that became `new` in this run with `from_initial_scan = false`. If `TELEGRAM_BOT_TOKEN` is set and the user has a `telegram_links` row, send one message (text and ordering per functional spec 2.4). In every case set `alert_handled_at` on those cards, so linking Telegram later never triggers a message about old cards. Cards from initial scans get `alert_handled_at` when they become `new` |
 
-**Politeness:** one request at a time per host, 1 s pause between Telegram pages, `User-Agent: Jobbi/1.0`, 15 s timeout, response cap 5 MB (measure a large Greenhouse/Lever board before release).
+**Politeness:** one request at a time per host, 1 s pause between Telegram pages, `User-Agent: Jobbi/1.0`, 15 s timeout, response cap 5 MB per request on the decompressed body (holds with Greenhouse lists without content and Lever pages of 50, ~1 MB each).
 
 ### 2.4 Changes to Existing Backend Code
 
@@ -191,7 +192,7 @@ Styling stays inline styles with `colors` tokens. Vacancy text is rendered as pl
 | SSRF via user-supplied links | Anchored patterns, handles only, fixed hosts |
 | Dangling references (no FK enforcement on SQLite) | Explicit cleanup on source/application deletion; tests cover it |
 | Duplicate runs (two workers) | One worker documented; seen keys unique; `alert_handled_at` set after send |
-| Large responses | Board lists fetched without content; 5 MB cap; text capped at 20 000 stored / 1 500 sent to AI |
+| Large responses | Greenhouse lists without content + gzip, Lever pages of 50; 5 MB cap per request; text capped at 20 000 stored / 1 500 sent to AI |
 | Stored XSS via post text | Plain text extracted server-side; frontend renders text only |
 | Bot token in logs | Worker sets httpx logger to WARNING |
 

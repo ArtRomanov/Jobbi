@@ -74,6 +74,17 @@ export function Layout() {
           </Link>
 
           <Link
+            to="/inbox"
+            style={{
+              fontSize: "0.875rem",
+              color: colors.textSecondary,
+              textDecoration: "none",
+            }}
+          >
+            Inbox
+          </Link>
+
+          <Link
             to="/cvs"
             style={{
               fontSize: "0.875rem",

@@ -7,6 +7,8 @@ from app.models.telegram_connection_code import TelegramConnectionCode
 from app.models.telegram_conversation import TelegramConversation
 from app.models.telegram_link import TelegramLink
 from app.models.user import User
+from app.models.vacancy_search_settings import VacancySearchSettings
+from app.models.vacancy_source import VacancySource
 
 __all__ = [
     "Application",
@@ -19,4 +21,6 @@ __all__ = [
     "TelegramConversation",
     "TelegramLink",
     "User",
+    "VacancySearchSettings",
+    "VacancySource",
 ]
