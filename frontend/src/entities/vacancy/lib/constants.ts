@@ -7,6 +7,8 @@ export const VACANCY_PREVIEW_LENGTH = 300;
 export const UNKNOWN_ROLE = "Unknown role";
 export const UNKNOWN_COMPANY = "Unknown company";
 export const NEW_LABEL = "New";
+/** Prefix of the source line when reposts were merged into one card. */
+export const POSTED_IN_LABEL = "Posted in:";
 
 export const FIT_LABELS: Record<VacancyFit, string> = {
   high: "High",

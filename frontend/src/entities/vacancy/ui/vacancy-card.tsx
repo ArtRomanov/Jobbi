@@ -8,7 +8,7 @@ import {
   UNKNOWN_COMPANY,
   UNKNOWN_ROLE,
 } from "../lib/constants";
-import { getTextPreview } from "../lib/helpers";
+import { formatCardSources, getTextPreview } from "../lib/helpers";
 import type { Vacancy } from "../model/types";
 
 interface VacancyCardProps {
@@ -60,8 +60,15 @@ export const VacancyCard = memo(function VacancyCard({ vacancy, actions }: Vacan
         {isNew ? <Badge tone="accent">{NEW_LABEL}</Badge> : null}
       </div>
 
-      <p style={{ marginTop: "0.25rem", fontSize: "0.75rem", color: colors.textMuted }}>
-        {vacancy.sources.map((source) => source.label).join(", ")}
+      <p
+        style={{
+          marginTop: "0.25rem",
+          fontSize: "0.75rem",
+          color: colors.textMuted,
+          overflowWrap: "anywhere",
+        }}
+      >
+        {formatCardSources(vacancy.sources)}
         {" · "}
         <time dateTime={vacancy.posted_at} title={new Date(vacancy.posted_at).toLocaleString()}>
           {formatTimeAgo(vacancy.posted_at)}

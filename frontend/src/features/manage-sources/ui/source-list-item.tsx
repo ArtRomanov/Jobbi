@@ -6,6 +6,7 @@ import {
   LAST_CHECKED_PREFIX,
   SCANNING_LABEL,
   SOURCE_KIND_LABELS,
+  UNAVAILABLE_FALLBACK_REASON,
   UNAVAILABLE_LABEL,
 } from "../lib/constants";
 
@@ -24,7 +25,7 @@ export function SourceListItem({
   onRemove,
   onRegisterRemoveButton,
 }: SourceListItemProps) {
-  const { id } = source;
+  const { id, unavailable } = source;
   const removeButtonRef = useCallback(
     (element: HTMLButtonElement | null) => onRegisterRemoveButton(id, element),
     [id, onRegisterRemoveButton],
@@ -36,8 +37,10 @@ export function SourceListItem({
         display: "flex",
         alignItems: "center",
         gap: "0.75rem",
-        padding: "0.625rem 0",
+        padding: unavailable ? "0.625rem 0.5rem" : "0.625rem 0",
         borderBottom: `1px solid ${colors.borderLight}`,
+        borderLeft: unavailable ? `3px solid ${colors.badge.danger.text}` : undefined,
+        backgroundColor: unavailable ? colors.badge.danger.bg : undefined,
       }}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -58,10 +61,10 @@ export function SourceListItem({
             ? ` · ${LAST_CHECKED_PREFIX} ${formatTimeAgo(source.last_checked_at)}`
             : null}
         </p>
-        {source.unavailable ? (
-          <p style={{ fontSize: "0.75rem", color: colors.error }}>
-            {UNAVAILABLE_LABEL}
-            {source.last_error ? ` — ${source.last_error}` : null}
+        {/* Plain text in reading order: name, kind, then "Unavailable — reason" */}
+        {unavailable ? (
+          <p style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.badge.danger.text }}>
+            {`${UNAVAILABLE_LABEL} — ${source.last_error || UNAVAILABLE_FALLBACK_REASON}`}
           </p>
         ) : null}
       </div>
