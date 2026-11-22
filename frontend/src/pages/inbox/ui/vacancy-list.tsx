@@ -1,21 +1,74 @@
+import { useCallback, useRef } from "react";
 import { VacancyCard } from "@/entities/vacancy";
+import type { Vacancy } from "@/entities/vacancy";
+import { VacancyActions, useVacancyActions } from "@/features/vacancy-actions";
+import { hasActiveFilters, type InboxFilterValues } from "@/features/inbox-filters";
 import { Button, EmptyState, colors } from "@/shared/ui";
 import {
   INBOX_EMPTY_DESCRIPTION,
   INBOX_EMPTY_TITLE,
+  INBOX_NO_MATCHES_DESCRIPTION,
+  INBOX_NO_MATCHES_TITLE,
   VACANCIES_LOAD_ERROR,
 } from "../lib/constants";
+import { pickFocusAfterRemove } from "../lib/helpers";
 import { useVacancyList } from "../model/use-vacancy-list";
 
 interface VacancyListProps {
   /** Changing it reloads the list (e.g. after a source finished scanning). */
   refreshKey: number;
+  filters: InboxFilterValues;
+  /** Called when a dismiss leaves no card to focus (the page focuses its heading). */
+  onListEmptied: () => void;
 }
 
-/** Inbox cards, newest first, with "Load more"; empty state when there are none. */
-export function VacancyList({ refreshKey }: VacancyListProps) {
-  const { items, loadState, hasMore, isLoadingMore, loadMoreError, loadMore, retry } =
-    useVacancyList(refreshKey);
+/**
+ * Inbox cards for the current filters, with "Load more" and card actions.
+ * Owns the actions hook, so unmounting the list (leaving the Inbox) ends
+ * any open Undo window. After a dismiss, focus moves to the Dismiss button of
+ * the card that takes its place (or the one before), else to the page heading.
+ */
+export function VacancyList({ refreshKey, filters, onListEmptied }: VacancyListProps) {
+  const {
+    items,
+    loadState,
+    hasMore,
+    isLoadingMore,
+    loadMoreError,
+    loadMore,
+    retry,
+    updateItem,
+    removeItem,
+    restoreItem,
+  } = useVacancyList(refreshKey, filters);
+  const { openSource, dismiss } = useVacancyActions({
+    onUpdate: updateItem,
+    onRemove: removeItem,
+    onRestore: restoreItem,
+  });
+  const dismissButtonsRef = useRef(new Map<string, HTMLButtonElement>());
+
+  const registerDismissButton = useCallback(
+    (id: string, element: HTMLButtonElement | null): void => {
+      if (element) dismissButtonsRef.current.set(id, element);
+      else dismissButtonsRef.current.delete(id);
+    },
+    [],
+  );
+
+  const handleDismiss = useCallback(
+    (vacancy: Vacancy): void => {
+      const nextId = pickFocusAfterRemove(
+        items.map((item) => item.id),
+        vacancy.id,
+      );
+      dismiss(vacancy);
+      const target = nextId === null ? undefined : dismissButtonsRef.current.get(nextId);
+      if (target) target.focus();
+      else onListEmptied();
+    },
+    [items, dismiss, onListEmptied],
+  );
 
   if (loadState === "loading") {
     return (
@@ -39,7 +92,11 @@ export function VacancyList({ refreshKey }: VacancyListProps) {
   }
 
   if (items.length === 0) {
-    return <EmptyState title={INBOX_EMPTY_TITLE} description={INBOX_EMPTY_DESCRIPTION} />;
+    return hasActiveFilters(filters) ? (
+      <EmptyState title={INBOX_NO_MATCHES_TITLE} description={INBOX_NO_MATCHES_DESCRIPTION} />
+    ) : (
+      <EmptyState title={INBOX_EMPTY_TITLE} description={INBOX_EMPTY_DESCRIPTION} />
+    );
   }
 
   return (
@@ -57,7 +114,17 @@ export function VacancyList({ refreshKey }: VacancyListProps) {
       >
         {items.map((vacancy) => (
           <li key={vacancy.id}>
-            <VacancyCard vacancy={vacancy} />
+            <VacancyCard
+              vacancy={vacancy}
+              actions={
+                <VacancyActions
+                  vacancy={vacancy}
+                  onOpenSource={openSource}
+                  onDismiss={handleDismiss}
+                  onRegisterDismissButton={registerDismissButton}
+                />
+              }
+            />
           </li>
         ))}
       </ul>

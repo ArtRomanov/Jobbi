@@ -3,11 +3,10 @@ import { KanbanBoard } from "@/features/kanban-board";
 import { ApplicationPanel } from "@/features/application-panel";
 import { ActivityFeed, ApplicationList } from "@/features/timeline-feed";
 import { STATUSES, type StatusKey } from "@/entities/application";
-import { colors } from "@/shared/ui";
+import { SegmentedControl, colors } from "@/shared/ui";
 import { useDebounce } from "@/shared/lib";
-import { SEARCH_DEBOUNCE_MS } from "../lib/constants";
-
-type DashboardTab = "board" | "timeline";
+import { DASHBOARD_VIEW_OPTIONS, SEARCH_DEBOUNCE_MS } from "../lib/constants";
+import type { DashboardTab } from "../model/types";
 
 /**
  * Dashboard page — renders the kanban board or timeline view for managing job
@@ -15,7 +14,7 @@ type DashboardTab = "board" | "timeline";
  * because it maps to a route (/dashboard) and composes features without FSD
  * violations.
  *
- * A tab toggle lets the user switch between "Board" (kanban) and "Timeline"
+ * A segmented control lets the user switch between "Board" (kanban) and "Timeline"
  * (activity feed + application list) views. Both views share the same
  * ApplicationPanel for viewing/editing details.
  */
@@ -63,25 +62,13 @@ export function DashboardPage() {
         flexDirection: "column",
       }}
     >
-      {/* Tab toggle */}
-      <div
-        style={{
-          display: "flex",
-          gap: "0",
-          marginBottom: "0.75rem",
-        }}
-        role="tablist"
-        aria-label="Dashboard view"
-      >
-        <TabButton
-          label="Board"
-          isActive={activeTab === "board"}
-          onClick={() => setActiveTab("board")}
-        />
-        <TabButton
-          label="Timeline"
-          isActive={activeTab === "timeline"}
-          onClick={() => setActiveTab("timeline")}
+      {/* View toggle */}
+      <div style={{ marginBottom: "0.75rem" }}>
+        <SegmentedControl
+          label="Dashboard view"
+          options={DASHBOARD_VIEW_OPTIONS}
+          value={activeTab}
+          onChange={setActiveTab}
         />
       </div>
 
@@ -187,39 +174,5 @@ export function DashboardPage() {
         onUpdate={handlePanelUpdate}
       />
     </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Internal sub-component — tab button (not exported, page-internal) */
-/* ------------------------------------------------------------------ */
-
-interface TabButtonProps {
-  label: string;
-  isActive: boolean;
-  onClick: () => void;
-}
-
-function TabButton({ label, isActive, onClick }: TabButtonProps) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={isActive}
-      onClick={onClick}
-      style={{
-        padding: "0.5rem 1.25rem",
-        fontSize: "0.875rem",
-        fontWeight: isActive ? 600 : 400,
-        color: isActive ? colors.primary : colors.textMuted,
-        backgroundColor: "transparent",
-        border: "none",
-        borderBottom: `2px solid ${isActive ? colors.primary : "transparent"}`,
-        cursor: "pointer",
-        transition: "color 0.15s, border-color 0.15s",
-      }}
-    >
-      {label}
-    </button>
   );
 }

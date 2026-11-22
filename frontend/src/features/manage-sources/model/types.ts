@@ -1,6 +1,16 @@
-import type { VacancySearchSettings, VacancySource } from "@/entities/vacancy-source";
+import type {
+  RemovedVacancySource,
+  VacancySearchSettings,
+  VacancySource,
+} from "@/entities/vacancy-source";
 
 export type SourcesLoadState = "loading" | "error" | "ready";
+
+/** Live sources + sources that only existing cards still reference. */
+export type SourcesChangeHandler = (
+  sources: readonly VacancySource[],
+  removedSources: readonly RemovedVacancySource[],
+) => void;
 
 export interface UseManageSourcesResult {
   sources: readonly VacancySource[];

@@ -6,6 +6,9 @@ import { renderWithProviders } from "./utils";
 import { mockVacancySource, mockVacancySourcesEmpty } from "./mocks/handlers";
 import { server } from "./setup";
 
+// Source names also appear as options of the Inbox source filter
+const OUTSIDE_SOURCE_FILTER = { ignore: "script, style, option" };
+
 const SOURCES_URL = "*/api/v1/vacancy-sources";
 const SOURCE_URL = "*/api/v1/vacancy-sources/:id";
 
@@ -84,7 +87,7 @@ describe("InboxPage", () => {
 
     await user.type(getInput(), "  t.me/react_jobs  {Enter}");
 
-    expect(await screen.findByText("@react_jobs")).toBeInTheDocument();
+    expect(await screen.findByText("@react_jobs", OUTSIDE_SOURCE_FILTER)).toBeInTheDocument();
     expect(bodies).toEqual([{ input: "t.me/react_jobs" }]);
     expect(getInput()).toHaveValue("");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -146,7 +149,7 @@ describe("InboxPage", () => {
     await user.click(await screen.findByRole("button", { name: "Remove @remove_me" }));
 
     await waitFor(() => expect(screen.queryByText("@remove_me")).not.toBeInTheDocument());
-    expect(screen.getByText("@keep_me")).toBeInTheDocument();
+    expect(screen.getByText("@keep_me", OUTSIDE_SOURCE_FILTER)).toBeInTheDocument();
     expect(deleted).toEqual(["gone"]);
   });
 
@@ -208,7 +211,7 @@ describe("InboxPage", () => {
     expect(screen.getByRole("button", { name: "Add" })).toHaveAttribute("aria-busy", "true");
     gate.open();
 
-    expect(await screen.findByText("@only_once")).toBeInTheDocument();
+    expect(await screen.findByText("@only_once", OUTSIDE_SOURCE_FILTER)).toBeInTheDocument();
     expect(posts).toBe(1);
   });
 
@@ -249,7 +252,7 @@ describe("InboxPage", () => {
     expect(getInput()).toHaveFocus();
 
     await user.click(screen.getByRole("button", { name: "Add" }));
-    expect(await screen.findByText("@focus_jobs")).toBeInTheDocument();
+    expect(await screen.findByText("@focus_jobs", OUTSIDE_SOURCE_FILTER)).toBeInTheDocument();
     await waitFor(() => expect(getInput()).toHaveFocus());
   });
 
@@ -281,7 +284,7 @@ describe("InboxPage", () => {
     await user.click(await screen.findByRole("button", { name: "Remove @stuck_one" }));
 
     expect(await screen.findByText("Something went wrong. Please try again.")).toBeInTheDocument();
-    expect(screen.getByText("@stuck_one")).toBeInTheDocument();
+    expect(screen.getByText("@stuck_one", OUTSIDE_SOURCE_FILTER)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remove @stuck_one" })).toBeEnabled();
   });
 });

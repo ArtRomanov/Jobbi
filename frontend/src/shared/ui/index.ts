@@ -3,6 +3,13 @@ export { FormSelect } from "./form-select";
 export { FormTextarea } from "./form-textarea";
 export { Button } from "./button";
 export { ToastProvider, useToast } from "./toast";
+export type {
+  ToastAction,
+  ToastLink,
+  ToastOptions,
+  ToastType,
+  ToastContextValue,
+} from "./toast-types";
 export { colors, fonts } from "./theme";
 export { AuthLayout } from "./auth-layout";
 export { PageCard } from "./page-card";
@@ -13,3 +20,5 @@ export { EmptyState } from "./empty-state";
 export { ChipInput } from "./chip-input";
 export { Badge } from "./badge";
 export type { BadgeTone } from "./badge";
+export { SegmentedControl } from "./segmented-control";
+export type { SegmentedControlOption } from "./segmented-control";
