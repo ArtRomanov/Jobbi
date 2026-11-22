@@ -64,12 +64,33 @@ async def test_scheduler_jobs() -> None:
         scheduler = worker.build_scheduler(worker.JobRunner(), http, object(), CONFIG)  # type: ignore[arg-type]
 
     jobs = {job.id: job for job in scheduler.get_jobs()}
-    assert set(jobs) == {"run_initial_scans", "check_all"}
+    assert set(jobs) == {"run_initial_scans", "check_all", "cleanup"}
     for job in jobs.values():
         assert job.max_instances == 1
         assert job.coalesce is True
     assert jobs["check_all"].trigger.interval.total_seconds() == 3600
     assert jobs["run_initial_scans"].trigger.interval.total_seconds() == 60
+    # Daily at a fixed UTC time (restarts do not postpone it).
+    cleanup_fields = {f.name: str(f) for f in jobs["cleanup"].trigger.fields}
+    assert (cleanup_fields["hour"], cleanup_fields["minute"]) == ("3", "30")
+    assert cleanup_fields["day"] == "*"
+
+
+async def test_cleanup_job_runs_under_the_shared_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = worker.JobRunner()
+    seen_locked: list[bool] = []
+
+    async def fake_cleanup(*args: Any, **kwargs: Any) -> None:
+        seen_locked.append(runner.lock.locked())
+
+    monkeypatch.setattr(worker, "cleanup", fake_cleanup)
+    async with httpx.AsyncClient() as http:
+        scheduler = worker.build_scheduler(runner, http, object(), CONFIG)  # type: ignore[arg-type]
+        await scheduler.get_job("cleanup").func()
+
+    assert seen_locked == [True]
 
 
 async def test_run_worker_scans_at_start_and_stops(

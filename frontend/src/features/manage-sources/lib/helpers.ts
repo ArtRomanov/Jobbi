@@ -1,4 +1,9 @@
-import type { VacancySource } from "@/entities/vacancy-source";
+import type { DiscoveryStatus, VacancySource } from "@/entities/vacancy-source";
+import {
+  AI_UNAVAILABLE_NOTICE,
+  SCAN_POLL_INTERVAL_MS,
+  STATUS_POLL_INTERVAL_MS,
+} from "./constants";
 
 /**
  * Which source should receive focus after `removedId` is removed: the next one
@@ -54,4 +59,24 @@ export function hasScanFinished(
 ): boolean {
   const scanningAfter = new Map(after.map((source) => [source.id, source.scanning]));
   return before.some((source) => source.scanning && scanningAfter.get(source.id) === false);
+}
+
+/** "Daily limit reached — N posts are waiting" ("1 post is waiting" for one). */
+export function formatLimitNotice(waitingCount: number): string {
+  const waiting = waitingCount === 1 ? "1 post is waiting" : `${waitingCount} posts are waiting`;
+  return `Daily limit reached — ${waiting}`;
+}
+
+/** Status notices to show above the source list, in display order (may be empty). */
+export function getStatusNotices(status: DiscoveryStatus | null): string[] {
+  if (status === null) return [];
+  const notices: string[] = [];
+  if (status.limit_reached) notices.push(formatLimitNotice(status.waiting_count));
+  if (status.ai_unavailable) notices.push(AI_UNAVAILABLE_NOTICE);
+  return notices;
+}
+
+/** Next poll delay: fast while a source scans, slow otherwise. */
+export function getPollInterval(isAnyScanning: boolean): number {
+  return isAnyScanning ? SCAN_POLL_INTERVAL_MS : STATUS_POLL_INTERVAL_MS;
 }

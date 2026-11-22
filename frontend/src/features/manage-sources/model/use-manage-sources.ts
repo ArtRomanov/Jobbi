@@ -8,12 +8,12 @@ import {
 } from "@/entities/vacancy-source";
 import { notifyVacanciesChanged } from "@/entities/vacancy";
 import type {
+  DiscoveryStatus,
   RemovedVacancySource,
   VacancySearchSettings,
   VacancySource,
 } from "@/entities/vacancy-source";
-import { SCAN_POLL_INTERVAL_MS } from "../lib/constants";
-import { hasScanFinished, mergePolledSources } from "../lib/helpers";
+import { getPollInterval, hasScanFinished, mergePolledSources } from "../lib/helpers";
 import type { SourcesChangeHandler, SourcesLoadState, UseManageSourcesResult } from "./types";
 
 /**
@@ -25,8 +25,10 @@ import type { SourcesChangeHandler, SourcesLoadState, UseManageSourcesResult } f
  * Adding is blocked until the initial load succeeds, so a late GET can never
  * overwrite a source the user just added.
  *
- * While any source is scanning, the list is re-fetched every 5 s (status
- * fields only). When a scan ends, `onScanFinished` runs and
+ * After the initial load one polling chain re-fetches the list (status fields
+ * only) and the discovery `status`: every 5 s while any source is scanning,
+ * else every 60 s while the page is visible (paused when hidden, resumed on
+ * return). When a scan ends, `onScanFinished` runs and
  * `notifyVacanciesChanged()` fires so new cards and the badge appear.
  *
  * `onSourcesChange` receives the live sources and the removed sources that
@@ -41,6 +43,7 @@ export function useManageSources(
   const [sources, setSources] = useState<VacancySource[]>([]);
   const [removedSources, setRemovedSources] = useState<readonly RemovedVacancySource[]>([]);
   const [settings, setSettings] = useState<VacancySearchSettings | null>(null);
+  const [status, setStatus] = useState<DiscoveryStatus | null>(null);
   const [loadState, setLoadState] = useState<SourcesLoadState>("loading");
   const [reloadKey, setReloadKey] = useState(0);
   const [input, setInputValue] = useState("");
@@ -49,7 +52,8 @@ export function useManageSources(
   const [removingIds, setRemovingIds] = useState<ReadonlySet<string>>(() => new Set());
   // Guards against a second submit before React re-renders with isAdding=true
   const isAddingRef = useRef(false);
-  const isAddDisabled = loadState !== "ready";
+  const isReady = loadState === "ready";
+  const isAddDisabled = !isReady;
   const isAnyScanning = sources.some((source) => source.scanning);
   // Latest values for the polling loop, so it does not restart on every render
   const sourcesRef = useRef(sources);
@@ -83,6 +87,7 @@ export function useManageSources(
         setSources(data.sources);
         setRemovedSources(data.removed_sources);
         setSettings(data.settings);
+        setStatus(data.status);
         setLoadState("ready");
       } catch {
         if (!cancelled) setLoadState("error");
@@ -96,11 +101,26 @@ export function useManageSources(
   }, [reloadKey]);
 
   useEffect(() => {
-    if (!isAnyScanning) return;
+    if (!isReady) return;
     let cancelled = false;
+    let isPolling = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let lastPollAt = Date.now();
+    const interval = getPollInterval(isAnyScanning);
+    // Scan polls always run (scan end refreshes cards + badge); the slow status
+    // refresh only runs while the page is visible
+    const shouldRun = (): boolean => isAnyScanning || document.visibilityState === "visible";
 
-    async function poll(): Promise<void> {
+    function schedule(delay: number): void {
+      clearTimeout(timer);
+      timer = setTimeout(() => void tick(), delay);
+    }
+
+    async function tick(): Promise<void> {
+      // Hidden page: stop here; `handleVisibilityChange` resumes the chain
+      if (cancelled || !shouldRun()) return;
+      isPolling = true;
+      lastPollAt = Date.now();
       // A poll is a removed-list read too: newest request wins over an older refresh
       removedRequestRef.current += 1;
       const removedRequestId = removedRequestRef.current;
@@ -111,6 +131,7 @@ export function useManageSources(
         setSources((current) => mergePolledSources(current, data.sources));
         if (removedRequestId === removedRequestRef.current) {
           setRemovedSources(data.removed_sources);
+          setStatus(data.status);
         }
         if (isFinished) {
           onScanFinishedRef.current?.();
@@ -119,17 +140,26 @@ export function useManageSources(
       } catch {
         // A failed poll is retried on the next tick
       } finally {
-        // Cleanup clears this timer when scanning stops or the panel unmounts
-        if (!cancelled) timer = setTimeout(() => void poll(), SCAN_POLL_INTERVAL_MS);
+        isPolling = false;
+        // Cleanup clears this timer when the cadence changes or the panel unmounts
+        if (!cancelled) schedule(interval);
       }
     }
 
-    timer = setTimeout(() => void poll(), SCAN_POLL_INTERVAL_MS);
+    // Back on the page: poll as soon as a full interval has passed since the last one
+    function handleVisibilityChange(): void {
+      if (document.visibilityState !== "visible" || isPolling) return;
+      schedule(Math.max(0, interval - (Date.now() - lastPollAt)));
+    }
+
+    schedule(interval);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [isAnyScanning]);
+  }, [isAnyScanning, isReady]);
 
   const setInput = useCallback((value: string): void => {
     setInputValue(value);
@@ -159,7 +189,10 @@ export function useManageSources(
     const requestId = removedRequestRef.current;
     try {
       const data = await getVacancySources();
-      if (requestId === removedRequestRef.current) setRemovedSources(data.removed_sources);
+      if (requestId === removedRequestRef.current) {
+        setRemovedSources(data.removed_sources);
+        setStatus(data.status);
+      }
     } catch {
       // The removed list only feeds the Inbox filter; the next load fixes it
     }
@@ -197,6 +230,7 @@ export function useManageSources(
     sources,
     settings,
     setSettings,
+    status,
     loadState,
     input,
     setInput,

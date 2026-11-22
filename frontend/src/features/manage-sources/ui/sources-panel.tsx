@@ -7,6 +7,7 @@ import type { SourcesChangeHandler } from "../model/types";
 import { AddSourceForm } from "./add-source-form";
 import { SearchSettingsForm } from "./search-settings-form";
 import { SourceList } from "./source-list";
+import { SourcesNotices } from "./sources-notices";
 
 interface SourcesPanelProps {
   onScanFinished?: () => void;
@@ -27,6 +28,7 @@ export function SourcesPanel({ onScanFinished, onSourcesChange }: SourcesPanelPr
     sources,
     settings,
     setSettings,
+    status,
     loadState,
     input,
     setInput,
@@ -122,6 +124,7 @@ export function SourcesPanel({ onScanFinished, onSourcesChange }: SourcesPanelPr
         onChange={setInput}
         onSubmit={() => void handleAdd()}
       />
+      <SourcesNotices status={status} />
       {list}
       {/* Re-mounts once settings load so the drafts start from the saved values */}
       <SearchSettingsForm

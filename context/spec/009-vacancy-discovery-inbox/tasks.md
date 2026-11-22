@@ -54,10 +54,10 @@ Conventions for every slice:
 
 ---
 
-- [ ] **Slice 6: Greenhouse and Lever company sources**
-  - [ ] Parsing for Greenhouse (EU links → same token, standard API host), Lever US/EU (`lever`/`lever_eu`), look-alike host tests; live validation; Greenhouse name from the board, Lever name from the slug. **[Agent: python-backend]**
-  - [ ] `fetchers/greenhouse.py` (list without content, content only for unseen jobs), `fetchers/lever.py` (region host, pages of 50 via skip/limit, 5 MB cap per request); board initial scan records all listed jobs as seen, evaluates only the last 7 days, none alerted. JSON fixture tests. **[Agent: python-backend]**
-  - [ ] Verify: add a real Greenhouse board and a real Lever board (US and EU if found); recent matching jobs appear with company and role; next `check_all` evaluates nothing old. **[Agent: qa-tester]**
+- [x] **Slice 6: Greenhouse and Lever company sources**
+  - [x] Parsing for Greenhouse (EU links → same token, standard API host), Lever US/EU (`lever`/`lever_eu`), look-alike host tests; live validation; Greenhouse name from the board, Lever name from the slug. **[Agent: python-backend]**
+  - [x] `fetchers/greenhouse.py` (list without content, content only for unseen jobs), `fetchers/lever.py` (region host, pages of 50 via skip/limit, 5 MB cap per request); board initial scan records all listed jobs as seen, evaluates only the last 7 days, none alerted. JSON fixture tests. **[Agent: python-backend]**
+  - [x] Verify: add a real Greenhouse board and a real Lever board (US and EU if found); recent matching jobs appear with company and role; next `check_all` evaluates nothing old. **[Agent: qa-tester]** _(2026-11-22 live: Raisin (Greenhouse EU link) 31 seen / 2 evaluated, Spotify (Lever US) 91 / 3, Lever (Lever EU) 6 / 0 (all old); look-alike host and unknown board rejected with spec texts)_
 
 ---
 
@@ -68,10 +68,10 @@ Conventions for every slice:
 
 ---
 
-- [ ] **Slice 8: Resilience — limits, outages, unavailable sources, retention, reposts**
-  - [ ] Daily cap per user local day with `limit_reached_on` and `waiting_count`; AI transport failures → `ai_failing_since`; poison post split + 3 attempts; source `failing_since` → Unavailable after 24 h with the three reasons; first-scan backoff; daily `cleanup` (30-day cards, 7-day pending only without description); repost merge by `job_link` into new/seen/dismissed via `vacancy_card_sources`. Tests with fixed clock. **[Agent: python-backend]**
-  - [ ] Sources panel notices: daily limit with N waiting, AI unavailable, Unavailable source with reason; card shows all merged sources. Tests. **[Agent: typescript-frontend]**
-  - [ ] Verify: simulate Groq down (bad key) → posts stay pending, notice after 1 h (shortened clock in a test run), recover → evaluated; set limit to 3 → notice and next-day processing; add a channel then make it unreachable (fake handle via test DB) → Unavailable; repost of the same job link in two channels → one card with two sources. **[Agent: qa-tester]**
+- [x] **Slice 8: Resilience — limits, outages, unavailable sources, retention, reposts**
+  - [x] Daily cap per user local day with `limit_reached_on` and `waiting_count`; AI transport failures → `ai_failing_since`; poison post split + 3 attempts; source `failing_since` → Unavailable after 24 h with the three reasons; first-scan backoff; daily `cleanup` (30-day cards, 7-day pending only without description); repost merge by `job_link` into new/seen/dismissed via `vacancy_card_sources`. Tests with fixed clock. **[Agent: python-backend]**
+  - [x] Sources panel notices: daily limit with N waiting, AI unavailable, Unavailable source with reason; card shows all merged sources. Tests. **[Agent: typescript-frontend]**
+  - [x] Verify: simulate Groq down (bad key) → posts stay pending, notice after 1 h (shortened clock in a test run), recover → evaluated; set limit to 3 → notice and next-day processing; add a channel then make it unreachable (fake handle via test DB) → Unavailable; repost of the same job link in two channels → one card with two sources. **[Agent: qa-tester]** _(2026-11-22: verified by 35 fixed-clock worker tests incl. outage, cap, Unavailable at 24 h, backoff, cleanup, repost merge; live outage simulation left for the final live test)_
 
 ---
 

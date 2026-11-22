@@ -4,8 +4,10 @@ Run with: python -m app.discovery
 
 Jobs (APScheduler 3.x `AsyncIOScheduler`):
 - `run_initial_scans` every minute, and once right at start;
-- `check_all` every hour.
-Both are `max_instances=1, coalesce=True` and share one `asyncio.Lock`, so they
+- `check_all` every hour;
+- `cleanup` (retention) daily at 03:30 UTC (a cron time, so frequent restarts
+  do not postpone it the way a 24 h interval would).
+All are `max_instances=1, coalesce=True` and share one `asyncio.Lock`, so they
 never run at the same time. On SIGINT/SIGTERM the scheduler stops and a running
 job is cancelled; every step commits on its own, so nothing half-written is left.
 
@@ -24,6 +26,7 @@ from typing import Any
 import groq
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from telegram import Bot
 from telegram.error import InvalidToken, TelegramError
@@ -32,7 +35,12 @@ from app.core.config import get_settings
 from app.core.database import async_session
 from app.core.telegram_send import describe_error
 from app.core.worker_logging import configure_logging
-from app.discovery.service import DiscoveryConfig, check_all, run_initial_scans
+from app.discovery.service import (
+    DiscoveryConfig,
+    check_all,
+    cleanup,
+    run_initial_scans,
+)
 
 __all__ = [
     "JobRunner",
@@ -49,6 +57,8 @@ USER_AGENT = "Jobbi/1.0"
 HTTP_TIMEOUT_S = 15.0
 CHECK_INTERVAL_HOURS = 1
 INITIAL_SCAN_INTERVAL_MINUTES = 1
+CLEANUP_HOUR_UTC = 3
+CLEANUP_MINUTE_UTC = 30
 # A job that missed its time (e.g. while the other one held the lock) still
 # runs if it is at most this late; coalesce folds repeated misses into one run.
 MISFIRE_GRACE_S = 15 * 60
@@ -147,6 +157,9 @@ def build_scheduler(
             ),
         )
 
+    async def cleanup_job() -> None:
+        await runner.run("cleanup", lambda: cleanup(async_session, utcnow))
+
     scheduler = AsyncIOScheduler(timezone=UTC)
     common = {
         "max_instances": 1,
@@ -165,6 +178,12 @@ def build_scheduler(
         check_all_job,
         IntervalTrigger(hours=CHECK_INTERVAL_HOURS, timezone=UTC),
         id="check_all",
+        **common,
+    )
+    scheduler.add_job(
+        cleanup_job,
+        CronTrigger(hour=CLEANUP_HOUR_UTC, minute=CLEANUP_MINUTE_UTC, timezone=UTC),
+        id="cleanup",
         **common,
     )
     return scheduler

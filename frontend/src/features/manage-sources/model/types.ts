@@ -1,4 +1,5 @@
 import type {
+  DiscoveryStatus,
   RemovedVacancySource,
   VacancySearchSettings,
   VacancySource,
@@ -18,6 +19,8 @@ export interface UseManageSourcesResult {
   settings: VacancySearchSettings | null;
   /** Replace the saved settings (e.g. with the server-normalized values after a save). */
   setSettings: (settings: VacancySearchSettings) => void;
+  /** Daily limit / AI availability; null until the initial load succeeds. */
+  status: DiscoveryStatus | null;
   loadState: SourcesLoadState;
   input: string;
   setInput: (value: string) => void;
