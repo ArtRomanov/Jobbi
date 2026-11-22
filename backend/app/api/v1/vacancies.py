@@ -134,7 +134,7 @@ async def get_vacancy_sources(
     "/vacancy-sources",
     response_model=VacancySourceRead,
     status_code=status.HTTP_201_CREATED,
-    summary="Add a Telegram channel after checking it is public",
+    summary="Add a Telegram channel or a Greenhouse / Lever board after a live check",
 )
 async def create_vacancy_source(
     body: VacancySourceCreate,

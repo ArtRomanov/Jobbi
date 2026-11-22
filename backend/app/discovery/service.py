@@ -8,7 +8,8 @@ database transaction is open. Every step is either
 Functions never hold an ORM object across a network call; they copy what they
 need into the frozen dataclasses below.
 
-Scope today: Telegram sources. Slots for later slices are marked with TODO.
+Sources: Telegram channels and Greenhouse / Lever boards (`board_scan`).
+Slots for later slices are marked with TODO.
 """
 
 import asyncio
@@ -27,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.timezones import local_day_bounds, zone_or_utc
+from app.discovery.board_scan import BOARD_KINDS, board_key_prefix, fetch_board
 from app.discovery.evaluator import (
     BATCH_SIZE,
     BatchEvaluation,
@@ -35,6 +37,7 @@ from app.discovery.evaluator import (
     EvaluationTransportError,
     evaluate_batch,
 )
+from app.discovery.fetchers.errors import BoardReadError
 from app.discovery.fetchers.telegram import SourceReadError, fetch_channel_posts
 from app.discovery.prefilter import excluded
 from app.discovery.types import RawPost
@@ -67,11 +70,15 @@ MAX_EVAL_ATTEMPTS = 3
 # Seen keys of posts inside the lookback window were first seen inside it too
 # (a post cannot be seen before it is posted); the margin absorbs clock skew.
 _KNOWN_KEYS_MARGIN = timedelta(days=1)
+_KEY_CHUNK = 500
 
+# Keyed by `SourceReadError.reason` (Telegram) and `BoardReadError.reason`.
 READ_ERROR_MESSAGES = {
     "private_or_deleted": "Channel is private or deleted",
+    "not_found": "Job board not found",
     "unreachable": "Could not reach the source",
 }
+SUPPORTED_KINDS = frozenset({"telegram"}) | BOARD_KINDS
 
 SessionFactory: TypeAlias = Callable[[], AsyncSession]
 # Returns the current time as naive UTC. Called per source and per AI batch,
@@ -283,8 +290,7 @@ async def evaluate_pending(
 async def _load_sources(
     session_factory: SessionFactory, now: datetime, *, initial: bool
 ) -> list[_SourceRef]:
-    # TODO(Slice 6): greenhouse / lever / lever_eu fetchers.
-    stmt = select(VacancySource).where(VacancySource.kind == "telegram")
+    stmt = select(VacancySource).where(VacancySource.kind.in_(sorted(SUPPORTED_KINDS)))
     if initial:
         stmt = stmt.where(
             VacancySource.initial_scan_completed_at.is_(None),
@@ -321,6 +327,55 @@ async def _recent_keys(
         return set((await session.scalars(stmt)).all())
 
 
+async def _board_keys(session_factory: SessionFactory, source: _SourceRef) -> set[str]:
+    """Every seen key of this board for the user. Board jobs stay listed for
+    weeks, so there is no time cutoff (a board lists at most ~1 000 jobs)."""
+    prefix = board_key_prefix(source.kind, source.handle)
+    stmt = select(VacancySeenKey.external_key).where(
+        VacancySeenKey.user_id == source.user_id,
+        VacancySeenKey.external_key.startswith(prefix, autoescape=True),
+    )
+    async with session_factory() as session:
+        return set((await session.scalars(stmt)).all())
+
+
+async def _fetch_source(
+    session_factory: SessionFactory,
+    http_client: httpx.AsyncClient,
+    source: _SourceRef,
+    now: datetime,
+    *,
+    initial: bool,
+    sleep: SleepFn,
+) -> tuple[list[RawPost], list[str]]:
+    """Read one source: (posts to store as pending, keys to record as seen only).
+
+    Raises:
+        SourceReadError / BoardReadError: the source could not be read.
+        ValueError: the stored handle or kind no longer passes validation.
+    """
+    cutoff = now - LOOKBACK
+    if source.kind in BOARD_KINDS:
+        board = await fetch_board(
+            http_client,
+            source.kind,
+            source.handle,
+            await _board_keys(session_factory, source),
+            now=now,
+            cutoff=cutoff,
+            initial=initial,
+            sleep=sleep,
+        )
+        return board.posts, board.seen_only_keys
+    # The first scan stores every post of the window that is not yet a seen
+    # key (filtered at insert), so a re-added source skips what it showed before.
+    known = set() if initial else await _recent_keys(session_factory, source, cutoff)
+    posts = await fetch_channel_posts(
+        http_client, source.handle, known, cutoff, MAX_PAGES, sleep=sleep
+    )
+    return posts, []
+
+
 async def _scan_source(
     session_factory: SessionFactory,
     http_client: httpx.AsyncClient,
@@ -331,15 +386,11 @@ async def _scan_source(
     initial: bool,
     sleep: SleepFn,
 ) -> None:
-    cutoff = now - LOOKBACK
-    # The first scan stores every post of the window that is not yet a seen
-    # key (filtered at insert), so a re-added source skips what it showed before.
-    known = set() if initial else await _recent_keys(session_factory, source, cutoff)
     try:
-        posts = await fetch_channel_posts(
-            http_client, source.handle, known, cutoff, MAX_PAGES, sleep=sleep
+        posts, seen_only_keys = await _fetch_source(
+            session_factory, http_client, source, now, initial=initial, sleep=sleep
         )
-    except SourceReadError as exc:
+    except (SourceReadError, BoardReadError) as exc:
         logger.warning("Source %s could not be read: %s", source.id, exc)
         await _record_read_failure(
             session_factory, source, READ_ERROR_MESSAGES[exc.reason], now, initial
@@ -353,7 +404,15 @@ async def _scan_source(
         )
         report.sources_failed += 1
         return
-    await _store_posts(session_factory, source, posts, now, report, initial=initial)
+    await _store_posts(
+        session_factory,
+        source,
+        posts,
+        now,
+        report,
+        initial=initial,
+        seen_only_keys=seen_only_keys,
+    )
 
 
 def _next_initial_attempt(now: datetime) -> datetime | None:
@@ -393,8 +452,13 @@ async def _store_posts(
     report: RunReport,
     *,
     initial: bool,
+    seen_only_keys: Sequence[str] = (),
 ) -> None:
-    """Record seen keys and insert `pending` cards in one short transaction."""
+    """Record seen keys and insert `pending` cards in one short transaction.
+
+    `seen_only_keys` (board initial scan: jobs outside the window) are only
+    recorded as seen, so they never become cards later.
+    """
     values: dict[str, Any] = {
         "last_checked_at": now,
         "failing_since": None,
@@ -414,7 +478,7 @@ async def _store_posts(
             logger.info("Source %s was removed during its scan", source.id)
             return
         report.sources_read += 1
-        if not posts:
+        if not posts and not seen_only_keys:
             return
 
         exclude_terms: list[str] = (
@@ -425,17 +489,17 @@ async def _store_posts(
             )
             or []
         )
-        keys = [post.external_key for post in posts]
-        seen = set(
-            (
-                await session.scalars(
-                    select(VacancySeenKey.external_key).where(
-                        VacancySeenKey.user_id == source.user_id,
-                        VacancySeenKey.external_key.in_(keys),
-                    )
+        keys = [post.external_key for post in posts] + list(seen_only_keys)
+        seen = await _already_seen(session, source.user_id, keys)
+        for key in seen_only_keys:
+            if key in seen:
+                continue
+            seen.add(key)
+            session.add(
+                VacancySeenKey(
+                    user_id=source.user_id, external_key=key, first_seen_at=now
                 )
-            ).all()
-        )
+            )
 
         for post in posts:
             if post.external_key in seen:
@@ -483,6 +547,27 @@ async def _store_posts(
                 )
             )
             report.posts_stored += 1
+
+
+async def _already_seen(
+    session: AsyncSession, user_id: str, keys: Sequence[str]
+) -> set[str]:
+    """Which of `keys` the user has seen. Chunked: a board's first scan can
+    record ~1 000 keys, above old SQLite's 999 bound-parameter limit."""
+    seen: set[str] = set()
+    for start in range(0, len(keys), _KEY_CHUNK):
+        chunk = list(keys[start : start + _KEY_CHUNK])
+        seen.update(
+            (
+                await session.scalars(
+                    select(VacancySeenKey.external_key).where(
+                        VacancySeenKey.user_id == user_id,
+                        VacancySeenKey.external_key.in_(chunk),
+                    )
+                )
+            ).all()
+        )
+    return seen
 
 
 # --------------------------------------------------------------------------

@@ -1,0 +1,100 @@
+{
+  "jobs": [
+    {
+      "absolute_url": "https://job-boards.eu.greenhouse.io/raisin/jobs/4949391101",
+      "internal_job_id": 4510821101,
+      "location": {
+        "name": "Berlin, Berlin, Germany; Frankfurt a. M.; Hamburg; Munich"
+      },
+      "metadata": [
+        {
+          "id": 12314362101,
+          "name": "Legal Entity",
+          "value": "Raisin SE",
+          "value_type": "single_select"
+        },
+        {
+          "id": 12439693101,
+          "name": "Job Type",
+          "value": [
+            "Permanent Employee"
+          ],
+          "value_type": "multi_select"
+        }
+      ],
+      "id": 4949391101,
+      "updated_at": "2026-11-06T06:01:53-05:00",
+      "requisition_id": "271",
+      "title": "AFC Advisory Manager (f/m/d)",
+      "company_name": "Raisin",
+      "first_published": "2026-08-10T09:17:19-04:00",
+      "language": "en",
+      "application_deadline": null
+    },
+    {
+      "absolute_url": "https://job-boards.eu.greenhouse.io/raisin/jobs/5017767101",
+      "internal_job_id": 4542514101,
+      "location": {
+        "name": "Berlin, Berlin, Germany"
+      },
+      "metadata": [
+        {
+          "id": 12314362101,
+          "name": "Legal Entity",
+          "value": "Raisin SE",
+          "value_type": "single_select"
+        },
+        {
+          "id": 12439693101,
+          "name": "Job Type",
+          "value": [
+            "Permanent Employee"
+          ],
+          "value_type": "multi_select"
+        }
+      ],
+      "id": 5017767101,
+      "updated_at": "2026-10-29T08:24:55-04:00",
+      "requisition_id": "321",
+      "title": "B2B Partner Operations Manager (m/f/d)",
+      "company_name": "Raisin",
+      "first_published": "2026-10-29T08:24:55-04:00",
+      "language": "en",
+      "application_deadline": null
+    },
+    {
+      "absolute_url": "https://job-boards.eu.greenhouse.io/raisin/jobs/4950903101",
+      "internal_job_id": 4511441101,
+      "location": {
+        "name": "Berlin, Berlin, Germany"
+      },
+      "metadata": [
+        {
+          "id": 12314362101,
+          "name": "Legal Entity",
+          "value": "Raisin SE",
+          "value_type": "single_select"
+        },
+        {
+          "id": 12439693101,
+          "name": "Job Type",
+          "value": [
+            "Permanent Employee"
+          ],
+          "value_type": "multi_select"
+        }
+      ],
+      "id": 4950903101,
+      "updated_at": "2026-09-23T08:45:05-04:00",
+      "requisition_id": "275",
+      "title": "Corporate Communications Manager (m/f/d)",
+      "company_name": "Raisin",
+      "first_published": "2026-09-23T08:45:05-04:00",
+      "language": "en",
+      "application_deadline": null
+    }
+  ],
+  "meta": {
+    "total": 31
+  }
+}
