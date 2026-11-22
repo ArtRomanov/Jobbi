@@ -211,30 +211,64 @@ class TestParseResponse:
 
     @pytest.mark.parametrize(
         "raw",
-        [
-            "not json",
-            "",
-            "[]",
-            '{"result": []}',
-            response_json(verdict("p1", fit="great")),
-            response_json(verdict("p1", match="maybe")),
-            response_json(verdict("p1", fit=None)),
-            response_json({"key": "p1"}),
-        ],
-        ids=[
-            "not-json",
-            "empty",
-            "array",
-            "wrong-wrapper",
-            "wrong-enum",
-            "wrong-bool",
-            "match-without-fit",
-            "missing-fields",
-        ],
+        ["not json", "", "[]", '{"result": []}', '{"results": {"key": "p1"}}'],
+        ids=["not-json", "empty", "array", "wrong-wrapper", "results-not-a-list"],
     )
     def test_invalid_output_raises(self, raw: str) -> None:
         with pytest.raises(EvaluationFormatError):
             parse_response(raw, ["p1"])
+
+    @pytest.mark.parametrize(
+        "bad_item",
+        [
+            verdict("p1", fit="great"),
+            verdict("p1", match="maybe"),
+            verdict("p1", fit=None),
+            {"key": "p1"},
+        ],
+        ids=["wrong-enum", "wrong-bool", "match-without-fit", "missing-fields"],
+    )
+    def test_malformed_item_is_missing_only_for_its_post(self, bad_item) -> None:
+        raw = response_json(bad_item, verdict("p2", fit="high"))
+
+        results, missing = parse_response(raw, ["p1", "p2"])
+
+        assert set(results) == {"p2"}
+        assert results["p2"].fit is Fit.HIGH
+        assert missing == ["p1"]
+
+    def test_items_without_usable_key_are_ignored(self) -> None:
+        raw = json.dumps({"results": ["oops", {"match": True}, verdict("p1")]})
+
+        results, missing = parse_response(raw, ["p1"])
+
+        assert set(results) == {"p1"} and missing == []
+
+    def test_later_valid_duplicate_wins_over_malformed_first(self) -> None:
+        raw = response_json(verdict("p1", fit=None), verdict("p1", fit="low"))
+
+        results, missing = parse_response(raw, ["p1"])
+
+        assert results["p1"].fit is Fit.LOW and missing == []
+
+    def test_missing_is_vacancy_is_taken_from_match(self) -> None:
+        """Live Qwen output (2026-11-22) left out is_vacancy on a whole batch."""
+        match = {k: v for k, v in verdict("p1").items() if k != "is_vacancy"}
+        reject = {
+            "key": "p2",
+            "reason": "An article, not a vacancy.",
+            "match": False,
+            "fit": None,
+            "company": None,
+            "title": None,
+        }
+
+        results, missing = parse_response(response_json(match, reject), ["p1", "p2"])
+
+        assert missing == []
+        assert (results["p1"].is_vacancy, results["p1"].match) == (True, True)
+        assert results["p1"].fit is Fit.MEDIUM
+        assert (results["p2"].is_vacancy, results["p2"].match) == (False, False)
 
     def test_fit_case_insensitive_and_reason_clipped(self) -> None:
         raw = response_json(verdict("p1", fit="High", reason="r" * 500))
@@ -286,6 +320,17 @@ async def test_evaluate_batch_maps_keys_and_uses_json_mode() -> None:
     assert call["response_format"] == {"type": "json_object"}
 
 
+async def test_evaluate_batch_reports_invalid_items_as_missing() -> None:
+    posts = [make_post(1), make_post(2)]
+    client = FakeGroq(response_json(verdict("p1", fit="great"), verdict("p2")))
+
+    batch = await evaluate_batch(client, MODEL, DESCRIPTION, {}, posts)  # type: ignore[arg-type]
+
+    assert set(batch.results) == {"tg:jobs/2"}
+    assert batch.missing_keys == ["tg:jobs/1"]
+    assert batch.invalid_keys == ["tg:jobs/1"]
+
+
 async def test_evaluate_batch_missing_keys() -> None:
     posts = [make_post(1), make_post(2), make_post(3)]
     client = FakeGroq(response_json(verdict("p2")))
@@ -296,7 +341,7 @@ async def test_evaluate_batch_missing_keys() -> None:
     assert batch.missing_keys == ["tg:jobs/1", "tg:jobs/3"]
 
 
-@pytest.mark.parametrize("content", ["{not json", None, '{"results": [{"key": "p1"}]}'])
+@pytest.mark.parametrize("content", ["{not json", None, '{"results": "none"}'])
 async def test_evaluate_batch_bad_output(content: str | None) -> None:
     client = FakeGroq(content)
 

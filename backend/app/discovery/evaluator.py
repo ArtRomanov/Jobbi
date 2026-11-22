@@ -6,9 +6,10 @@ model is told to treat as data only. The output is validated with Pydantic and
 limited to booleans, enums and short strings.
 """
 
+import logging
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
@@ -22,6 +23,8 @@ from pydantic import (
 )
 
 from app.discovery.types import RawPost
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "BATCH_SIZE",
@@ -78,13 +81,18 @@ developer, backend developer, data analyst, product designer, ...). Seniority wo
 and technologies (React, Vue, Java, ...) are NOT part of the role, even when written \
 next to it: "Senior frontend, React" names the role "frontend", so a Vue frontend job \
 matches (React is just a point for fit), while a Java backend job does not match. \
+Full-stack is a role of its own: a full-stack job does not match a frontend or \
+backend SEARCH, and only matches when SEARCH names full-stack. \
 Seniority, stack, location, remote work and salary never decide match; they only \
 lower fit. A job in the same field with the wrong stack, place or salary is still a \
 match, with a lower fit.
    Exception - hard requirements: a point in SEARCH marked with "only", "must", \
 "strictly" or "required" (for example "remote only") is a hard requirement. If the \
 post clearly breaks a hard requirement, match is false. If the post does not \
-mention it, it is not broken.
+mention it, it is not broken. A point WITHOUT one of these words is never a hard \
+requirement, however it is written ("remote", "React", "from 4000 €"): for SEARCH \
+"Frontend developer, remote", an office frontend job is still a match, with that \
+point OFF in fit.
 3. fit (only when match is true, otherwise null). List every point of SEARCH other \
 than the role itself (seniority, each technology, location or remote, salary, ...) \
 and every PROFILE preference (a salary amount with its currency is ONE point; a \
@@ -107,7 +115,9 @@ OUTPUT
 Reply with one JSON object and nothing else:
 {"results": [{"key": "<post id>", "is_vacancy": true, "reason": "...", \
 "match": true, "fit": "high", "company": "..." or null, "title": "..." or null}]}
-Include exactly one result for every post id, in the same order as the posts.\
+Include exactly one result for every post id, in the same order as the posts. \
+Every result must contain all seven fields (key, is_vacancy, reason, match, fit, \
+company, title), using null where a value is unknown or not applicable.\
 """
 
 
@@ -140,7 +150,10 @@ class PostVerdict(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True)
 
     key: str
-    is_vacancy: bool
+    # Qwen sometimes leaves this field out (seen live 2026-11-22: a whole batch
+    # without it). A missing value is taken from `match`: a match is a vacancy,
+    # and a non-match creates no card either way.
+    is_vacancy: bool | None = None
     match: bool
     fit: Fit | None = None
     reason: str = ""
@@ -169,6 +182,8 @@ class PostVerdict(BaseModel):
 
     @model_validator(mode="after")
     def _consistent(self) -> "PostVerdict":
+        if self.is_vacancy is None:
+            return self.model_copy(update={"is_vacancy": self.match})._consistent()
         if self.match and not self.is_vacancy:
             return self.model_copy(update={"match": False, "fit": None})
         if self.match and self.fit is None:
@@ -179,11 +194,12 @@ class PostVerdict(BaseModel):
 
 
 class EvaluationResponse(BaseModel):
-    """The JSON object the model must return."""
+    """The JSON object the model must return. Items are validated one by one
+    (see `parse_response`), so one malformed item does not sink the batch."""
 
     model_config = ConfigDict(extra="ignore")
 
-    results: list[PostVerdict]
+    results: list[Any]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -191,7 +207,10 @@ class BatchEvaluation:
     """Result of one evaluated batch, keyed by `RawPost.external_key`."""
 
     results: dict[str, PostVerdict]
+    # Posts with no valid verdict: left out of the answer or answered with a
+    # malformed item (`invalid_keys` is the malformed subset, for logs).
     missing_keys: list[str]
+    invalid_keys: list[str] = field(default_factory=list)
     total_tokens: int | None = None
 
 
@@ -262,16 +281,15 @@ def build_messages(
     ]
 
 
-def parse_response(
+def _parse(
     raw_json: str, expected_keys: Iterable[str]
-) -> tuple[dict[str, PostVerdict], list[str]]:
-    """Validate the model output.
+) -> tuple[dict[str, PostVerdict], list[str], list[str]]:
+    """Validate the model output: (verdicts, missing keys, invalid keys).
 
-    Returns verdicts for the expected keys (unknown keys are ignored, the first
-    duplicate wins) and the expected keys missing from the answer, in order.
+    Invalid keys are also in the missing list.
 
     Raises:
-        EvaluationFormatError: not JSON, or not the expected shape.
+        EvaluationFormatError: not a JSON object with a `results` list.
     """
     cleaned = _THINK_RE.sub("", raw_json or "").strip()
     try:
@@ -284,11 +302,46 @@ def parse_response(
     expected = list(dict.fromkeys(expected_keys))
     wanted = set(expected)
     results: dict[str, PostVerdict] = {}
-    for verdict in parsed.results:
-        key = verdict.key.strip()
-        if key in wanted and key not in results:
-            results[key] = verdict
+    invalid: list[str] = []
+    for item in parsed.results:
+        raw_key = item.get("key") if isinstance(item, dict) else None
+        key = raw_key.strip() if isinstance(raw_key, str) else None
+        if key not in wanted or key in results:
+            continue  # unknown key, duplicate, or no key: nothing to attribute
+        try:
+            verdict = PostVerdict.model_validate(item)
+        except ValidationError as exc:
+            logger.warning(
+                "Invalid evaluation item %s: %s",
+                key,
+                sorted(
+                    {
+                        f"{'.'.join(map(str, e['loc']))}:{e['type']}"
+                        for e in exc.errors()
+                    }
+                ),
+            )
+            if key not in invalid:
+                invalid.append(key)
+            continue
+        results[key] = verdict.model_copy(update={"key": key})
     missing = [key for key in expected if key not in results]
+    return results, missing, [key for key in missing if key in invalid]
+
+
+def parse_response(
+    raw_json: str, expected_keys: Iterable[str]
+) -> tuple[dict[str, PostVerdict], list[str]]:
+    """Validate the model output.
+
+    Returns verdicts for the expected keys (unknown keys are ignored, the first
+    valid answer for a key wins) and the expected keys without a valid verdict,
+    in order: left out, or answered with a malformed item.
+
+    Raises:
+        EvaluationFormatError: not a JSON object with a `results` list.
+    """
+    results, missing, _ = _parse(raw_json, expected_keys)
     return results, missing
 
 
@@ -349,7 +402,7 @@ async def evaluate_batch(
         raise EvaluationTransportError(type(exc).__name__) from exc
 
     content = completion.choices[0].message.content if completion.choices else None
-    by_prompt_key, missing = parse_response(content or "", prompt_keys)
+    by_prompt_key, missing, invalid = _parse(content or "", prompt_keys)
     to_external = {key: post.external_key for key, post in zip(prompt_keys, posts)}
     usage = getattr(completion, "usage", None)
     return BatchEvaluation(
@@ -358,5 +411,6 @@ async def evaluate_batch(
             for key, verdict in by_prompt_key.items()
         },
         missing_keys=[to_external[key] for key in missing],
+        invalid_keys=[to_external[key] for key in invalid],
         total_tokens=getattr(usage, "total_tokens", None),
     )

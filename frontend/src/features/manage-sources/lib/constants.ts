@@ -10,6 +10,9 @@ export const SOURCE_KIND_LABELS: Record<VacancySourceKind, string> = {
 
 export const SCANNING_LABEL = "Scanning…";
 export const UNAVAILABLE_LABEL = "Unavailable";
+export const LAST_CHECKED_PREFIX = "Last checked";
+/** How often the source list is re-fetched while any source is scanning. */
+export const SCAN_POLL_INTERVAL_MS = 5000;
 export const LOAD_ERROR_MESSAGE = "Could not load your sources.";
 export const NO_SOURCES_MESSAGE = "You are not watching any sources yet.";
 export const SOURCE_INPUT_PLACEHOLDER = "@channel or t.me/channel";

@@ -28,6 +28,15 @@ export const colors = {
   errorBg: "#dc2626",
   success: "#16a34a",
 
+  // Badge tones (background / text pairs, WCAG AA on the pill)
+  badge: {
+    neutral: { bg: "#f3f4f6", text: "#374151" },
+    accent: { bg: "#dbeafe", text: "#1d4ed8" },
+    success: { bg: "#dcfce7", text: "#166534" },
+    warning: { bg: "#fef3c7", text: "#92400e" },
+    danger: { bg: "#fee2e2", text: "#991b1b" },
+  },
+
   // Status colors (for kanban board)
   status: {
     researching: "#6366f1",

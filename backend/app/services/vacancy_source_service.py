@@ -7,10 +7,11 @@ the read transaction before the live check and writes in a short one after.
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.vacancy import Vacancy, VacancyCardSource
 from app.models.vacancy_search_settings import VacancySearchSettings
 from app.models.vacancy_source import VacancySource
 from app.services.vacancy_source_check import fetch_telegram_channel_title
@@ -244,11 +245,39 @@ async def add_source(db: AsyncSession, user_id: str, raw_input: str) -> VacancyS
 
 
 async def delete_source(db: AsyncSession, user_id: str, source_id: str) -> bool:
-    """Delete one of the user's sources. Returns False if it is not theirs."""
+    """Delete one of the user's sources. Returns False if it is not theirs.
+
+    Its posts still waiting for the AI (`pending`) are deleted with their card
+    sources: removing a source stops its scan. Their seen keys stay, so a
+    re-added source does not show them again. Cards already in the Inbox stay;
+    their references are cleared explicitly (SQLite does not enforce ON DELETE
+    SET NULL here). Card sources keep the source identity and label, so the
+    Inbox can still filter them.
+    """
     result = await db.execute(
         delete(VacancySource).where(
             VacancySource.id == source_id, VacancySource.user_id == user_id
         )
     )
+    if result.rowcount == 0:
+        await db.rollback()
+        return False
+    pending_ids = select(Vacancy.id).where(
+        Vacancy.source_id == source_id,
+        Vacancy.user_id == user_id,
+        Vacancy.state == "pending",
+    )
+    await db.execute(
+        delete(VacancyCardSource).where(VacancyCardSource.vacancy_id.in_(pending_ids))
+    )
+    await db.execute(delete(Vacancy).where(Vacancy.id.in_(pending_ids)))
+    await db.execute(
+        update(Vacancy).where(Vacancy.source_id == source_id).values(source_id=None)
+    )
+    await db.execute(
+        update(VacancyCardSource)
+        .where(VacancyCardSource.source_id == source_id)
+        .values(source_id=None)
+    )
     await db.commit()
-    return result.rowcount > 0
+    return True

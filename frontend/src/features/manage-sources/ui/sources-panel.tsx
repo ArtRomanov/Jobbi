@@ -7,11 +7,16 @@ import { AddSourceForm } from "./add-source-form";
 import { SearchSettingsForm } from "./search-settings-form";
 import { SourceList } from "./source-list";
 
+interface SourcesPanelProps {
+  onScanFinished?: () => void;
+}
+
 /**
  * Inbox "Sources" panel: add a Telegram channel, manage watched sources and
- * edit the search description + exclude words.
+ * edit the search description + exclude words. `onScanFinished` runs when a
+ * source's scan ends (the page refreshes its vacancy list).
  */
-export function SourcesPanel() {
+export function SourcesPanel({ onScanFinished }: SourcesPanelProps) {
   const headingId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const removeButtonsRef = useRef(new Map<string, HTMLButtonElement>());
@@ -29,7 +34,7 @@ export function SourcesPanel() {
     addSource,
     removeSource,
     retryLoad,
-  } = useManageSources();
+  } = useManageSources(onScanFinished);
 
   const registerRemoveButton = useCallback(
     (id: string, element: HTMLButtonElement | null): void => {

@@ -1,7 +1,8 @@
 import { Link, Outlet, useNavigate } from "react-router-dom";
 import { useAuthStore } from "@/features/auth";
 import { apiClient } from "@/shared/api";
-import { colors, fonts } from "@/shared/ui";
+import { useNewVacancyCount } from "@/entities/vacancy";
+import { Badge, colors, fonts } from "@/shared/ui";
 import { useCallback } from "react";
 
 /**
@@ -12,6 +13,7 @@ import { useCallback } from "react";
 export function Layout() {
   const logout = useAuthStore((s) => s.logout);
   const navigate = useNavigate();
+  const newVacancyCount = useNewVacancyCount();
 
   const handleLogout = useCallback(async () => {
     try {
@@ -75,13 +77,22 @@ export function Layout() {
 
           <Link
             to="/inbox"
+            aria-label={newVacancyCount > 0 ? `Inbox, ${newVacancyCount} new` : undefined}
             style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.375rem",
               fontSize: "0.875rem",
               color: colors.textSecondary,
               textDecoration: "none",
             }}
           >
             Inbox
+            {newVacancyCount > 0 ? (
+              <Badge tone="accent" aria-hidden="true">
+                {newVacancyCount}
+              </Badge>
+            ) : null}
           </Link>
 
           <Link

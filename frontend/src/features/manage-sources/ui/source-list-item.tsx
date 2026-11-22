@@ -1,7 +1,13 @@
 import { useCallback } from "react";
 import type { VacancySource } from "@/entities/vacancy-source";
 import { Button, colors } from "@/shared/ui";
-import { SCANNING_LABEL, SOURCE_KIND_LABELS, UNAVAILABLE_LABEL } from "../lib/constants";
+import { formatTimeAgo } from "@/shared/lib";
+import {
+  LAST_CHECKED_PREFIX,
+  SCANNING_LABEL,
+  SOURCE_KIND_LABELS,
+  UNAVAILABLE_LABEL,
+} from "../lib/constants";
 
 interface SourceListItemProps {
   source: VacancySource;
@@ -11,7 +17,7 @@ interface SourceListItemProps {
   onRegisterRemoveButton: (id: string, element: HTMLButtonElement | null) => void;
 }
 
-/** One watched source: name, kind, scan/availability status and a Remove button. */
+/** One watched source: name, kind, scan/last-checked/availability status and a Remove button. */
 export function SourceListItem({
   source,
   isRemoving,
@@ -48,6 +54,9 @@ export function SourceListItem({
         <p style={{ fontSize: "0.75rem", color: colors.textMuted }}>
           {SOURCE_KIND_LABELS[source.kind]}
           {source.scanning ? ` · ${SCANNING_LABEL}` : null}
+          {!source.scanning && source.last_checked_at
+            ? ` · ${LAST_CHECKED_PREFIX} ${formatTimeAgo(source.last_checked_at)}`
+            : null}
         </p>
         {source.unavailable ? (
           <p style={{ fontSize: "0.75rem", color: colors.error }}>

@@ -21,6 +21,15 @@ from app.bot.handlers.jobs import register_summary_jobs
 from app.bot.handlers.start import handle_start
 from app.bot.handlers.summary import handle_summary
 from app.core.config import get_settings
+from app.core.worker_logging import configure_logging
+
+__all__ = [
+    "add_handlers",
+    "build_application",
+    "configure_logging",
+    "ensure_event_loop",
+    "main",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -51,17 +60,6 @@ def add_handlers(app: Application) -> None:
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND & private, handle_message)
     )
-
-
-def configure_logging() -> None:
-    logging.basicConfig(
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        level=logging.INFO,
-    )
-    # httpx logs every request URL at INFO, and Bot API URLs embed the token
-    # (https://api.telegram.org/bot<TOKEN>/...). Anyone reading the log could
-    # drive the bot, so keep httpx to warnings and errors.
-    logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def ensure_event_loop() -> None:

@@ -71,6 +71,15 @@ SCENARIOS = [
         profile={"salary_min": 6000, "salary_currency": "EUR"},
         cases=[Case("Senior React Developer, €4000", True, Fit.MEDIUM)],
     ),
+    # Live 2026-11-22: a plain "remote" was treated as a hard requirement.
+    Scenario(
+        description="Frontend developer, React, remote",
+        profile={},
+        cases=[
+            Case("Frontend Developer, office in Sofia, React", True, Fit.MEDIUM),
+            Case("Full Stack developer (React + Node), remote", False, None),
+        ],
+    ),
 ]
 
 

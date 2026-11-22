@@ -6,7 +6,10 @@ import {
   deleteVacancySource,
   getVacancySources,
 } from "@/entities/vacancy-source";
+import { notifyVacanciesChanged } from "@/entities/vacancy";
 import type { VacancySearchSettings, VacancySource } from "@/entities/vacancy-source";
+import { SCAN_POLL_INTERVAL_MS } from "../lib/constants";
+import { hasScanFinished, mergePolledSources } from "../lib/helpers";
 import type { SourcesLoadState, UseManageSourcesResult } from "./types";
 
 /**
@@ -17,8 +20,12 @@ import type { SourcesLoadState, UseManageSourcesResult } from "./types";
  *
  * Adding is blocked until the initial load succeeds, so a late GET can never
  * overwrite a source the user just added.
+ *
+ * While any source is scanning, the list is re-fetched every 5 s (status
+ * fields only). When a scan ends, `onScanFinished` runs and
+ * `notifyVacanciesChanged()` fires so new cards and the badge appear.
  */
-export function useManageSources(): UseManageSourcesResult {
+export function useManageSources(onScanFinished?: () => void): UseManageSourcesResult {
   const { showToast } = useToast();
   const [sources, setSources] = useState<VacancySource[]>([]);
   const [settings, setSettings] = useState<VacancySearchSettings | null>(null);
@@ -31,6 +38,14 @@ export function useManageSources(): UseManageSourcesResult {
   // Guards against a second submit before React re-renders with isAdding=true
   const isAddingRef = useRef(false);
   const isAddDisabled = loadState !== "ready";
+  const isAnyScanning = sources.some((source) => source.scanning);
+  // Latest values for the polling loop, so it does not restart on every render
+  const sourcesRef = useRef(sources);
+  const onScanFinishedRef = useRef(onScanFinished);
+  useEffect(() => {
+    sourcesRef.current = sources;
+    onScanFinishedRef.current = onScanFinished;
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -52,6 +67,36 @@ export function useManageSources(): UseManageSourcesResult {
       cancelled = true;
     };
   }, [reloadKey]);
+
+  useEffect(() => {
+    if (!isAnyScanning) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    async function poll(): Promise<void> {
+      try {
+        const data = await getVacancySources();
+        if (cancelled) return;
+        const isFinished = hasScanFinished(sourcesRef.current, data.sources);
+        setSources((current) => mergePolledSources(current, data.sources));
+        if (isFinished) {
+          onScanFinishedRef.current?.();
+          notifyVacanciesChanged();
+        }
+      } catch {
+        // A failed poll is retried on the next tick
+      } finally {
+        // Cleanup clears this timer when scanning stops or the panel unmounts
+        if (!cancelled) timer = setTimeout(() => void poll(), SCAN_POLL_INTERVAL_MS);
+      }
+    }
+
+    timer = setTimeout(() => void poll(), SCAN_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [isAnyScanning]);
 
   const setInput = useCallback((value: string): void => {
     setInputValue(value);

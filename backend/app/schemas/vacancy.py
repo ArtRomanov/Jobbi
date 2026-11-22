@@ -15,6 +15,9 @@ class VacancySourceCreate(BaseModel):
 
 class VacancySourceRead(BaseModel):
     id: str
+    # Stable identity "<kind>:<handle>" (survives remove / re-add); the Inbox
+    # `source` filter takes it.
+    key: str
     kind: SourceKind
     display_name: str
     last_checked_at: UtcDatetime | None
@@ -46,8 +49,40 @@ class DiscoveryStatus(BaseModel):
     waiting_count: int = 0
 
 
+class SourceRef(BaseModel):
+    """A source as shown on a card or in the Inbox source filter."""
+
+    key: str
+    label: str
+
+
 class VacancySourcesResponse(BaseModel):
     sources: list[VacancySourceRead]
-    removed_labels: list[str]
+    # Sources of Inbox cards that are no longer watched (shown "(removed)").
+    removed_sources: list[SourceRef]
     settings: VacancySearchSettingsRead
     status: DiscoveryStatus
+
+
+VacancyListState = Literal["new", "seen", "all"]
+VacancySort = Literal["date", "fit"]
+
+
+class VacancyRead(BaseModel):
+    id: str
+    title: str | None
+    company: str | None
+    url: str
+    job_link: str | None
+    text: str
+    posted_at: UtcDatetime
+    found_at: UtcDatetime
+    state: Literal["new", "seen"]
+    fit: Literal["high", "medium", "low"] | None
+    fit_reason: str | None
+    # Sources the card came from (several for a merged repost).
+    sources: list[SourceRef]
+
+
+class NewVacancyCount(BaseModel):
+    count: int

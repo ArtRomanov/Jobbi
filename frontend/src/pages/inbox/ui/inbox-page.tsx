@@ -1,15 +1,19 @@
+import { useCallback, useState } from "react";
 import { SourcesPanel } from "@/features/manage-sources";
-import { EmptyState, PageCard, PageHeader } from "@/shared/ui";
-import { INBOX_EMPTY_DESCRIPTION, INBOX_EMPTY_TITLE } from "../lib/constants";
+import { PageCard, PageHeader } from "@/shared/ui";
+import { VacancyList } from "./vacancy-list";
 
 /** Inbox: vacancies found in the user's sources, plus the Sources panel. */
 export function InboxPage() {
+  // Bumped when a source finishes scanning so the list shows the new cards
+  const [refreshKey, setRefreshKey] = useState(0);
+  const refreshList = useCallback(() => setRefreshKey((key) => key + 1), []);
+
   return (
     <PageCard maxWidth="720px">
       <PageHeader title="Inbox" subtitle="Vacancies Jobbi found in your sources" />
-      {/* The vacancy list replaces this placeholder in a later slice */}
-      <EmptyState title={INBOX_EMPTY_TITLE} description={INBOX_EMPTY_DESCRIPTION} />
-      <SourcesPanel />
+      <VacancyList refreshKey={refreshKey} />
+      <SourcesPanel onScanFinished={refreshList} />
     </PageCard>
   );
 }

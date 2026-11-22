@@ -97,7 +97,7 @@ async def test_list_empty_with_defaults(client: httpx.AsyncClient, token: str) -
     assert resp.status_code == 200
     assert resp.json() == {
         "sources": [],
-        "removed_labels": [],
+        "removed_sources": [],
         "settings": {"description": None, "exclude": []},
         "status": {"ai_unavailable": False, "limit_reached": False, "waiting_count": 0},
     }
@@ -184,6 +184,7 @@ async def test_add_public_channel(
     data = resp.json()
     assert set(data) == {
         "id",
+        "key",
         "kind",
         "display_name",
         "last_checked_at",
@@ -192,6 +193,7 @@ async def test_add_public_channel(
         "last_error",
     }
     assert data["kind"] == "telegram"
+    assert data["key"] == "telegram:durov_jobs"
     assert data["display_name"] == "Durov's Jobs"
     assert data["scanning"] is True
     assert data["unavailable"] is False
