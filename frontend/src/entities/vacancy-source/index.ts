@@ -1,6 +1,7 @@
 export type {
   VacancySource,
   VacancySourceKind,
+  RemovedVacancySource,
   VacancySearchSettings,
   VacancySearchSettingsUpdate,
   DiscoveryStatus,

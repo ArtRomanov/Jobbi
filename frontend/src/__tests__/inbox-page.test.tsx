@@ -35,7 +35,7 @@ describe("InboxPage", () => {
     renderWithProviders(<InboxPage />);
 
     expect(screen.getByRole("heading", { level: 1, name: "Inbox" })).toBeInTheDocument();
-    expect(screen.getByText("No vacancies yet.")).toBeInTheDocument();
+    expect(await screen.findByText("No vacancies yet.")).toBeInTheDocument();
     expect(
       screen.getByText("Add channels or companies and describe what you're looking for in Sources."),
     ).toBeInTheDocument();

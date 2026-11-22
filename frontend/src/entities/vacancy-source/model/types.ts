@@ -6,6 +6,9 @@ export type VacancySource = components["schemas"]["VacancySourceRead"];
 /** Where a source comes from: "telegram" | "greenhouse" | "lever" | "lever_eu". */
 export type VacancySourceKind = VacancySource["kind"];
 
+/** A source of existing cards that matches no live source: `{key, label}` (shown "(removed)"). */
+export type RemovedVacancySource = VacancySourcesResponse["removed_sources"][number];
+
 /** Search description and exclude words. */
 export type VacancySearchSettings = components["schemas"]["VacancySearchSettingsRead"];
 

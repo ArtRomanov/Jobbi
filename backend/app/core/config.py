@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "qwen/qwen3.8-27b"
+    # Model for vacancy discovery (separate from the chat model above).
+    GROQ_DISCOVERY_MODEL: str = "qwen/qwen3.8-27b"
+    # Posts evaluated by AI per user per local day (shared Groq token budget).
+    DISCOVERY_DAILY_EVAL_LIMIT: int = Field(default=150, ge=1)
     TELEGRAM_BOT_TOKEN: str = ""
     JOBBI_PUBLIC_URL: str = "http://localhost:5174"
 

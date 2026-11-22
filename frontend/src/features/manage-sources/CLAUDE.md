@@ -9,4 +9,6 @@ Inbox "Sources" panel (`SourcesPanel`): add a Telegram channel by `@name` / `t.m
 - Search settings: `SearchSettingsForm` + `model/use-search-settings-form.ts`. Saved settings come from the same GET and live in `useManageSources` (`settings`, null until loaded); the form is keyed on load so its drafts start from them and it stays disabled until then. Save PATCHes both fields and then shows the server-normalized values; errors inline under Save, success toast "Saved"; focus returns to Save.
 - The "Describe what you're looking for…" hint follows the *saved* description, so it does not hide while the user types an unsaved draft.
 - Description: `maxLength` 500 stops typing and the setter also cuts pasted text. Exclude words use `ChipInput` from `@/shared/ui` (50 max, 64 chars each).
-- Not here yet (later slices): last-checked time, status notices, polling while scanning.
+- Each source shows "Scanning…" or "Last checked <formatTimeAgo>" (nothing when never checked).
+- Polling: while any source is scanning, `useManageSources` re-fetches GET /vacancy-sources every 5 s (setTimeout chain, so requests never overlap; cleared on unmount or when nothing scans). Polls only update status fields of sources already in the local list (`mergePolledSources`), so a poll can't undo a concurrent add/remove or touch the settings drafts. When a source goes scanning → not scanning, `SourcesPanel`'s `onScanFinished` runs and `notifyVacanciesChanged()` (from `entities/vacancy`) fires.
+- Not here yet (later slices): status notices (AI unavailable, daily limit).

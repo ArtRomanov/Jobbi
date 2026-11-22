@@ -50,6 +50,21 @@ services:
       backend:
         condition: service_healthy
 
+  # Hourly vacancy discovery worker. Run exactly ONE instance (never --scale).
+  discovery:
+    build:
+      context: ./backend
+      target: production
+    volumes:
+      - ./backend/app:/app/app
+      - backend-data:/app/data
+    command: python -m app.discovery
+    env_file:
+      - .env
+    depends_on:
+      backend:
+        condition: service_healthy
+
 volumes:
   backend-data:
   frontend-node-modules:

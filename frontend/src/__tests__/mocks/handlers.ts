@@ -216,6 +216,7 @@ export const mockUser = {
 
 export const mockVacancySource = {
   id: "src-1",
+  key: "telegram:frontend_jobs",
   kind: "telegram" as const,
   display_name: "@frontend_jobs",
   last_checked_at: null,
@@ -226,10 +227,31 @@ export const mockVacancySource = {
 
 export const mockVacancySourcesEmpty = {
   sources: [],
-  removed_labels: [],
+  removed_sources: [] as Array<{ key: string; label: string }>,
   settings: { description: null, exclude: [] },
   status: { ai_unavailable: false, limit_reached: false, waiting_count: 0 },
 };
+
+// ---------------------------------------------------------------------------
+// Vacancy (Inbox card) mock data
+// ---------------------------------------------------------------------------
+
+export const mockVacancy = {
+  id: "vac-1",
+  title: "Senior React Developer" as string | null,
+  company: "Acme" as string | null,
+  url: "https://t.me/frontend_jobs/101",
+  job_link: null as string | null,
+  text: "Senior React Developer, fully remote, €5000–6000.",
+  posted_at: "2026-11-20T10:00:00Z",
+  found_at: "2026-11-20T10:05:00Z",
+  state: "new" as "new" | "seen",
+  fit: "high" as "high" | "medium" | "low" | null,
+  fit_reason: "Remote React role with a matching salary" as string | null,
+  sources: [{ key: "telegram:frontend_jobs", label: "@frontend_jobs" }],
+};
+
+export const mockVacancyPageEmpty = { items: [], total: 0, page: 1, per_page: 20 };
 
 export const handlers = [
   // POST /api/v1/auth/register — success
@@ -559,7 +581,13 @@ export const handlers = [
     const body = (await request.json()) as { input: string };
     const name = body.input.trim().replace(/^(https?:\/\/)?t\.me\/(s\/)?/, "").replace(/^@/, "");
     return HttpResponse.json(
-      { ...mockVacancySource, id: `src-${name}`, display_name: `@${name}`, scanning: true },
+      {
+        ...mockVacancySource,
+        id: `src-${name}`,
+        key: `telegram:${name.toLowerCase()}`,
+        display_name: `@${name}`,
+        scanning: true,
+      },
       { status: 201 },
     );
   }),
@@ -577,5 +605,17 @@ export const handlers = [
       ...new Set((body.exclude ?? []).map((term) => term.trim().toLowerCase()).filter(Boolean)),
     ];
     return HttpResponse.json({ description, exclude });
+  }),
+
+  // -------------------------------------------------------------------------
+  // Vacancy (Inbox) endpoints
+  // -------------------------------------------------------------------------
+
+  http.get(`${BASE_URL}/api/v1/vacancies`, () => {
+    return HttpResponse.json(mockVacancyPageEmpty);
+  }),
+
+  http.get(`${BASE_URL}/api/v1/vacancies/new-count`, () => {
+    return HttpResponse.json({ count: 0 });
   }),
 ];

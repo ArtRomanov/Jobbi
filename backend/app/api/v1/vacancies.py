@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, get_db
@@ -8,13 +8,26 @@ from app.core.exceptions import not_found
 from app.models.user import User
 from app.models.vacancy_search_settings import VacancySearchSettings
 from app.models.vacancy_source import VacancySource
+from app.schemas.application import PaginatedResponse
 from app.schemas.vacancy import (
     DiscoveryStatus,
+    NewVacancyCount,
+    SourceRef,
+    VacancyListState,
+    VacancyRead,
     VacancySearchSettingsRead,
     VacancySearchSettingsUpdate,
+    VacancySort,
     VacancySourceCreate,
     VacancySourceRead,
     VacancySourcesResponse,
+)
+from app.services.vacancy_service import (
+    count_new,
+    discovery_status,
+    list_vacancies,
+    removed_sources,
+    source_key,
 )
 from app.services.vacancy_source_check import SourceCheckError
 from app.services.vacancy_source_parsing import SourceInputError
@@ -40,6 +53,7 @@ router = APIRouter(tags=["vacancies"])
 def _source_to_read(source: VacancySource) -> VacancySourceRead:
     return VacancySourceRead(
         id=source.id,
+        key=source_key(source.kind, source.handle),
         kind=source.kind,
         display_name=source.display_name,
         last_checked_at=source.last_checked_at,
@@ -70,14 +84,20 @@ async def get_vacancy_sources(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> VacancySourcesResponse:
     sources = await list_sources(db, current_user.id)
-    settings = _settings_to_read(await get_search_settings(db, current_user.id))
+    settings_row = await get_search_settings(db, current_user.id)
+    status_data = await discovery_status(db, current_user, settings_row)
     return VacancySourcesResponse(
         sources=[_source_to_read(s) for s in sources],
-        # Filled once vacancy cards exist (Slice 3).
-        removed_labels=[],
-        settings=settings,
-        # Computed from the worker's state in Slice 2/3.
-        status=DiscoveryStatus(),
+        removed_sources=[
+            SourceRef(key=item.key, label=item.label)
+            for item in await removed_sources(db, current_user.id)
+        ],
+        settings=_settings_to_read(settings_row),
+        status=DiscoveryStatus(
+            ai_unavailable=status_data.ai_unavailable,
+            limit_reached=status_data.limit_reached,
+            waiting_count=status_data.waiting_count,
+        ),
     )
 
 
@@ -150,3 +170,76 @@ async def patch_vacancy_search_settings(
     except SearchSettingsError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=exc.message) from exc
     return _settings_to_read(settings_row)
+
+
+@router.get(
+    "/vacancies",
+    response_model=PaginatedResponse[VacancyRead],
+    summary="List Inbox cards",
+    description=(
+        "Only `new` and `seen` cards are listed. `source` filters by source "
+        "key `<kind>:<handle>` (removed sources keep their key). `sort=fit` orders High, "
+        "Medium, Low, newest first within the same fit."
+    ),
+)
+async def get_vacancies(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    source: Annotated[
+        str | None,
+        Query(
+            max_length=128,
+            description='Source key "<kind>:<handle>" (live or removed source)',
+        ),
+    ] = None,
+    state: VacancyListState = "all",
+    sort: VacancySort = "date",
+    page: Annotated[int, Query(ge=1)] = 1,
+    per_page: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> PaginatedResponse[VacancyRead]:
+    items, card_sources, total = await list_vacancies(
+        db,
+        current_user.id,
+        source=source,
+        state=state,
+        sort=sort,
+        page=page,
+        per_page=per_page,
+    )
+    return PaginatedResponse(
+        items=[
+            VacancyRead(
+                id=v.id,
+                title=v.title,
+                company=v.company,
+                url=v.url,
+                job_link=v.job_link,
+                text=v.text,
+                posted_at=v.posted_at,
+                found_at=v.found_at,
+                state=v.state,  # type: ignore[arg-type]  # filtered to new/seen
+                fit=v.fit,  # type: ignore[arg-type]
+                fit_reason=v.fit_reason,
+                sources=[
+                    SourceRef(key=item.key, label=item.label)
+                    for item in card_sources.get(v.id, [])
+                ],
+            )
+            for v in items
+        ],
+        total=total,
+        page=page,
+        per_page=per_page,
+    )
+
+
+@router.get(
+    "/vacancies/new-count",
+    response_model=NewVacancyCount,
+    summary="Number of new Inbox cards (nav badge)",
+)
+async def get_new_vacancy_count(
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> NewVacancyCount:
+    return NewVacancyCount(count=await count_new(db, current_user.id))
