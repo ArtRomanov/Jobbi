@@ -72,7 +72,7 @@ Five tools are exposed to the model. The names are short and non-overlapping to 
 | `update_cv_list_entry` | Replace an entry at a given index. | `{ list_name, index: int, entry }`. |
 | `remove_cv_list_entry` | Remove an entry at a given index. | `{ list_name, index: int }`. |
 
-Why this granularity rather than 12 narrow tools or 2 broad ones: Llama 3.3 70B picks correctly among a small, distinctly-named set; 12 tools degrades selection accuracy in our experience, and 2 broad tools (e.g., `update_application(fields)`) push too much logic into argument shape, which the model handles less reliably than tool-name discrimination. Five is the sweet spot.
+Why this granularity rather than 12 narrow tools or 2 broad ones: The chat model picks correctly among a small, distinctly-named set; 12 tools degrades selection accuracy in our experience, and 2 broad tools (e.g., `update_application(fields)`) push too much logic into argument shape, which the model handles less reliably than tool-name discrimination. Five is the sweet spot.
 
 The tool definitions live in a single module: `backend/app/services/chat_tools.py`. It exports the JSON-schema list passed to Groq and a dispatcher that maps `tool_name` + `arguments` to the right service-layer mutation.
 
@@ -180,7 +180,7 @@ A simple side-by-side block layout is used instead of a real diff library (e.g.,
 
 ### System Dependencies
 
-- **Groq tool-calling reliability with Llama 3.3 70B Versatile.** Documented as supported, but model behavior on edge cases (e.g., the user asks for ten changes at once, or asks something ambiguous) needs prompt iteration. The system prompt in §2.8 is the main lever.
+- **Groq tool-calling reliability with `qwen/qwen3.8-27b` (preview; replaced Llama 3.3 70B, unavailable on the account since 2026-11-22).** A live tool call returned a correct `tool_calls` on 2026-11-22, but model behavior on edge cases (e.g., the user asks for ten changes at once, or asks something ambiguous) needs prompt iteration. The system prompt in §2.8 is the main lever.
 - **Existing services.** `application_service.update_application` and `cv_service.update_cv` (or per-field updaters) must accept partial updates. Verify; add a thin per-field helper if missing.
 - **Frontend SSE consumer.** Already extensible — adding a `card` event branch is additive.
 - **TanStack Query invalidation.** On Accept, the `applications/:id` query and any `cvs/:id` query should refetch so other panels are consistent. Standard pattern; not a risk.
