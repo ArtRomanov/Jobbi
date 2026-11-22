@@ -76,4 +76,22 @@ describe("RegisterPage", () => {
       expect(state.isAuthenticated).toBe(true);
     });
   });
+
+  it("shows the page's own message when the email is already registered (409)", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<RegisterPage />);
+
+    await user.type(screen.getByLabelText(/full name/i), "Existing User");
+    await user.type(screen.getByLabelText(/email/i), "existing@example.com");
+    await user.type(screen.getByLabelText(/^password/i), "securepassword123");
+    await user.selectOptions(screen.getByRole("combobox"), "remote");
+    await user.click(screen.getByRole("button", { name: /create account/i }));
+
+    // The backend says "Email already registered."; the page's 409 text wins
+    expect(
+      await screen.findByText("An account with this email already exists."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Email already registered.")).not.toBeInTheDocument();
+    expect(useAuthStore.getState().isAuthenticated).toBe(false);
+  });
 });

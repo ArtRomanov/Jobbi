@@ -210,13 +210,34 @@ export const mockUser = {
   created_at: "2026-01-01T00:00:00",
 };
 
+// ---------------------------------------------------------------------------
+// Vacancy source mock data
+// ---------------------------------------------------------------------------
+
+export const mockVacancySource = {
+  id: "src-1",
+  kind: "telegram" as const,
+  display_name: "@frontend_jobs",
+  last_checked_at: null,
+  scanning: false,
+  unavailable: false,
+  last_error: null as string | null,
+};
+
+export const mockVacancySourcesEmpty = {
+  sources: [],
+  removed_labels: [],
+  settings: { description: null, exclude: [] },
+  status: { ai_unavailable: false, limit_reached: false, waiting_count: 0 },
+};
+
 export const handlers = [
   // POST /api/v1/auth/register — success
   http.post(`${BASE_URL}/api/v1/auth/register`, async ({ request }) => {
     const body = (await request.json()) as Record<string, unknown>;
     if (body.email === "existing@example.com") {
       return HttpResponse.json(
-        { detail: "Email already registered" },
+        { detail: "Email already registered." },
         { status: 409 },
       );
     }
@@ -246,7 +267,7 @@ export const handlers = [
       });
     }
     return HttpResponse.json(
-      { detail: "Invalid credentials" },
+      { detail: "Invalid email or password." },
       { status: 401 },
     );
   }),
@@ -523,5 +544,27 @@ export const handlers = [
       },
       { status: 201 },
     );
+  }),
+
+  // -------------------------------------------------------------------------
+  // Vacancy source endpoints
+  // -------------------------------------------------------------------------
+
+  http.get(`${BASE_URL}/api/v1/vacancy-sources`, () => {
+    return HttpResponse.json(mockVacancySourcesEmpty);
+  }),
+
+  // Echoes the input as a new Telegram source (no validation)
+  http.post(`${BASE_URL}/api/v1/vacancy-sources`, async ({ request }) => {
+    const body = (await request.json()) as { input: string };
+    const name = body.input.trim().replace(/^(https?:\/\/)?t\.me\/(s\/)?/, "").replace(/^@/, "");
+    return HttpResponse.json(
+      { ...mockVacancySource, id: `src-${name}`, display_name: `@${name}`, scanning: true },
+      { status: 201 },
+    );
+  }),
+
+  http.delete(`${BASE_URL}/api/v1/vacancy-sources/:id`, () => {
+    return new HttpResponse(null, { status: 204 });
   }),
 ];

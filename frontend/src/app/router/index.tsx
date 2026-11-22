@@ -11,6 +11,7 @@ import { CvsPage } from "@/pages/cvs";
 import { CvEditorPage } from "@/pages/cv-editor";
 import { ChatPage } from "@/pages/chat";
 import { MetricsPage } from "@/pages/metrics";
+import { InboxPage } from "@/pages/inbox";
 import { Layout } from "@/app/layout";
 import type { ReactNode } from "react";
 
@@ -42,6 +43,7 @@ export function AppRouter() {
       >
         <Route path="/dashboard" element={<DashboardPage />} />
         <Route path="/metrics" element={<MetricsPage />} />
+        <Route path="/inbox" element={<InboxPage />} />
         <Route path="/new-application" element={<NewApplicationPage />} />
         <Route path="/cvs" element={<CvsPage />} />
         <Route path="/cvs/new" element={<CvEditorPage />} />

@@ -8,13 +8,13 @@ Conventions for every slice:
 
 ---
 
-- [ ] **Slice 1: Inbox page with Telegram channel sources**
-  - [ ] Pre-checks, recorded in technical-considerations.md (Groq limits already recorded 2026-11-22): whether `boards-api.greenhouse.io` serves an EU board token; response size of a large Lever board (`mode=json`). **[Agent: general-purpose]**
-  - [ ] Models + one Alembic migration for `vacancy_sources` and `vacancy_search_settings` (later tables get their own migrations). **[Agent: database-expert]**
-  - [ ] Source input parsing (Telegram forms only for now; anchored patterns, hostile-input tests), live channel check via `t.me/s/<name>` (10 s, fixed host), `GET/POST/DELETE /api/v1/vacancy-sources` with 400/409 messages, 30-source limit, per-user isolation; router included. Tests. **[Agent: python-backend]**
-  - [ ] Extend `shared/api/handle-api-error.ts` (string `detail` first) + `getErrorMessage`. Add `shared/ui` `EmptyState`. Create `entities/vacancy-source/`, `features/manage-sources/` (add input with inline error, list with remove), `pages/inbox/` with route `/inbox` and an "Inbox" nav item (no badge yet). MSW handlers + tests. **[Agent: typescript-frontend]**
-  - [ ] Code review: FSD placement, error helper, page composition. **[Agent: react-code-reviewer]**
-  - [ ] Verify: curl add `@durov` (public) → 201; add a nonexistent channel → 400 with the exact text; duplicate → 409; another user's id → 404. In the browser: Inbox page shows empty state, add/remove a channel, inline errors appear. **[Agent: qa-tester]**
+- [x] **Slice 1: Inbox page with Telegram channel sources**
+  - [x] Pre-checks, recorded in technical-considerations.md (Groq limits already recorded 2026-11-22): whether `boards-api.greenhouse.io` serves an EU board token; response size of a large Lever board (`mode=json`). **[Agent: general-purpose]**
+  - [x] Models + one Alembic migration for `vacancy_sources` and `vacancy_search_settings` (later tables get their own migrations). **[Agent: database-expert]**
+  - [x] Source input parsing (Telegram forms only for now; anchored patterns, hostile-input tests), live channel check via `t.me/s/<name>` (10 s, fixed host), `GET/POST/DELETE /api/v1/vacancy-sources` with 400/409 messages, 30-source limit, per-user isolation; router included. Tests. **[Agent: python-backend]**
+  - [x] Extend `shared/api/handle-api-error.ts` (string `detail` first) + `getErrorMessage`. Add `shared/ui` `EmptyState`. Create `entities/vacancy-source/`, `features/manage-sources/` (add input with inline error, list with remove), `pages/inbox/` with route `/inbox` and an "Inbox" nav item (no badge yet). MSW handlers + tests. **[Agent: typescript-frontend]**
+  - [x] Code review: FSD placement, error helper, page composition. **[Agent: react-code-reviewer]**
+  - [x] Verify: curl add `@durov` (public) → 201; add a nonexistent channel → 400 with the exact text; duplicate → 409; another user's id → 404. In the browser: Inbox page shows empty state, add/remove a channel, inline errors appear. **[Agent: qa-tester]** _(2026-11-22: API checks 9/9 passed; browser part not run — Chrome extension not connected; UI covered by component tests, re-check in Slice 9 live test)_
 
 ---
 
@@ -55,8 +55,8 @@ Conventions for every slice:
 ---
 
 - [ ] **Slice 6: Greenhouse and Lever company sources**
-  - [ ] Parsing for Greenhouse (incl. EU per the Slice 1 pre-check), Lever US/EU (`lever`/`lever_eu`), look-alike host tests; live validation; Greenhouse name from the board, Lever name from the slug. **[Agent: python-backend]**
-  - [ ] `fetchers/greenhouse.py` (list without content, content only for unseen jobs), `fetchers/lever.py` (region host, 5 MB cap); board initial scan records all listed jobs as seen, evaluates only the last 7 days, none alerted. JSON fixture tests. **[Agent: python-backend]**
+  - [ ] Parsing for Greenhouse (EU links → same token, standard API host), Lever US/EU (`lever`/`lever_eu`), look-alike host tests; live validation; Greenhouse name from the board, Lever name from the slug. **[Agent: python-backend]**
+  - [ ] `fetchers/greenhouse.py` (list without content, content only for unseen jobs), `fetchers/lever.py` (region host, pages of 50 via skip/limit, 5 MB cap per request); board initial scan records all listed jobs as seen, evaluates only the last 7 days, none alerted. JSON fixture tests. **[Agent: python-backend]**
   - [ ] Verify: add a real Greenhouse board and a real Lever board (US and EU if found); recent matching jobs appear with company and role; next `check_all` evaluates nothing old. **[Agent: qa-tester]**
 
 ---

@@ -20,12 +20,14 @@ dependencies = [
     "groq>=0.13,<1",
     "python-telegram-bot[job-queue]>=21,<22",
     "tzdata>=2024.1",
+    "beautifulsoup4>=4.12,<5",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0,<9",
     "pytest-asyncio>=0.24,<1",
+    "respx>=0.22,<1",
 ]
 
 [build-system]

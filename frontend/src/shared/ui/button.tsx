@@ -23,6 +23,18 @@ const variantStyles: Record<
   },
 };
 
+const VISUALLY_HIDDEN = {
+  position: "absolute",
+  width: "1px",
+  height: "1px",
+  margin: "-1px",
+  padding: 0,
+  overflow: "hidden",
+  clip: "rect(0 0 0 0)",
+  whiteSpace: "nowrap",
+  border: 0,
+} as const;
+
 /** Styled button. Forwards its ref so callers can manage focus. */
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
   { children, loading = false, variant = "primary", disabled, style, ...rest },
@@ -34,6 +46,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     <button
       ref={ref}
       disabled={isDisabled}
+      aria-busy={loading || undefined}
       style={{
         padding: "0.5rem 1rem",
         borderRadius: "0.375rem",
@@ -46,7 +59,15 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       }}
       {...rest}
     >
-      {loading ? "Loading..." : children}
+      {loading ? (
+        <>
+          {/* Visible "Loading..." while the accessible name stays the label */}
+          <span aria-hidden="true">Loading...</span>
+          <span style={VISUALLY_HIDDEN}>{children}</span>
+        </>
+      ) : (
+        children
+      )}
     </button>
   );
 });
