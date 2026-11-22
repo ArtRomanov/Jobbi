@@ -10,3 +10,4 @@ export { PageHeader } from "./page-header";
 export { Divider } from "./divider";
 export { SectionHeader } from "./section-header";
 export { EmptyState } from "./empty-state";
+export { ChipInput } from "./chip-input";

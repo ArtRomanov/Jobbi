@@ -1,9 +1,13 @@
-import type { VacancySource } from "@/entities/vacancy-source";
+import type { VacancySearchSettings, VacancySource } from "@/entities/vacancy-source";
 
 export type SourcesLoadState = "loading" | "error" | "ready";
 
 export interface UseManageSourcesResult {
   sources: readonly VacancySource[];
+  /** Saved search settings; null until the initial load succeeds. */
+  settings: VacancySearchSettings | null;
+  /** Replace the saved settings (e.g. with the server-normalized values after a save). */
+  setSettings: (settings: VacancySearchSettings) => void;
   loadState: SourcesLoadState;
   input: string;
   setInput: (value: string) => void;
@@ -18,4 +22,16 @@ export interface UseManageSourcesResult {
   /** Resolves true when the source was removed. */
   removeSource: (id: string) => Promise<boolean>;
   retryLoad: () => void;
+}
+
+export interface UseSearchSettingsFormResult {
+  description: string;
+  setDescription: (value: string) => void;
+  exclude: readonly string[];
+  setExclude: (values: readonly string[]) => void;
+  /** Inline error under the Save button, or null. */
+  saveError: string | null;
+  isSaving: boolean;
+  /** Save both fields; resolves true on success. */
+  save: () => Promise<boolean>;
 }

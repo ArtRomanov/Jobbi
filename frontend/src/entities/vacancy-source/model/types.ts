@@ -9,6 +9,9 @@ export type VacancySourceKind = VacancySource["kind"];
 /** Search description and exclude words. */
 export type VacancySearchSettings = components["schemas"]["VacancySearchSettingsRead"];
 
+/** Body of PATCH /api/v1/vacancy-search-settings: a field left out stays unchanged. */
+export type VacancySearchSettingsUpdate = components["schemas"]["VacancySearchSettingsUpdate"];
+
 /** AI availability and daily-limit state of vacancy discovery. */
 export type DiscoveryStatus = components["schemas"]["DiscoveryStatus"];
 

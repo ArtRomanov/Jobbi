@@ -6,11 +6,12 @@ import {
   deleteVacancySource,
   getVacancySources,
 } from "@/entities/vacancy-source";
-import type { VacancySource } from "@/entities/vacancy-source";
+import type { VacancySearchSettings, VacancySource } from "@/entities/vacancy-source";
 import type { SourcesLoadState, UseManageSourcesResult } from "./types";
 
 /**
- * Owns the Sources panel: initial load (with retry), adding a source from the
+ * Owns the Sources panel: initial load (with retry) of sources and the saved
+ * search settings, adding a source from the
  * input (inline error on failure, input cleared on success) and removing one
  * (toast on failure).
  *
@@ -20,6 +21,7 @@ import type { SourcesLoadState, UseManageSourcesResult } from "./types";
 export function useManageSources(): UseManageSourcesResult {
   const { showToast } = useToast();
   const [sources, setSources] = useState<VacancySource[]>([]);
+  const [settings, setSettings] = useState<VacancySearchSettings | null>(null);
   const [loadState, setLoadState] = useState<SourcesLoadState>("loading");
   const [reloadKey, setReloadKey] = useState(0);
   const [input, setInputValue] = useState("");
@@ -38,6 +40,7 @@ export function useManageSources(): UseManageSourcesResult {
         const data = await getVacancySources();
         if (cancelled) return;
         setSources(data.sources);
+        setSettings(data.settings);
         setLoadState("ready");
       } catch {
         if (!cancelled) setLoadState("error");
@@ -101,6 +104,8 @@ export function useManageSources(): UseManageSourcesResult {
 
   return {
     sources,
+    settings,
+    setSettings,
     loadState,
     input,
     setInput,

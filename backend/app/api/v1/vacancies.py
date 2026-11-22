@@ -6,10 +6,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_current_user, get_db
 from app.core.exceptions import not_found
 from app.models.user import User
+from app.models.vacancy_search_settings import VacancySearchSettings
 from app.models.vacancy_source import VacancySource
 from app.schemas.vacancy import (
     DiscoveryStatus,
     VacancySearchSettingsRead,
+    VacancySearchSettingsUpdate,
     VacancySourceCreate,
     VacancySourceRead,
     VacancySourcesResponse,
@@ -19,7 +21,9 @@ from app.services.vacancy_source_parsing import SourceInputError
 from app.services.vacancy_source_service import (
     DUPLICATE_SOURCE_MESSAGE,
     SOURCE_LIMIT_MESSAGE,
+    UNSET,
     DuplicateSourceError,
+    SearchSettingsError,
     SourceLimitError,
     add_source,
     delete_source,
@@ -27,6 +31,7 @@ from app.services.vacancy_source_service import (
     is_scanning,
     is_unavailable,
     list_sources,
+    update_search_settings,
 )
 
 router = APIRouter(tags=["vacancies"])
@@ -44,6 +49,17 @@ def _source_to_read(source: VacancySource) -> VacancySourceRead:
     )
 
 
+def _settings_to_read(
+    settings_row: VacancySearchSettings | None,
+) -> VacancySearchSettingsRead:
+    if settings_row is None:
+        return VacancySearchSettingsRead()
+    return VacancySearchSettingsRead(
+        description=settings_row.description,
+        exclude=list(settings_row.exclude_terms),
+    )
+
+
 @router.get(
     "/vacancy-sources",
     response_model=VacancySourcesResponse,
@@ -54,15 +70,7 @@ async def get_vacancy_sources(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> VacancySourcesResponse:
     sources = await list_sources(db, current_user.id)
-    settings_row = await get_search_settings(db, current_user.id)
-    settings = (
-        VacancySearchSettingsRead(
-            description=settings_row.description,
-            exclude=list(settings_row.exclude_terms),
-        )
-        if settings_row is not None
-        else VacancySearchSettingsRead()
-    )
+    settings = _settings_to_read(await get_search_settings(db, current_user.id))
     return VacancySourcesResponse(
         sources=[_source_to_read(s) for s in sources],
         # Filled once vacancy cards exist (Slice 3).
@@ -114,3 +122,31 @@ async def delete_vacancy_source(
     if not await delete_source(db, current_user.id, source_id):
         not_found("Source")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.patch(
+    "/vacancy-search-settings",
+    response_model=VacancySearchSettingsRead,
+    summary="Update the search description and exclude words",
+    description=(
+        "Partial update: fields left out stay unchanged. A null or blank "
+        "description turns the search off. Exclude words are trimmed, "
+        "lowercased and de-duplicated. 400 when a limit is exceeded."
+    ),
+)
+async def patch_vacancy_search_settings(
+    body: VacancySearchSettingsUpdate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> VacancySearchSettingsRead:
+    fields = body.model_fields_set
+    try:
+        settings_row = await update_search_settings(
+            db,
+            current_user.id,
+            description=body.description if "description" in fields else UNSET,
+            exclude=body.exclude if "exclude" in fields else UNSET,
+        )
+    except SearchSettingsError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=exc.message) from exc
+    return _settings_to_read(settings_row)
