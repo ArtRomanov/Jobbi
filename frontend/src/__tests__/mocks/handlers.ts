@@ -618,4 +618,9 @@ export const handlers = [
   http.get(`${BASE_URL}/api/v1/vacancies/new-count`, () => {
     return HttpResponse.json({ count: 0 });
   }),
+
+  // State changes: new → seen, new|seen → dismissed, dismissed → seen
+  http.post(`${BASE_URL}/api/v1/vacancies/:id/seen`, () => new HttpResponse(null, { status: 204 })),
+  http.post(`${BASE_URL}/api/v1/vacancies/:id/dismiss`, () => new HttpResponse(null, { status: 204 })),
+  http.post(`${BASE_URL}/api/v1/vacancies/:id/restore`, () => new HttpResponse(null, { status: 204 })),
 ];

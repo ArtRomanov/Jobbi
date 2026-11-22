@@ -1,3 +1,4 @@
+from collections.abc import Awaitable, Callable
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -23,10 +24,15 @@ from app.schemas.vacancy import (
     VacancySourcesResponse,
 )
 from app.services.vacancy_service import (
+    VacancyNotFoundError,
+    VacancyNotInInboxError,
     count_new,
     discovery_status,
+    dismiss_vacancy,
     list_vacancies,
+    mark_seen,
     removed_sources,
+    restore_vacancy,
     source_key,
 )
 from app.services.vacancy_source_check import SourceCheckError
@@ -48,6 +54,10 @@ from app.services.vacancy_source_service import (
 )
 
 router = APIRouter(tags=["vacancies"])
+
+NOT_IN_INBOX_MESSAGE = "Vacancy is not in the Inbox."
+
+CardAction = Callable[[AsyncSession, str, str], Awaitable[None]]
 
 
 def _source_to_read(source: VacancySource) -> VacancySourceRead:
@@ -243,3 +253,75 @@ async def get_new_vacancy_count(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> NewVacancyCount:
     return NewVacancyCount(count=await count_new(db, current_user.id))
+
+
+async def _run_card_action(
+    action: CardAction, db: AsyncSession, user_id: str, vacancy_id: str
+) -> Response:
+    try:
+        await action(db, user_id, vacancy_id)
+    except VacancyNotFoundError as exc:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail="Vacancy not found."
+        ) from exc
+    except VacancyNotInInboxError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail=NOT_IN_INBOX_MESSAGE
+        ) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+_CARD_ACTION_RESPONSES: dict[int | str, dict[str, str]] = {
+    404: {"description": "No such card for this user, or still awaiting the AI"},
+    409: {"description": "The card has left the Inbox"},
+}
+
+
+@router.post(
+    "/vacancies/{vacancy_id}/seen",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    responses=_CARD_ACTION_RESPONSES,
+    summary="Mark a card as seen (Open source)",
+    description="`new → seen`; repeating on a seen card is a no-op. "
+    "409 for dismissed or added cards.",
+)
+async def post_vacancy_seen(
+    vacancy_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    return await _run_card_action(mark_seen, db, current_user.id, vacancy_id)
+
+
+@router.post(
+    "/vacancies/{vacancy_id}/dismiss",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    responses=_CARD_ACTION_RESPONSES,
+    summary="Dismiss a card",
+    description="`new|seen → dismissed`; repeating is a no-op. 409 for added cards.",
+)
+async def post_vacancy_dismiss(
+    vacancy_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    return await _run_card_action(dismiss_vacancy, db, current_user.id, vacancy_id)
+
+
+@router.post(
+    "/vacancies/{vacancy_id}/restore",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    responses=_CARD_ACTION_RESPONSES,
+    summary="Undo a dismiss: the card returns as seen",
+    description="`dismissed → seen`; a card already in the Inbox (new/seen) "
+    "is left unchanged. 409 for added cards.",
+)
+async def post_vacancy_restore(
+    vacancy_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> Response:
+    return await _run_card_action(restore_vacancy, db, current_user.id, vacancy_id)

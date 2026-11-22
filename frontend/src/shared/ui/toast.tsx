@@ -3,51 +3,101 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
-import { colors } from "./theme";
+import { ToastItem } from "./toast-item";
+import type { ToastContextValue, ToastData, ToastOptions, ToastType } from "./toast-types";
 
-type ToastType = "success" | "error";
-
-interface Toast {
-  id: number;
-  message: string;
-  type: ToastType;
-}
-
-interface ToastContextValue {
-  showToast: (message: string, type: ToastType) => void;
-}
+const DEFAULT_TOAST_DURATION_MS = 3000;
 
 const ToastContext = createContext<ToastContextValue | null>(null);
 
 let nextId = 0;
 
+interface ToastTimer {
+  /** null while paused */
+  timer: ReturnType<typeof setTimeout> | null;
+  endsAt: number;
+  remainingMs: number;
+}
+
+const REGION_STYLE = { display: "flex", flexDirection: "column", gap: "0.5rem" } as const;
+
+/**
+ * Renders toasts in live regions: errors in a `role="alert"` region, the rest
+ * in a polite one, with any action button ("Undo") or link inside the region.
+ * A toast's timer pauses while it is hovered or focused (WCAG 2.2.1), so a
+ * keyboard or screen-reader user can still reach its action.
+ */
 export function ToastProvider({ children }: { children: ReactNode }) {
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  const timersRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  const [toasts, setToasts] = useState<ToastData[]>([]);
+  const timersRef = useRef<Map<number, ToastTimer>>(new Map());
 
   useEffect(() => {
+    const timers = timersRef.current;
     return () => {
-      timersRef.current.forEach((timer) => clearTimeout(timer));
+      timers.forEach(({ timer }) => {
+        if (timer !== null) clearTimeout(timer);
+      });
     };
   }, []);
 
-  const showToast = useCallback((message: string, type: ToastType) => {
-    const id = nextId++;
-    setToasts((prev) => [...prev, { id, message, type }]);
-
-    const timer = setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-      timersRef.current.delete(id);
-    }, 3000);
-    timersRef.current.set(id, timer);
+  const dismissToast = useCallback((id: number): void => {
+    const entry = timersRef.current.get(id);
+    if (entry?.timer) clearTimeout(entry.timer);
+    timersRef.current.delete(id);
+    setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
+  const startTimer = useCallback(
+    (id: number, durationMs: number): void => {
+      timersRef.current.set(id, {
+        timer: setTimeout(() => dismissToast(id), durationMs),
+        endsAt: Date.now() + durationMs,
+        remainingMs: durationMs,
+      });
+    },
+    [dismissToast],
+  );
+
+  const pauseToast = useCallback((id: number): void => {
+    const entry = timersRef.current.get(id);
+    if (!entry || entry.timer === null) return;
+    clearTimeout(entry.timer);
+    entry.timer = null;
+    entry.remainingMs = Math.max(0, entry.endsAt - Date.now());
+  }, []);
+
+  const resumeToast = useCallback(
+    (id: number): void => {
+      const entry = timersRef.current.get(id);
+      if (!entry || entry.timer !== null) return;
+      startTimer(id, entry.remainingMs);
+    },
+    [startTimer],
+  );
+
+  const showToast = useCallback(
+    (message: string, type: ToastType, options: ToastOptions = {}): number => {
+      const id = nextId++;
+      const { action, link, durationMs = DEFAULT_TOAST_DURATION_MS } = options;
+      setToasts((prev) => [...prev, { id, message, type, action, link }]);
+      startTimer(id, durationMs);
+      return id;
+    },
+    [startTimer],
+  );
+
+  const errorToasts = toasts.filter((toast) => toast.type === "error");
+  const politeToasts = toasts.filter((toast) => toast.type !== "error");
+
+  const value = useMemo(() => ({ showToast, dismissToast }), [showToast, dismissToast]);
+
   return (
-    <ToastContext.Provider value={{ showToast }}>
+    <ToastContext.Provider value={value}>
       {children}
       <div
         style={{
@@ -55,28 +105,34 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           top: "1rem",
           right: "1rem",
           zIndex: 9999,
-          display: "flex",
-          flexDirection: "column",
-          gap: "0.5rem",
+          ...REGION_STYLE,
         }}
       >
-        {toasts.map((toast) => (
-          <div
-            key={toast.id}
-            style={{
-              padding: "0.75rem 1rem",
-              borderRadius: "0.375rem",
-              color: "#ffffff",
-              fontSize: "0.875rem",
-              backgroundColor:
-                toast.type === "success" ? colors.success : colors.errorBg,
-              boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
-              minWidth: "250px",
-            }}
-          >
-            {toast.message}
+        <div aria-live="polite" style={REGION_STYLE}>
+          {politeToasts.map((toast) => (
+            <ToastItem
+              key={toast.id}
+              toast={toast}
+              onClose={dismissToast}
+              onPause={pauseToast}
+              onResume={resumeToast}
+            />
+          ))}
+        </div>
+        {/* Only while errors show, so it never adds an empty "alert" to the page */}
+        {errorToasts.length > 0 ? (
+          <div role="alert" style={REGION_STYLE}>
+            {errorToasts.map((toast) => (
+              <ToastItem
+                key={toast.id}
+                toast={toast}
+                onClose={dismissToast}
+                onPause={pauseToast}
+                onResume={resumeToast}
+              />
+            ))}
           </div>
-        ))}
+        ) : null}
       </div>
     </ToastContext.Provider>
   );

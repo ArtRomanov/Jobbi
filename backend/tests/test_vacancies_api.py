@@ -438,3 +438,148 @@ async def test_source_delete_of_other_user_keeps_references(
     assert resp.status_code == 404
     db_session.expire_all()
     assert (await db_session.get(Vacancy, card_id)).source_id == source_id
+
+
+async def _act(
+    client: httpx.AsyncClient, token: str, card_id: str, action: str
+) -> httpx.Response:
+    return await client.post(f"{URL}/{card_id}/{action}", headers=_auth(token))
+
+
+async def _state(db: AsyncSession, card_id: str) -> str:
+    db.expire_all()
+    return (await db.get(Vacancy, card_id)).state
+
+
+async def _new_count(client: httpx.AsyncClient, token: str) -> int:
+    resp = await client.get(f"{URL}/new-count", headers=_auth(token))
+    return resp.json()["count"]
+
+
+class TestCardActions:
+    @pytest.mark.parametrize(
+        ("action", "before", "after"),
+        [
+            ("seen", "new", "seen"),
+            ("seen", "seen", "seen"),
+            ("dismiss", "new", "dismissed"),
+            ("dismiss", "seen", "dismissed"),
+            ("dismiss", "dismissed", "dismissed"),
+            ("restore", "dismissed", "seen"),
+            ("restore", "new", "new"),
+            ("restore", "seen", "seen"),
+        ],
+    )
+    async def test_transition_or_idempotent_noop(
+        self, client, token, user_id, db_session, action, before, after
+    ) -> None:
+        card = await add_card(db_session, user_id, "c", state=before)
+
+        resp = await _act(client, token, card.id, action)
+
+        assert resp.status_code == 204
+        assert resp.content == b""
+        assert await _state(db_session, card.id) == after
+
+    @pytest.mark.parametrize(
+        ("action", "state"),
+        [
+            ("seen", "dismissed"),
+            ("seen", "added"),
+            ("dismiss", "added"),
+            ("restore", "added"),
+        ],
+    )
+    async def test_card_out_of_inbox_409(
+        self, client, token, user_id, db_session, action, state
+    ) -> None:
+        card = await add_card(db_session, user_id, "c", state=state)
+
+        resp = await _act(client, token, card.id, action)
+
+        assert resp.status_code == 409
+        assert resp.json() == {"detail": "Vacancy is not in the Inbox."}
+        assert await _state(db_session, card.id) == state
+
+    @pytest.mark.parametrize("action", ["seen", "dismiss", "restore"])
+    async def test_pending_or_missing_404(
+        self, client, token, user_id, db_session, action
+    ) -> None:
+        card = await add_card(db_session, user_id, "p", state="pending")
+
+        pending = await _act(client, token, card.id, action)
+        missing = await _act(client, token, "no-such-id", action)
+
+        for resp in (pending, missing):
+            assert resp.status_code == 404
+            assert resp.json() == {"detail": "Vacancy not found."}
+        assert await _state(db_session, card.id) == "pending"
+
+    @pytest.mark.parametrize(
+        ("action", "state"),
+        [("seen", "new"), ("dismiss", "new"), ("restore", "dismissed")],
+    )
+    async def test_other_users_card_404_and_unchanged(
+        self, client, token, other_registered_user, db_session, action, state
+    ) -> None:
+        other_id = other_registered_user["user"]["id"]
+        card = await add_card(db_session, other_id, "theirs", state=state)
+
+        resp = await _act(client, token, card.id, action)
+
+        assert resp.status_code == 404
+        assert await _state(db_session, card.id) == state
+
+    @pytest.mark.parametrize("action", ["seen", "dismiss", "restore"])
+    async def test_requires_auth(self, client, user_id, db_session, action) -> None:
+        card = await add_card(db_session, user_id, "c")
+        resp = await client.post(f"{URL}/{card.id}/{action}")
+        assert resp.status_code == 401
+        assert await _state(db_session, card.id) == "new"
+
+    async def test_seen_drops_new_count_and_keeps_card_listed(
+        self, client, token, user_id, db_session
+    ) -> None:
+        card = await add_card(db_session, user_id, "a", hours=1)
+        await add_card(db_session, user_id, "b")
+        assert await _new_count(client, token) == 2
+
+        assert (await _act(client, token, card.id, "seen")).status_code == 204
+
+        assert await _new_count(client, token) == 1
+        assert await list_keys(client, token, state="seen") == ["a"]
+        assert await list_keys(client, token, state="new") == ["b"]
+
+    async def test_dismiss_then_undo_returns_card_as_seen(
+        self, client, token, user_id, db_session
+    ) -> None:
+        card = await add_card(db_session, user_id, "a", hours=1)
+        await add_card(db_session, user_id, "b")
+
+        assert (await _act(client, token, card.id, "dismiss")).status_code == 204
+
+        assert await list_keys(client, token) == ["b"]
+        assert await _new_count(client, token) == 1
+
+        assert (await _act(client, token, card.id, "restore")).status_code == 204
+
+        # Undo brings it back as seen, so the badge does not rise again.
+        assert await list_keys(client, token) == ["a", "b"]
+        assert await list_keys(client, token, state="seen") == ["a"]
+        assert await _new_count(client, token) == 1
+
+    async def test_dismissed_card_hides_its_removed_source(
+        self, client, token, user_id, db_session
+    ) -> None:
+        card = await add_card(db_session, user_id, "a", labels=("@gone",))
+        removed = [{"key": "telegram:gone", "label": "@gone"}]
+
+        async def removed_sources() -> list[dict]:
+            resp = await client.get(SOURCES_URL, headers=_auth(token))
+            return resp.json()["removed_sources"]
+
+        assert await removed_sources() == removed
+        await _act(client, token, card.id, "dismiss")
+        assert await removed_sources() == []
+        await _act(client, token, card.id, "restore")
+        assert await removed_sources() == removed

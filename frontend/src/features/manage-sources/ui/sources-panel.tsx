@@ -3,12 +3,15 @@ import { Button, SectionHeader, colors } from "@/shared/ui";
 import { LOAD_ERROR_MESSAGE, NO_DESCRIPTION_HINT } from "../lib/constants";
 import { pickFocusAfterRemove } from "../lib/helpers";
 import { useManageSources } from "../model/use-manage-sources";
+import type { SourcesChangeHandler } from "../model/types";
 import { AddSourceForm } from "./add-source-form";
 import { SearchSettingsForm } from "./search-settings-form";
 import { SourceList } from "./source-list";
 
 interface SourcesPanelProps {
   onScanFinished?: () => void;
+  /** Live and removed sources, whenever either changes (feeds the Inbox source filter). */
+  onSourcesChange?: SourcesChangeHandler;
 }
 
 /**
@@ -16,7 +19,7 @@ interface SourcesPanelProps {
  * edit the search description + exclude words. `onScanFinished` runs when a
  * source's scan ends (the page refreshes its vacancy list).
  */
-export function SourcesPanel({ onScanFinished }: SourcesPanelProps) {
+export function SourcesPanel({ onScanFinished, onSourcesChange }: SourcesPanelProps) {
   const headingId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const removeButtonsRef = useRef(new Map<string, HTMLButtonElement>());
@@ -34,7 +37,7 @@ export function SourcesPanel({ onScanFinished }: SourcesPanelProps) {
     addSource,
     removeSource,
     retryLoad,
-  } = useManageSources(onScanFinished);
+  } = useManageSources(onScanFinished, onSourcesChange);
 
   const registerRemoveButton = useCallback(
     (id: string, element: HTMLButtonElement | null): void => {

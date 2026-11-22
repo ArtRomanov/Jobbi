@@ -7,10 +7,14 @@ import {
   getVacancySources,
 } from "@/entities/vacancy-source";
 import { notifyVacanciesChanged } from "@/entities/vacancy";
-import type { VacancySearchSettings, VacancySource } from "@/entities/vacancy-source";
+import type {
+  RemovedVacancySource,
+  VacancySearchSettings,
+  VacancySource,
+} from "@/entities/vacancy-source";
 import { SCAN_POLL_INTERVAL_MS } from "../lib/constants";
 import { hasScanFinished, mergePolledSources } from "../lib/helpers";
-import type { SourcesLoadState, UseManageSourcesResult } from "./types";
+import type { SourcesChangeHandler, SourcesLoadState, UseManageSourcesResult } from "./types";
 
 /**
  * Owns the Sources panel: initial load (with retry) of sources and the saved
@@ -24,10 +28,18 @@ import type { SourcesLoadState, UseManageSourcesResult } from "./types";
  * While any source is scanning, the list is re-fetched every 5 s (status
  * fields only). When a scan ends, `onScanFinished` runs and
  * `notifyVacanciesChanged()` fires so new cards and the badge appear.
+ *
+ * `onSourcesChange` receives the live sources and the removed sources that
+ * cards still reference whenever either changes (the Inbox source filter).
+ * After a removal, the removed list is re-fetched in the background.
  */
-export function useManageSources(onScanFinished?: () => void): UseManageSourcesResult {
+export function useManageSources(
+  onScanFinished?: () => void,
+  onSourcesChange?: SourcesChangeHandler,
+): UseManageSourcesResult {
   const { showToast } = useToast();
   const [sources, setSources] = useState<VacancySource[]>([]);
+  const [removedSources, setRemovedSources] = useState<readonly RemovedVacancySource[]>([]);
   const [settings, setSettings] = useState<VacancySearchSettings | null>(null);
   const [loadState, setLoadState] = useState<SourcesLoadState>("loading");
   const [reloadKey, setReloadKey] = useState(0);
@@ -42,10 +54,24 @@ export function useManageSources(onScanFinished?: () => void): UseManageSourcesR
   // Latest values for the polling loop, so it does not restart on every render
   const sourcesRef = useRef(sources);
   const onScanFinishedRef = useRef(onScanFinished);
+  const onSourcesChangeRef = useRef(onSourcesChange);
   useEffect(() => {
     sourcesRef.current = sources;
     onScanFinishedRef.current = onScanFinished;
+    onSourcesChangeRef.current = onSourcesChange;
   });
+  // Latest removed-list refetch wins; bumped on unmount to drop late responses
+  const removedRequestRef = useRef(0);
+  useEffect(
+    () => () => {
+      removedRequestRef.current += 1;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    onSourcesChangeRef.current?.(sources, removedSources);
+  }, [sources, removedSources]);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,6 +81,7 @@ export function useManageSources(onScanFinished?: () => void): UseManageSourcesR
         const data = await getVacancySources();
         if (cancelled) return;
         setSources(data.sources);
+        setRemovedSources(data.removed_sources);
         setSettings(data.settings);
         setLoadState("ready");
       } catch {
@@ -74,11 +101,17 @@ export function useManageSources(onScanFinished?: () => void): UseManageSourcesR
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     async function poll(): Promise<void> {
+      // A poll is a removed-list read too: newest request wins over an older refresh
+      removedRequestRef.current += 1;
+      const removedRequestId = removedRequestRef.current;
       try {
         const data = await getVacancySources();
         if (cancelled) return;
         const isFinished = hasScanFinished(sourcesRef.current, data.sources);
         setSources((current) => mergePolledSources(current, data.sources));
+        if (removedRequestId === removedRequestRef.current) {
+          setRemovedSources(data.removed_sources);
+        }
         if (isFinished) {
           onScanFinishedRef.current?.();
           notifyVacanciesChanged();
@@ -121,12 +154,25 @@ export function useManageSources(onScanFinished?: () => void): UseManageSourcesR
     }
   }, [input, isAddDisabled]);
 
+  const refreshRemovedSources = useCallback(async (): Promise<void> => {
+    removedRequestRef.current += 1;
+    const requestId = removedRequestRef.current;
+    try {
+      const data = await getVacancySources();
+      if (requestId === removedRequestRef.current) setRemovedSources(data.removed_sources);
+    } catch {
+      // The removed list only feeds the Inbox filter; the next load fixes it
+    }
+  }, []);
+
   const removeSource = useCallback(
     async (id: string): Promise<boolean> => {
       setRemovingIds((prev) => new Set(prev).add(id));
       try {
         await deleteVacancySource(id);
         setSources((prev) => prev.filter((source) => source.id !== id));
+        // Its cards now belong to a removed source; the server knows which remain
+        void refreshRemovedSources();
         return true;
       } catch (error: unknown) {
         handleApiError(error, showToast);
@@ -139,7 +185,7 @@ export function useManageSources(onScanFinished?: () => void): UseManageSourcesR
         });
       }
     },
-    [showToast],
+    [showToast, refreshRemovedSources],
   );
 
   const retryLoad = useCallback((): void => {

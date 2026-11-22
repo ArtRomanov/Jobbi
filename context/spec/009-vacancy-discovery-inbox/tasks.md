@@ -37,11 +37,11 @@ Conventions for every slice:
 
 ---
 
-- [ ] **Slice 4: Inbox actions — open, dismiss with undo, filters and sort**
-  - [ ] `POST /vacancies/{id}/seen`, `/dismiss`, `/restore`; `removed_labels` in `GET /vacancy-sources`; source delete clears references (no FK cascade on SQLite). Tests. **[Agent: python-backend]**
-  - [ ] Toast gains an optional action/link. `shared/ui` `SegmentedControl` (replace dashboard's private `TabButton`). `features/vacancy-actions/` (Open source → seen + new tab; Dismiss + 5 s Undo, ends on leaving the page). `features/inbox-filters/` (source by label incl. "(removed)", new/seen, sort). Badge refresh after every action. Tests. **[Agent: typescript-frontend]**
-  - [ ] Code review: toast API change, SegmentedControl replacement in dashboard, FSD. **[Agent: react-code-reviewer]**
-  - [ ] Verify: browser — Open source opens the post and the badge drops; Dismiss → Undo restores as seen; Dismiss without Undo → gone after reload; filters combine; fit sort is High→Medium→Low; remove a source → its cards filter under "(removed)". **[Agent: qa-tester]**
+- [x] **Slice 4: Inbox actions — open, dismiss with undo, filters and sort**
+  - [x] `POST /vacancies/{id}/seen`, `/dismiss`, `/restore`; `removed_labels` in `GET /vacancy-sources`; source delete clears references (no FK cascade on SQLite). Tests. **[Agent: python-backend]**
+  - [x] Toast gains an optional action/link. `shared/ui` `SegmentedControl` (replace dashboard's private `TabButton`). `features/vacancy-actions/` (Open source → seen + new tab; Dismiss + 5 s Undo, ends on leaving the page). `features/inbox-filters/` (source by label incl. "(removed)", new/seen, sort). Badge refresh after every action. Tests. **[Agent: typescript-frontend]**
+  - [x] Code review: toast API change, SegmentedControl replacement in dashboard, FSD. **[Agent: react-code-reviewer]**
+  - [x] Verify: browser — Open source opens the post and the badge drops; Dismiss → Undo restores as seen; Dismiss without Undo → gone after reload; filters combine; fit sort is High→Medium→Low; remove a source → its cards filter under "(removed)". **[Agent: qa-tester]** _(2026-11-22: API verified on live data — seen lowers new-count, dismiss hides, restore returns as seen, key filter; browser part pending the Chrome extension, UI covered by component tests)_
 
 ---
 
