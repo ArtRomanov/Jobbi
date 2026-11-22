@@ -1,5 +1,6 @@
 """Inbox queries and card actions: the card list, the new-count badge, the
-discovery status, and the seen / dismiss / restore transitions."""
+discovery status, the seen / dismiss / restore transitions, and "Add to
+tracker"."""
 
 from collections import defaultdict
 from dataclasses import dataclass
@@ -9,29 +10,42 @@ from typing import Literal
 from sqlalchemy import case, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.constants import ApplicationStatus
 from app.core.pagination import paginate
 from app.core.timezones import local_day_bounds, zone_or_utc
+from app.discovery.normalize import normalize_url
+from app.models.application import Application
+from app.models.cv import Cv
 from app.models.user import User
 from app.models.vacancy import Vacancy, VacancyCardSource
 from app.models.vacancy_search_settings import VacancySearchSettings
 from app.models.vacancy_source import VacancySource
+from app.schemas.application import ApplicationCreate
+from app.services import application_service, cv_service
 
 __all__ = [
     "AI_UNAVAILABLE_AFTER",
     "VISIBLE_STATES",
+    "AddedToTrackerData",
     "CardSourceData",
     "DiscoveryStatusData",
+    "DuplicateApplicationError",
+    "ExistingApplicationData",
+    "VacancyAlreadyAddedError",
     "VacancyNotFoundError",
     "VacancyNotInInboxError",
+    "add_to_tracker",
     "count_new",
     "discovery_status",
     "dismiss_vacancy",
+    "existing_applications",
     "list_vacancies",
     "mark_seen",
     "parse_source_key",
     "removed_sources",
     "restore_vacancy",
     "source_key",
+    "tailored_cv_name",
 ]
 
 VISIBLE_STATES = ("new", "seen")
@@ -59,6 +73,19 @@ class DiscoveryStatusData:
     waiting_count: int
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ExistingApplicationData:
+    id: str
+    company_name: str
+    role_title: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AddedToTrackerData:
+    application_id: str
+    cv_id: str | None
+
+
 class VacancyNotFoundError(Exception):
     """No such card for this user, or it is still `pending` (not in the Inbox)."""
 
@@ -66,6 +93,18 @@ class VacancyNotFoundError(Exception):
 class VacancyNotInInboxError(Exception):
     """The card has left the Inbox for good (`added`, or `dismissed` where the
     action needs a visible card)."""
+
+
+class VacancyAlreadyAddedError(VacancyNotInInboxError):
+    """The card is already in the tracker (`added`)."""
+
+
+class DuplicateApplicationError(Exception):
+    """The tracker already has an application with the card's job link."""
+
+    def __init__(self, application: ExistingApplicationData) -> None:
+        super().__init__(application.id)
+        self.application = application
 
 
 def _now_naive() -> datetime:
@@ -300,3 +339,172 @@ async def restore_vacancy(db: AsyncSession, user_id: str, vacancy_id: str) -> No
         to_state="seen",
         noop_states=VISIBLE_STATES,
     )
+
+
+def _card_link(vacancy: Vacancy) -> str:
+    """The job link a card is tracked by: its job link, else the post URL."""
+    return vacancy.job_link or vacancy.url
+
+
+async def _application_index(
+    db: AsyncSession, user_id: str
+) -> dict[str, ExistingApplicationData]:
+    """The user's applications by normalized `job_url`.
+
+    Normalized in Python (no stored column): a user has few applications.
+    When several share a link, the most recently updated one wins.
+    """
+    rows = await db.execute(
+        select(
+            Application.id,
+            Application.company_name,
+            Application.role_title,
+            Application.job_url,
+        )
+        .where(Application.user_id == user_id, Application.job_url.is_not(None))
+        .order_by(Application.updated_at.desc(), Application.id)
+    )
+    index: dict[str, ExistingApplicationData] = {}
+    for app_id, company_name, role_title, job_url in rows:
+        if not job_url.strip():
+            continue
+        index.setdefault(
+            normalize_url(job_url),
+            ExistingApplicationData(
+                id=app_id, company_name=company_name, role_title=role_title
+            ),
+        )
+    return index
+
+
+async def existing_applications(
+    db: AsyncSession, user_id: str, cards: list[Vacancy]
+) -> dict[str, ExistingApplicationData]:
+    """For each card (by id), the user's application with the same job link,
+    compared after normalization (trailing slash, `utm_*`, fragment, host
+    case). Cards without a match are absent."""
+    if not cards:
+        return {}
+    index = await _application_index(db, user_id)
+    if not index:
+        return {}
+    found: dict[str, ExistingApplicationData] = {}
+    for card in cards:
+        match = index.get(normalize_url(_card_link(card)))
+        if match is not None:
+            found[card.id] = match
+    return found
+
+
+_CV_NAME_MAX = Cv.__table__.c.name.type.length or 255
+
+
+def tailored_cv_name(cv_name: str, company_name: str, role_title: str) -> str:
+    """The copy name "<CV name> — <Company> <Role>", cut to the column length."""
+    return f"{cv_name} — {company_name} {role_title}"[:_CV_NAME_MAX]
+
+
+async def add_to_tracker(
+    db: AsyncSession,
+    user_id: str,
+    vacancy_id: str,
+    *,
+    company_name: str,
+    role_title: str,
+    notes: str | None,
+    base_cv_id: str | None,
+    allow_duplicate: bool,
+) -> AddedToTrackerData:
+    """Turn an Inbox card into an application, optionally with a copy of a
+    base CV linked to it. One transaction, committed once: on any error
+    nothing is persisted and the card stays in the Inbox.
+
+    1. Conditional UPDATE `new|seen -> added` (race guard: of two concurrent
+       adds exactly one changes the row; SELECT-then-UPDATE would let both).
+    2. Duplicate check by normalized job link, unless `allow_duplicate`.
+    3. Application in status researching; `job_url` = job link or post URL;
+       notes = the given notes, else the card text.
+    4. With `base_cv_id`: a copy named "<CV> — <Company> <Role>", linked.
+    5. Card linked to the application; commit.
+
+    Raises VacancyNotFoundError (missing, pending, another user's),
+    VacancyAlreadyAddedError, VacancyNotInInboxError (dismissed),
+    DuplicateApplicationError, cv_service.CvNotFoundError.
+    """
+    try:
+        result = await db.execute(
+            update(Vacancy)
+            .where(
+                Vacancy.id == vacancy_id,
+                Vacancy.user_id == user_id,
+                Vacancy.state.in_(VISIBLE_STATES),
+            )
+            .values(state="added")
+            .execution_options(synchronize_session=False)
+        )
+        if not result.rowcount:
+            await db.rollback()
+            current = await db.scalar(
+                select(Vacancy.state).where(
+                    Vacancy.id == vacancy_id, Vacancy.user_id == user_id
+                )
+            )
+            if current is None or current == "pending":
+                raise VacancyNotFoundError
+            if current == "added":
+                raise VacancyAlreadyAddedError
+            raise VacancyNotInInboxError
+
+        row = (
+            await db.execute(
+                select(Vacancy.url, Vacancy.job_link, Vacancy.text).where(
+                    Vacancy.id == vacancy_id
+                )
+            )
+        ).one()
+        job_url = row.job_link or row.url
+
+        if not allow_duplicate:
+            index = await _application_index(db, user_id)
+            existing = index.get(normalize_url(job_url))
+            if existing is not None:
+                raise DuplicateApplicationError(existing)
+
+        application = await application_service.build_application(
+            db,
+            user_id,
+            ApplicationCreate(
+                company_name=company_name,
+                role_title=role_title,
+                job_url=job_url,
+                notes=notes if notes is not None else row.text,
+                status=ApplicationStatus.RESEARCHING.value,
+            ),
+        )
+
+        cv_id: str | None = None
+        if base_cv_id is not None:
+            base = await cv_service.get_cv(db, user_id, base_cv_id)
+            if base is None:
+                raise cv_service.CvNotFoundError(base_cv_id)
+            copy = await cv_service.build_cv_copy(
+                db,
+                user_id,
+                base_cv_id,
+                tailored_cv_name(base.name, company_name, role_title),
+            )
+            application.cv_id = copy.id
+            cv_id = copy.id
+
+        await db.execute(
+            update(Vacancy)
+            .where(Vacancy.id == vacancy_id)
+            .values(application_id=application.id)
+            .execution_options(synchronize_session=False)
+        )
+        await db.commit()
+    except Exception:
+        # Every failure path, expected or not, leaves nothing behind.
+        await db.rollback()
+        raise
+    return AddedToTrackerData(application_id=application.id, cv_id=cv_id)

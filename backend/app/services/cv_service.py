@@ -104,16 +104,24 @@ async def delete_cv(db: AsyncSession, user_id: str, cv_id: str) -> bool:
     return True
 
 
-async def duplicate_cv(
-    db: AsyncSession, user_id: str, cv_id: str, new_name: str | None = None
-) -> Cv | None:
+class CvNotFoundError(Exception):
+    """No CV with this id belongs to the user."""
+
+
+async def build_cv_copy(db: AsyncSession, user_id: str, cv_id: str, name: str) -> Cv:
+    """Add a copy of the user's CV `cv_id` under `name`, then flush.
+
+    Does not commit: the caller owns the transaction.
+
+    Raises CvNotFoundError if the CV does not exist or is another user's.
+    """
     original = await get_cv(db, user_id, cv_id)
     if original is None:
-        return None
+        raise CvNotFoundError(cv_id)
 
     copy = Cv(
         user_id=user_id,
-        name=new_name or f"{original.name} (copy)",
+        name=name,
         personal_info=original.personal_info,
         summary=original.summary,
         work_experience=original.work_experience,
@@ -122,6 +130,20 @@ async def duplicate_cv(
         languages=original.languages,
     )
     db.add(copy)
+    await db.flush()
+    return copy
+
+
+async def duplicate_cv(
+    db: AsyncSession, user_id: str, cv_id: str, new_name: str | None = None
+) -> Cv | None:
+    original = await get_cv(db, user_id, cv_id)
+    if original is None:
+        return None
+
+    copy = await build_cv_copy(
+        db, user_id, cv_id, new_name or f"{original.name} (copy)"
+    )
     await db.commit()
     await db.refresh(copy)
     return copy

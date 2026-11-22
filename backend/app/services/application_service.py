@@ -1,9 +1,10 @@
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.pagination import paginate
 from app.models.application import Application, ApplicationStatusHistory
+from app.models.vacancy import Vacancy
 from app.schemas.application import ApplicationCreate, ApplicationUpdate
 
 
@@ -37,11 +38,16 @@ async def list_applications(
     return await paginate(db, query, page, per_page)
 
 
-async def create_application(
+async def build_application(
     db: AsyncSession,
     user_id: str,
     data: ApplicationCreate,
 ) -> Application:
+    """Add an application and its first status-history row, then flush.
+
+    Does not commit: the caller owns the transaction (see `create_application`
+    and the Inbox "Add to tracker" flow, which commit once for several rows).
+    """
     application = Application(
         user_id=user_id,
         **data.model_dump(),
@@ -50,12 +56,22 @@ async def create_application(
     await db.flush()
 
     # Auto-create initial status history entry
-    history_entry = ApplicationStatusHistory(
-        application_id=application.id,
-        status=application.status,
+    db.add(
+        ApplicationStatusHistory(
+            application_id=application.id,
+            status=application.status,
+        )
     )
-    db.add(history_entry)
+    await db.flush()
+    return application
 
+
+async def create_application(
+    db: AsyncSession,
+    user_id: str,
+    data: ApplicationCreate,
+) -> Application:
+    application = await build_application(db, user_id, data)
     await db.commit()
 
     # Reload with status_history
@@ -125,6 +141,12 @@ async def delete_application(
     if application is None:
         return False
 
+    # No FK enforcement on SQLite: clear the Inbox card's link explicitly.
+    await db.execute(
+        update(Vacancy)
+        .where(Vacancy.application_id == application.id)
+        .values(application_id=None)
+    )
     await db.delete(application)
     await db.commit()
     return True

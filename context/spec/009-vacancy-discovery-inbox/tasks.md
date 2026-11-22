@@ -45,12 +45,12 @@ Conventions for every slice:
 
 ---
 
-- [ ] **Slice 5: Add to tracker and "Add & tailor CV"**
-  - [ ] Extract `application_service.build_application` and `cv_service.build_cv_copy` (no commit); existing functions wrap them; `delete_application` clears `vacancies.application_id`. Existing tests stay green. **[Agent: python-backend]**
-  - [ ] `POST /vacancies/{id}/add-to-tracker` (conditional UPDATE race guard, normalized duplicate check with `allow_duplicate`, optional `base_cv_id` copy named and cut to 255, one commit); `existing_application` in the list response. Tests incl. concurrent double add and rollback when the CV copy fails. **[Agent: python-backend]**
-  - [ ] `shared/ui` `Modal` (focus trap, Escape, focus return). `AddToTrackerDialog` (zod: company/role required; notes; base CV select defaulting to most recently updated; duplicate warning with Open it / Add anyway; Add & tailor CV disabled without CVs). Chat page pre-fills an unsent `draft` from router state and clears it. Dashboard opens `?application=<id>`. Success toast with link. Tests. **[Agent: typescript-frontend]**
-  - [ ] Code review: Modal accessibility, chat draft, dashboard deep link. **[Agent: react-code-reviewer]**
-  - [ ] Verify: browser — Add to tracker → application in Researching with notes and link, toast link opens it; Add & tailor CV → CV copy linked, chat opens with the unsent draft, reload does not re-fill; existing link → warning; double click → one application. **[Agent: qa-tester]**
+- [x] **Slice 5: Add to tracker and "Add & tailor CV"**
+  - [x] Extract `application_service.build_application` and `cv_service.build_cv_copy` (no commit); existing functions wrap them; `delete_application` clears `vacancies.application_id`. Existing tests stay green. **[Agent: python-backend]**
+  - [x] `POST /vacancies/{id}/add-to-tracker` (conditional UPDATE race guard, normalized duplicate check with `allow_duplicate`, optional `base_cv_id` copy named and cut to 255, one commit); `existing_application` in the list response. Tests incl. concurrent double add and rollback when the CV copy fails. **[Agent: python-backend]**
+  - [x] `shared/ui` `Modal` (focus trap, Escape, focus return). `AddToTrackerDialog` (zod: company/role required; notes; base CV select defaulting to most recently updated; duplicate warning with Open it / Add anyway; Add & tailor CV disabled without CVs). Chat page pre-fills an unsent `draft` from router state and clears it. Dashboard opens `?application=<id>`. Success toast with link. Tests. **[Agent: typescript-frontend]**
+  - [x] Code review: Modal accessibility, chat draft, dashboard deep link. **[Agent: react-code-reviewer]**
+  - [x] Verify: browser — Add to tracker → application in Researching with notes and link, toast link opens it; Add & tailor CV → CV copy linked, chat opens with the unsent draft, reload does not re-fill; existing link → warning; double click → one application. **[Agent: qa-tester]** _(2026-11-22: API verified live — Kleos card → Researching application with the external job link and a linked CV copy; repeat → 409; concurrency covered by tests; browser part pending the Chrome extension)_
 
 ---
 

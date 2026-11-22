@@ -5,16 +5,22 @@ import { colors, fonts } from "@/shared/ui";
 interface ChatInputProps {
   onSend: (content: string) => void;
   disabled?: boolean;
+  /** Pre-fills the input on mount; never sent until the user presses Send. Later changes are ignored. */
+  draft?: string;
 }
 
-export function ChatInput({ onSend, disabled = false }: ChatInputProps) {
-  const [value, setValue] = useState("");
+export function ChatInput({ onSend, disabled = false, draft }: ChatInputProps) {
+  const [value, setValue] = useState(() => draft ?? "");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    if (!disabled) {
-      textareaRef.current?.focus();
-    }
+    if (disabled) return;
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.focus();
+    // Caret after any pre-filled draft, so the user can keep typing
+    const end = textarea.value.length;
+    textarea.setSelectionRange(end, end);
   }, [disabled]);
 
   const handleSend = useCallback(() => {

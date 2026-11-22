@@ -1,0 +1,32 @@
+import { useEffect, useMemo, useState } from "react";
+import { listCvs } from "@/entities/cv";
+import type { Cv } from "@/entities/cv";
+import { pickMostRecentCvId } from "../lib/helpers";
+import type { BaseCvsResult, BaseCvsStatus } from "./types";
+
+const NO_CVS: readonly Cv[] = [];
+
+/** The user's CVs for the "Base CV" select, loaded once per dialog. */
+export function useBaseCvs(): BaseCvsResult {
+  const [cvs, setCvs] = useState<readonly Cv[]>(NO_CVS);
+  const [status, setStatus] = useState<BaseCvsStatus>("loading");
+
+  useEffect(() => {
+    let isCancelled = false;
+    listCvs()
+      .then((data) => {
+        if (isCancelled) return;
+        setCvs(data);
+        setStatus("ready");
+      })
+      .catch(() => {
+        if (!isCancelled) setStatus("error");
+      });
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  const defaultCvId = useMemo(() => pickMostRecentCvId(cvs), [cvs]);
+  return { cvs, status, defaultCvId };
+}

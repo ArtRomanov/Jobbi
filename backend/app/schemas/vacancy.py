@@ -1,6 +1,6 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from app.schemas.telegram import UtcDatetime
 
@@ -68,6 +68,14 @@ VacancyListState = Literal["new", "seen", "all"]
 VacancySort = Literal["date", "fit"]
 
 
+class ExistingApplicationRef(BaseModel):
+    """An application already tracking the same job link."""
+
+    id: str
+    company_name: str
+    role_title: str
+
+
 class VacancyRead(BaseModel):
     id: str
     title: str | None
@@ -82,7 +90,41 @@ class VacancyRead(BaseModel):
     fit_reason: str | None
     # Sources the card came from (several for a merged repost).
     sources: list[SourceRef]
+    # The user's application with the same normalized job link, if any.
+    existing_application: ExistingApplicationRef | None = None
 
 
 class NewVacancyCount(BaseModel):
     count: int
+
+
+RequiredName = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)
+]
+
+
+class AddToTrackerRequest(BaseModel):
+    company_name: RequiredName
+    role_title: RequiredName
+    # Left out (or null): the card text becomes the notes.
+    notes: str | None = None
+    # "Add & tailor CV": copy this CV, name the copy and link it.
+    base_cv_id: str | None = None
+    # "Add anyway": skip the duplicate check.
+    allow_duplicate: bool = False
+
+
+class AddToTrackerResponse(BaseModel):
+    application_id: str
+    cv_id: str | None
+
+
+class DuplicateApplicationDetail(BaseModel):
+    message: Literal["You already track this"]
+    application: ExistingApplicationRef
+
+
+class DuplicateApplicationConflict(BaseModel):
+    """409 body when the job link is already tracked (structured `detail`)."""
+
+    detail: DuplicateApplicationDetail
