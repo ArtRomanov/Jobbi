@@ -1,11 +1,12 @@
-"""Inbox queries: the card list, the new-count badge and the discovery status."""
+"""Inbox queries and card actions: the card list, the new-count badge, the
+discovery status, and the seen / dismiss / restore transitions."""
 
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-from sqlalchemy import case, exists, func, select
+from sqlalchemy import case, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.pagination import paginate
@@ -20,11 +21,16 @@ __all__ = [
     "VISIBLE_STATES",
     "CardSourceData",
     "DiscoveryStatusData",
+    "VacancyNotFoundError",
+    "VacancyNotInInboxError",
     "count_new",
     "discovery_status",
+    "dismiss_vacancy",
     "list_vacancies",
+    "mark_seen",
     "parse_source_key",
     "removed_sources",
+    "restore_vacancy",
     "source_key",
 ]
 
@@ -51,6 +57,15 @@ class DiscoveryStatusData:
     ai_unavailable: bool
     limit_reached: bool
     waiting_count: int
+
+
+class VacancyNotFoundError(Exception):
+    """No such card for this user, or it is still `pending` (not in the Inbox)."""
+
+
+class VacancyNotInInboxError(Exception):
+    """The card has left the Inbox for good (`added`, or `dismissed` where the
+    action needs a visible card)."""
 
 
 def _now_naive() -> datetime:
@@ -198,4 +213,90 @@ async def discovery_status(
         and now - failing_since > AI_UNAVAILABLE_AFTER,
         limit_reached=settings_row.limit_reached_on == local_date,
         waiting_count=waiting,
+    )
+
+
+async def _transition(
+    db: AsyncSession,
+    user_id: str,
+    vacancy_id: str,
+    *,
+    from_states: tuple[str, ...],
+    to_state: str,
+    noop_states: tuple[str, ...],
+) -> None:
+    """Move one of the user's cards `from_states -> to_state` atomically.
+
+    A conditional UPDATE (not SELECT-then-UPDATE), so two concurrent actions
+    cannot both pass the state check. When nothing changed, the current state
+    decides: `noop_states` succeed silently (idempotent repeat), a missing or
+    `pending` card raises VacancyNotFoundError, anything else
+    VacancyNotInInboxError.
+    """
+    result = await db.execute(
+        update(Vacancy)
+        .where(
+            Vacancy.id == vacancy_id,
+            Vacancy.user_id == user_id,
+            Vacancy.state.in_(from_states),
+        )
+        .values(state=to_state)
+    )
+    if result.rowcount:
+        await db.commit()
+        return
+    await db.rollback()
+    current = await db.scalar(
+        select(Vacancy.state).where(
+            Vacancy.id == vacancy_id, Vacancy.user_id == user_id
+        )
+    )
+    if current is None or current == "pending":
+        raise VacancyNotFoundError
+    if current not in noop_states:
+        raise VacancyNotInInboxError
+
+
+async def mark_seen(db: AsyncSession, user_id: str, vacancy_id: str) -> None:
+    """`new -> seen` ("Open source"). Already seen: no-op.
+
+    Raises VacancyNotFoundError, VacancyNotInInboxError (dismissed / added).
+    """
+    await _transition(
+        db,
+        user_id,
+        vacancy_id,
+        from_states=("new",),
+        to_state="seen",
+        noop_states=("seen",),
+    )
+
+
+async def dismiss_vacancy(db: AsyncSession, user_id: str, vacancy_id: str) -> None:
+    """`new|seen -> dismissed`. Already dismissed: no-op.
+
+    Raises VacancyNotFoundError, VacancyNotInInboxError (added).
+    """
+    await _transition(
+        db,
+        user_id,
+        vacancy_id,
+        from_states=VISIBLE_STATES,
+        to_state="dismissed",
+        noop_states=("dismissed",),
+    )
+
+
+async def restore_vacancy(db: AsyncSession, user_id: str, vacancy_id: str) -> None:
+    """`dismissed -> seen` (Undo). Already visible (new/seen): no-op.
+
+    Raises VacancyNotFoundError, VacancyNotInInboxError (added).
+    """
+    await _transition(
+        db,
+        user_id,
+        vacancy_id,
+        from_states=("dismissed",),
+        to_state="seen",
+        noop_states=VISIBLE_STATES,
     )
