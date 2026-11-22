@@ -37,6 +37,7 @@ from app.models.vacancy import Vacancy, VacancyCardSource
 from app.models.vacancy_search_settings import VacancySearchSettings
 from app.models.vacancy_seen_key import VacancySeenKey
 from app.models.vacancy_source import VacancySource
+from tests.discovery.board_stubs import GreenhouseBoard, LeverBoard
 from tests.discovery.fake_bot import FakeBot
 
 NOW = datetime(2026, 11, 22, 12, 0)
@@ -1289,10 +1290,40 @@ async def test_no_http_or_groq_call_while_a_transaction_is_open(
             http_violations.append(factory.open_transactions()) or httpx.Response(500)
         )
     )
+    # Board sources (Slice 6): list, job details and Lever pages are tracked too.
+    board = GreenhouseBoard(
+        on_request=lambda request: http_violations.append(factory.open_transactions())
+    )
+    board.mount(respx_mock)
+    board.add(1, "board news", NOW - timedelta(days=1))
+    board.add(2, "board old job", NOW - timedelta(days=30))
+    lever_board = LeverBoard(
+        on_request=lambda request: http_violations.append(factory.open_transactions())
+    )
+    lever_board.mount(respx_mock)
+    lever_board.add("a", "lever news", NOW - timedelta(days=1))
     user_id = await make_user(db, exclude=["spam"])
     await link_telegram(db, user_id)
     await make_source(db, user_id)
     await make_source(db, user_id, handle="second_channel", scanned=True)
+    async with db() as session:
+        session.add_all(
+            [
+                VacancySource(
+                    user_id=user_id,
+                    kind="greenhouse",
+                    handle=board.token,
+                    display_name=board.name,
+                ),
+                VacancySource(
+                    user_id=user_id,
+                    kind="lever",
+                    handle=lever_board.company,
+                    display_name="Acme Labs",
+                ),
+            ]
+        )
+        await session.commit()
     for n in range(1, 13):
         stub.add(n, "MATCH" if n % 3 else "spam MATCH")
 
@@ -1300,6 +1331,7 @@ async def test_no_http_or_groq_call_while_a_transaction_is_open(
     stub.add(20, "MATCH new")
     stub.add(21, "SKIP")
     stub.add(22, "GARBAGE")  # whole-batch format error → single-post retries
+    board.add(3, "board news new", NOW + timedelta(minutes=30))
     await check_all(
         factory,
         http,
@@ -1310,8 +1342,10 @@ async def test_no_http_or_groq_call_while_a_transaction_is_open(
         bot=bot,
     )
 
+    assert board.detail_requests == [1, 3]
+    assert lever_board.requests
     assert len(bot.sent) == 1 and bot.violations == 0
-    assert len(http_violations) >= 3 and set(http_violations) == {0}
+    assert len(http_violations) >= 8 and set(http_violations) == {0}
     assert len(ai.calls) >= 3 and ai.violations == 0
     # The checks are meaningful: sessions were opened and wrote data.
     assert len(factory.sessions) > 10

@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.vacancy_search_settings import VacancySearchSettings
 from app.models.vacancy_source import VacancySource
 from app.services import vacancy_source_check, vacancy_source_service
-from app.services.vacancy_source_parsing import INVALID_INPUT_MESSAGE
+from app.services.vacancy_source_parsing import (
+    BOARD_INVALID_INPUT_MESSAGE,
+    INVALID_INPUT_MESSAGE,
+)
 from tests.conftest import TestSessionLocal
 
 URL = "/api/v1/vacancy-sources"
@@ -339,22 +342,26 @@ async def test_total_timeout_budget(
 
 
 @pytest.mark.parametrize(
-    "raw",
+    ("raw", "message"),
     [
-        "https://evil.com/durov_jobs",
-        "t.me.evil.com/durov_jobs",
-        "javascript:alert(1)",
-        "@abc",
-        "https://boards.greenhouse.io/acme",
+        ("t.me.evil.com/durov_jobs", INVALID_INPUT_MESSAGE),
+        ("javascript:alert(1)", INVALID_INPUT_MESSAGE),
+        ("@abc", INVALID_INPUT_MESSAGE),
+        ("https://evil.com/durov_jobs", BOARD_INVALID_INPUT_MESSAGE),
+        ("https://jobs.lever.co.evil.com/acme", BOARD_INVALID_INPUT_MESSAGE),
     ],
 )
 async def test_invalid_input_makes_no_network_call(
-    client: httpx.AsyncClient, token: str, respx_mock: respx.MockRouter, raw: str
+    client: httpx.AsyncClient,
+    token: str,
+    respx_mock: respx.MockRouter,
+    raw: str,
+    message: str,
 ) -> None:
     resp = await client.post(URL, json={"input": raw}, headers=_auth(token))
 
     assert resp.status_code == 400
-    assert resp.json() == {"detail": INVALID_INPUT_MESSAGE}
+    assert resp.json() == {"detail": message}
     assert not respx_mock.calls
 
 

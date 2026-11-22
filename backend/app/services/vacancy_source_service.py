@@ -1,4 +1,4 @@
-"""Watched sources (Telegram channels, later job boards) for vacancy discovery.
+"""Watched sources (Telegram channels, Greenhouse / Lever boards) for discovery.
 
 Invariant: no network I/O inside a database transaction. `add_source` ends
 the read transaction before the live check and writes in a short one after.
@@ -14,7 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.vacancy import Vacancy, VacancyCardSource
 from app.models.vacancy_search_settings import VacancySearchSettings
 from app.models.vacancy_source import VacancySource
-from app.services.vacancy_source_check import fetch_telegram_channel_title
+from app.services.vacancy_source_check import (
+    check_lever_board,
+    fetch_greenhouse_board_name,
+    fetch_telegram_channel_title,
+)
 from app.services.vacancy_source_parsing import ParsedSource, parse_source_input
 
 MAX_SOURCES = 30
@@ -201,7 +205,11 @@ async def _fetch_display_name(parsed: ParsedSource) -> str:
     match parsed.kind:
         case "telegram":
             return await fetch_telegram_channel_title(parsed.handle)
-        case _:  # pragma: no cover - the parser only yields telegram for now
+        case "greenhouse":
+            return await fetch_greenhouse_board_name(parsed.handle)
+        case "lever" | "lever_eu":
+            return await check_lever_board(parsed.kind, parsed.handle)
+        case _:  # pragma: no cover - the parser yields only the kinds above
             raise NotImplementedError(parsed.kind)
 
 
@@ -213,7 +221,8 @@ async def add_source(db: AsyncSession, user_id: str, raw_input: str) -> VacancyS
         DuplicateSourceError: already watched (checked before and after the
             live check; the unique constraint closes the race).
         SourceLimitError: MAX_SOURCES reached.
-        SourceCheckError: the live check failed (not public / unreachable).
+        SourceCheckError: the live check failed (channel not public, board
+            unreadable, or unreachable).
     """
     parsed = parse_source_input(raw_input)
 
