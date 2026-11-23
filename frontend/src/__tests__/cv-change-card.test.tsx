@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import type { ChangeCard } from "@/entities/chat";
 import { parseCardsEvent } from "@/entities/chat";
-import { CvChangeCard } from "@/features/chat-interface";
+import { CvChangeCard, mergeCardStates } from "@/features/chat-interface";
 import { buildCardDiff } from "@/features/chat-interface/lib/build-diff-rows";
 import { getInsertLabel } from "@/features/chat-interface/lib/card-labels";
 import { mockChangeCards } from "./mocks/handlers";
@@ -211,6 +211,7 @@ describe("CvChangeCard decisions", () => {
   it.each([
     [409, "PASSAGE_NOT_UNIQUE", NOT_UNIQUE_TEXT],
     [422, "TOO_LONG", TOO_LONG_TEXT],
+    [409, "CV_BUSY", GENERIC_TEXT],
     [404, "Not found", GENERIC_TEXT],
     [500, "CARD_STALE", GENERIC_TEXT],
   ])("%i %s: shows the error and the card stays Pending", async (status, detail, text) => {
@@ -290,6 +291,28 @@ describe("CvChangeCard decisions", () => {
 });
 
 describe("card helpers", () => {
+  it("mergeCardStates keeps a local decision over a pending server copy", () => {
+    const message = {
+      id: "msg-2",
+      application_id: "app-1",
+      role: "assistant",
+      content: "Edits",
+      created_at: "2026-03-01T10:01:00Z",
+    };
+    const local = [
+      { ...message, cards: [card({ state: "accepted" }), card({ id: "b", state: "pending" })] },
+    ];
+    const fresh = [
+      { ...message, cards: [card({ state: "pending" }), card({ id: "b", state: "rejected" })] },
+    ];
+
+    const merged = mergeCardStates(local, fresh);
+
+    expect(merged[0]!.cards.map((c) => c.state)).toEqual(["accepted", "rejected"]);
+    // Nothing to merge: the fresh history is used as is
+    expect(mergeCardStates([], fresh)).toBe(fresh);
+  });
+
   it("buildCardDiff keeps unchanged lines in both columns", () => {
     const diff = buildCardDiff("a\nb\nc", "a\nB\nc");
     expect(diff.before.map((r) => `${r.kind}:${r.text}`)).toEqual([

@@ -73,6 +73,10 @@ export function useCardDecision(
           case "TOO_LONG":
             setError(CARD_ERROR_MESSAGES.TOO_LONG);
             break;
+          case "CV_BUSY":
+            // The CV kept changing during the Accept; the card stays pending
+            setError(CARD_ERROR_MESSAGES.ACCEPT_FAILED);
+            break;
           case "CARD_DECIDED": {
             // Decided elsewhere (another tab): show the real state, no error.
             const fresh = await fetchFreshCard(applicationId, card.id).catch(

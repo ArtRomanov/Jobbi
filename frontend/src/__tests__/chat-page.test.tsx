@@ -278,6 +278,53 @@ describe("ChatPage change cards", () => {
     expect(screen.getAllByRole("article", { name: "CV text" })).toHaveLength(1);
   });
 
+  it("keeps a card decided while the history reload was in flight", async () => {
+    let releaseReload: () => void = () => undefined;
+    const reloadGate = new Promise<void>((resolve) => {
+      releaseReload = resolve;
+    });
+    let posted = false;
+    let getCalls = 0;
+    server.use(
+      http.get(`${BASE_URL}/api/v1/applications/:id/chat`, async () => {
+        getCalls += 1;
+        if (!posted) return HttpResponse.json([]);
+        // The reload read the card before the Accept landed: still pending
+        await reloadGate;
+        return HttpResponse.json([
+          { ...userMessage, content: "Add GraphQL" },
+          { ...assistantMessage, content: "Added it (saved).", cards: [mockChangeCards.insert] },
+        ]);
+      }),
+      http.post(`${BASE_URL}/api/v1/applications/:id/chat`, () => {
+        posted = true;
+        return new HttpResponse(
+          sseBody([tokenFrame("Added it."), cardsFrame([mockChangeCards.insert]), DONE]),
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      }),
+    );
+    renderChatPage("app-1");
+    await send("Add GraphQL");
+
+    const card = await screen.findByRole("article", { name: "CV text" });
+    await waitFor(() => expect(getCalls).toBe(2));
+    await userEvent.setup().click(within(card).getByRole("button", { name: "Accept" }));
+    expect(await within(card).findByText("Accepted")).toBeInTheDocument();
+
+    releaseReload();
+
+    // The reload has landed (the saved reply text replaced the streamed one)
+    expect(await screen.findByText("Added it (saved).")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("article", { name: "CV text" })).toHaveAttribute(
+        "data-state",
+        "accepted",
+      ),
+    );
+    expect(screen.queryByRole("button", { name: "Accept" })).not.toBeInTheDocument();
+  });
+
   it("shows a cards-only reply without an empty assistant bubble", async () => {
     const getCalls = mockStream(
       [cardsFrame([mockChangeCards.remove]), DONE],

@@ -1,75 +1,15 @@
-import { memo, useId, useMemo, type CSSProperties } from "react";
-import type { ChangeCard, ChangeCardState } from "@/entities/chat";
-import { Badge, Button, colors, fonts } from "@/shared/ui";
-import { buildCardDiff, markAllLines } from "../lib/build-diff-rows";
-import { getInsertLabel } from "../lib/card-labels";
+import { memo, useId } from "react";
+import type { ChangeCard } from "@/entities/chat";
+import { Button, colors, fonts } from "@/shared/ui";
+import { CARD_BORDER, CARD_BUTTON_STYLE } from "../lib/card-styles";
 import { useCardDecision } from "../model/use-card-decision";
-import { DiffLinesView } from "./diff-lines-view";
+import { CardBody } from "./card-body";
+import { CardStateBadge } from "./card-state-badge";
 
 interface CvChangeCardProps {
   applicationId: string;
   card: ChangeCard;
   onCardUpdated: (card: ChangeCard) => void;
-}
-
-const CARD_BORDER: Record<ChangeCardState, string> = {
-  pending: colors.border,
-  accepted: colors.success,
-  rejected: colors.borderLight,
-  stale: colors.badge.warning.text,
-};
-
-const SMALL_BUTTON: CSSProperties = {
-  fontSize: "0.75rem",
-  padding: "0.25rem 0.75rem",
-};
-
-function CardBody({ card }: { card: ChangeCard }) {
-  const { op, before_text: beforeText, after_text: afterText } = card;
-  const diff = useMemo(
-    () => (op === "replace" ? buildCardDiff(beforeText, afterText) : null),
-    [op, beforeText, afterText],
-  );
-
-  if (diff) {
-    return (
-      <>
-        <DiffLinesView label="Before" rows={diff.before} />
-        <DiffLinesView label="After" rows={diff.after} />
-      </>
-    );
-  }
-  if (op === "insert") {
-    return (
-      <DiffLinesView
-        label={getInsertLabel(card)}
-        rows={markAllLines(afterText, "added")}
-      />
-    );
-  }
-  return (
-    <DiffLinesView label="Removed" rows={markAllLines(beforeText, "removed")} />
-  );
-}
-
-function StateBadge({ state }: { state: ChangeCardState }) {
-  switch (state) {
-    case "accepted":
-      return (
-        <Badge tone="success">
-          <span aria-hidden="true" style={{ marginRight: "0.25rem" }}>
-            ✓
-          </span>
-          Accepted
-        </Badge>
-      );
-    case "rejected":
-      return <Badge tone="neutral">Rejected</Badge>;
-    case "stale":
-      return <Badge tone="warning">Stale</Badge>;
-    case "pending":
-      return null;
-  }
 }
 
 /**
@@ -117,13 +57,10 @@ export const CvChangeCard = memo(function CvChangeCard({
           gap: "0.5rem",
         }}
       >
-        <span
-          id={titleId}
-          style={{ fontWeight: 600, color: colors.textPrimary }}
-        >
+        <span id={titleId} style={{ fontWeight: 600, color: colors.textPrimary }}>
           CV text
         </span>
-        <StateBadge state={card.state} />
+        <CardStateBadge state={card.state} />
       </div>
 
       <div
@@ -140,7 +77,7 @@ export const CvChangeCard = memo(function CvChangeCard({
       {isOpen && (
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <Button
-            style={SMALL_BUTTON}
+            style={CARD_BUTTON_STYLE}
             disabled={card.state === "stale" || running !== null}
             loading={running === "accept"}
             onClick={() => void decide("accept")}
@@ -149,7 +86,7 @@ export const CvChangeCard = memo(function CvChangeCard({
           </Button>
           <Button
             variant="secondary"
-            style={SMALL_BUTTON}
+            style={CARD_BUTTON_STYLE}
             disabled={running !== null}
             loading={running === "reject"}
             onClick={() => void decide("reject")}
@@ -160,10 +97,7 @@ export const CvChangeCard = memo(function CvChangeCard({
       )}
 
       {error && (
-        <p
-          role="alert"
-          style={{ margin: 0, color: colors.error, fontSize: "0.8125rem" }}
-        >
+        <p role="alert" style={{ margin: 0, color: colors.error, fontSize: "0.8125rem" }}>
           {error}
         </p>
       )}

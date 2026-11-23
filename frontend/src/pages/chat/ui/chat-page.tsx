@@ -16,6 +16,7 @@ import {
   ChatWindow,
   ChatInput,
   QuickActionBar,
+  mergeCardStates,
   replaceCardInMessages,
 } from "@/features/chat-interface";
 import { Button, colors, fonts, useToast } from "@/shared/ui";
@@ -169,7 +170,10 @@ export function ChatPage() {
           setIsSending(false);
           // Re-fetch history to get persisted messages from the server
           getChatHistory(applicationId)
-            .then((history) => setMessages(history))
+            // A card decided while the reload was in flight keeps its new state
+            .then((history) =>
+              setMessages((prev) => mergeCardStates(prev, history)),
+            )
             .catch(() => {
               // History refresh failed — keep optimistic messages
             });

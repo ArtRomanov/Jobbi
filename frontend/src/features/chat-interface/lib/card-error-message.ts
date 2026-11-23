@@ -15,13 +15,15 @@ export type CardErrorCode =
   | "CARD_STALE"
   | "PASSAGE_NOT_UNIQUE"
   | "TOO_LONG"
-  | "CARD_DECIDED";
+  | "CARD_DECIDED"
+  | "CV_BUSY";
 
 const KNOWN_CODES: ReadonlySet<string> = new Set<CardErrorCode>([
   "CARD_STALE",
   "PASSAGE_NOT_UNIQUE",
   "TOO_LONG",
   "CARD_DECIDED",
+  "CV_BUSY",
 ]);
 
 function isCardErrorCode(value: unknown): value is CardErrorCode {
