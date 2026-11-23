@@ -35,9 +35,10 @@ title are dropped, unless a pattern was given (then the last path segment is
 used).
 
 ATS hint: every ``<a href>``, ``<iframe src>`` and ``<script src>`` on the
-page, on any host, is run through ``parse_source_input``; Greenhouse, Lever
-and Teamtailor boards count (Greenhouse embed links such as
-``boards.greenhouse.io/embed/job_board?for=<token>`` give the ``for=`` token).
+page, on any host, is run through ``parse_source_input``; Greenhouse, Lever,
+Teamtailor and Ashby boards count (Greenhouse embed links such as
+``boards.greenhouse.io/embed/job_board?for=<token>`` give the ``for=`` token;
+Ashby embeds ``jobs.ashbyhq.com/<org>/embed`` give ``<org>``).
 The board linked most often wins (ties: the first seen). Nothing is fetched.
 
 Hostile pages (the URL is user-supplied): the work is linear in page size.
@@ -98,8 +99,12 @@ _ATS_BOARDS: dict[str, tuple[str, str]] = {
     "lever": ("Lever", "https://jobs.lever.co/{handle}"),
     "lever_eu": ("Lever", "https://jobs.eu.lever.co/{handle}"),
     "teamtailor": ("Teamtailor", "https://{handle}.teamtailor.com"),
+    "ashby": ("Ashby", "https://jobs.ashbyhq.com/{handle}"),
 }
-_ATS_HOST_SUFFIXES = (".greenhouse.io", ".lever.co", ".teamtailor.com")
+_ATS_HOST_SUFFIXES = (".greenhouse.io", ".lever.co", ".teamtailor.com", ".ashbyhq.com")
+_ASHBY_EMBED_HOST = "jobs.ashbyhq.com"
+# `/<org>/embed`: the org must still pass the board pattern (checked below).
+_ASHBY_EMBED_PATH_RE = re.compile(r"/([A-Za-z0-9._-]{1,64})/embed/?", re.ASCII)
 _GREENHOUSE_EMBED_HOSTS = frozenset(
     {
         "boards.greenhouse.io",
@@ -349,7 +354,7 @@ def _attr(tag: Tag, name: str) -> str | None:
 
 
 def _board_of(raw: str | None, page_url: str) -> tuple[str, str] | None:
-    """``(kind, handle)`` of a Greenhouse/Lever/Teamtailor board link, or None."""
+    """``(kind, handle)`` of a Greenhouse/Lever/Teamtailor/Ashby board link, or None."""
     if not raw or not (raw := raw.strip()):
         return None
     try:
@@ -371,6 +376,11 @@ def _board_of(raw: str | None, page_url: str) -> tuple[str, str] | None:
         if not token or "/" in token or "?" in token or "#" in token:
             return None
         link = _ATS_BOARDS["greenhouse"][1].format(handle=token)
+    elif host == _ASHBY_EMBED_HOST and (
+        embed := _ASHBY_EMBED_PATH_RE.fullmatch(parts.path)
+    ):
+        # The board pattern rejects `/<org>/embed`; check the canonical link.
+        link = _ATS_BOARDS["ashby"][1].format(handle=embed[1])
     else:
         # The fragment is page-local; board patterns do not accept it.
         link = parts._replace(fragment="").geturl()

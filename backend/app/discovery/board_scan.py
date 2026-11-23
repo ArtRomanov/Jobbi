@@ -1,4 +1,4 @@
-"""Read a Greenhouse, Lever or Teamtailor board and split its unseen jobs for storage.
+"""Read a Greenhouse, Lever, Teamtailor or Ashby board and split its unseen jobs.
 
 Network only: no database access here (the caller loads the known keys before
 and stores the result after, each in its own short session).
@@ -28,7 +28,7 @@ from typing import Any, TypeAlias
 
 import httpx
 
-from app.discovery.fetchers import greenhouse, lever, teamtailor
+from app.discovery.fetchers import ashby, greenhouse, lever, teamtailor
 from app.discovery.fetchers.errors import BoardReadError
 from app.discovery.types import RawPost
 
@@ -36,7 +36,7 @@ __all__ = ["BOARD_KINDS", "BoardFetch", "board_key_prefix", "fetch_board"]
 
 logger = logging.getLogger(__name__)
 
-BOARD_KINDS = frozenset({"greenhouse", "lever", "lever_eu", "teamtailor"})
+BOARD_KINDS = frozenset({"greenhouse", "lever", "lever_eu", "teamtailor", "ashby"})
 # More than this share of failed job-detail requests in one run = outage.
 MAX_DETAIL_FAILURE_SHARE = 0.5
 
@@ -61,7 +61,7 @@ def board_key_prefix(kind: str, handle: str) -> str:
         return f"gh:{handle}/"
     if kind == "teamtailor":
         return f"tt:{handle}/"
-    if kind in ("lever", "lever_eu"):
+    if kind in ("lever", "lever_eu", "ashby"):
         return f"{kind}:{handle}/"
     raise ValueError(f"Not a board kind: {kind!r}")
 
@@ -111,6 +111,19 @@ async def fetch_board(
     elif kind == "teamtailor":
         result = await _fetch_teamtailor(
             client, handle, known_keys, now=now, cutoff=cutoff, initial=initial
+        )
+    elif kind == "ashby":
+        jobs = await ashby.list_jobs(client, handle)
+        # Mapping may convert description HTML to text (CPU work on remote
+        # input): run it in a worker thread, off the event loop.
+        result = await asyncio.to_thread(
+            _ashby_posts,
+            handle,
+            jobs,
+            known_keys,
+            now=now,
+            cutoff=cutoff,
+            initial=initial,
         )
     else:
         raise ValueError(f"Not a board kind: {kind!r}")
@@ -264,4 +277,26 @@ def _teamtailor_posts(
                 subdomain, feed.company, item, posted_at=item.posted_at or now
             )
         )
+    return result
+
+
+def _ashby_posts(
+    org: str,
+    jobs: list[dict[str, Any]],
+    known_keys: Collection[str],
+    *,
+    now: datetime,
+    cutoff: datetime,
+    initial: bool,
+) -> BoardFetch:
+    result = BoardFetch()
+    for job in jobs:  # already deduplicated by job id
+        key = ashby.job_key(org, job["id"])
+        if key in known_keys:
+            continue
+        posted_at = ashby.job_posted_at(job)
+        if initial and _is_old(posted_at, cutoff):
+            result.seen_only_keys.append(key)
+            continue
+        result.posts.append(ashby.to_raw_post(org, job, posted_at=posted_at or now))
     return result

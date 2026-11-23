@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from app.schemas.telegram import UtcDatetime
 
 SourceKind = Literal[
-    "telegram", "greenhouse", "lever", "lever_eu", "teamtailor", "web"
+    "telegram", "greenhouse", "lever", "lever_eu", "teamtailor", "ashby", "web"
 ]
 
 
@@ -42,7 +42,7 @@ class VacancySourcePreviewRequest(BaseModel):
 
 
 class AtsHint(BaseModel):
-    """A Greenhouse/Lever/Teamtailor board the previewed page links to.
+    """A Greenhouse/Lever/Teamtailor/Ashby board the previewed page links to.
 
     `input` is a board link the add flow accepts; `label` is the service name.
     """

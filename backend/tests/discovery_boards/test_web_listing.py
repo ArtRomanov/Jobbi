@@ -470,6 +470,43 @@ def test_teamtailor_board_hint() -> None:
     )
 
 
+ASHBY_MANYCHAT = AtsHint(
+    kind="ashby", input="https://jobs.ashbyhq.com/manychat", label="Ashby"
+)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '<a href="https://jobs.ashbyhq.com/manychat">Jobs</a>',
+        '<a href="https://jobs.ashbyhq.com/ManyChat/'
+        '72eaca21-1d04-4e08-ac70-c987519dda1f">Staff PM</a>',
+        '<a href="https://jobs.ashbyhq.com/manychat/'
+        '72eaca21-1d04-4e08-ac70-c987519dda1f/application">Apply</a>',
+        # The JS embed Ashby gives to career pages.
+        '<script src="https://jobs.ashbyhq.com/manychat/embed?version=2"></script>',
+        '<iframe src="https://jobs.ashbyhq.com/manychat/embed"></iframe>',
+    ],
+)
+def test_ashby_board_hint(body: str) -> None:
+    assert _hint(body) == ASHBY_MANYCHAT
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '<a href="https://jobs.ashbyhq.com.evil.com/manychat">Look-alike</a>',
+        '<a href="https://evil.com/jobs.ashbyhq.com/manychat">Path</a>',
+        '<a href="https://www.ashbyhq.com/customers">Ashby site</a>',
+        '<script src="https://jobs.ashbyhq.com/a..b/embed"></script>',
+        '<script src="https://jobs.ashbyhq.com/embed"></script>',
+        '<script src="https://jobs.ashbyhq.com/x/embed/../../y"></script>',
+    ],
+)
+def test_ashby_lookalikes_give_no_hint(body: str) -> None:
+    assert _hint(body) is None
+
+
 def test_most_linked_board_wins() -> None:
     body = (
         '<a href="https://acme.teamtailor.com/jobs/1">One</a>'
