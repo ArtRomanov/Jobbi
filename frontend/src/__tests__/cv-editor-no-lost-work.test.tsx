@@ -260,6 +260,41 @@ describe("Leaving with unsaved changes", () => {
     expect(router.state.location.pathname).toBe("/cvs");
   });
 
+  it("focuses Stay first, so Enter keeps the draft", async () => {
+    const user = userEvent.setup();
+    const { router } = await renderLoadedEditor();
+
+    await user.type(textArea(), "\nDraft");
+    await user.click(screen.getByRole("link", { name: /back to cvs/i }));
+    const dialog = await screen.findByRole("dialog", { name: "Unsaved changes" });
+
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Stay" })).toHaveFocus());
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(router.state.location.pathname).toBe("/cvs/cv-1/edit");
+    expect(textArea()).toHaveValue(`${savedCv.content}\nDraft`);
+  });
+
+  it("treats Escape as Stay", async () => {
+    const user = userEvent.setup();
+    const { router } = await renderLoadedEditor();
+
+    await user.type(textArea(), "\nDraft");
+    await user.click(screen.getByRole("link", { name: /back to cvs/i }));
+    await screen.findByRole("dialog", { name: "Unsaved changes" });
+
+    await user.keyboard("{Escape}");
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(router.state.location.pathname).toBe("/cvs/cv-1/edit");
+    expect(screen.queryByText("CVs list")).not.toBeInTheDocument();
+    expect(textArea()).toHaveValue(`${savedCv.content}\nDraft`);
+    // Still guarded afterwards
+    await user.click(screen.getByRole("link", { name: /back to cvs/i }));
+    expect(await screen.findByRole("dialog", { name: "Unsaved changes" })).toBeInTheDocument();
+  });
+
   it("asks on the browser's Back button too", async () => {
     const user = userEvent.setup();
     const { router } = await renderLoadedEditor(["/cvs", "/cvs/cv-1/edit"]);

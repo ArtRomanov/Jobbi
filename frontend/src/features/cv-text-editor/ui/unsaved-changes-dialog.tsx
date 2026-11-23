@@ -12,7 +12,7 @@ interface UnsavedChangesDialogProps {
   onStay: () => void;
 }
 
-/** "Leave without saving?" prompt shown while a navigation is blocked. */
+/** "Leave without saving?" prompt shown while a navigation is blocked. Focus starts on "Stay". */
 export function UnsavedChangesDialog({ onLeave, onStay }: UnsavedChangesDialogProps) {
   const textId = useId();
 
@@ -24,12 +24,13 @@ export function UnsavedChangesDialog({ onLeave, onStay }: UnsavedChangesDialogPr
       >
         {UNSAVED_CHANGES_MESSAGE}
       </p>
+      {/* "Stay" comes first so the Modal focuses it: Enter never drops the draft */}
       <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
-        <Button type="button" variant="secondary" onClick={onLeave}>
-          {UNSAVED_CHANGES_LEAVE_LABEL}
-        </Button>
         <Button type="button" onClick={onStay}>
           {UNSAVED_CHANGES_STAY_LABEL}
+        </Button>
+        <Button type="button" variant="secondary" onClick={onLeave}>
+          {UNSAVED_CHANGES_LEAVE_LABEL}
         </Button>
       </div>
     </Modal>
