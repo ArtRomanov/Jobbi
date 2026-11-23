@@ -53,7 +53,7 @@ function saveButton(): HTMLButtonElement {
 }
 
 function baseSwitch(): HTMLInputElement {
-  return screen.getByRole("switch", { name: "Base CV" }) as HTMLInputElement;
+  return screen.getByRole("switch", { name: "Set as base CV for every application" }) as HTMLInputElement;
 }
 
 /** Upload a file and wait for the draft to open in the editor. */

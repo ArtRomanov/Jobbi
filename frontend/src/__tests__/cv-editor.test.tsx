@@ -268,7 +268,7 @@ describe("CvEditorPage — Base CV switch", () => {
   const HELP = 'Tailoring with "Add & tailor CV" starts from your base CV.';
 
   function baseSwitch(): HTMLInputElement {
-    return screen.getByRole("switch", { name: "Base CV" }) as HTMLInputElement;
+    return screen.getByRole("switch", { name: "Set as base CV for every application" }) as HTMLInputElement;
   }
 
   function saveButton(): HTMLButtonElement {
