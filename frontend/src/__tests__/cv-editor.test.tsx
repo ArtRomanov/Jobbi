@@ -79,7 +79,7 @@ describe("CvEditorPage — create", () => {
   it("updates the preview as the user types", async () => {
     const user = userEvent.setup();
     renderEditor("/cvs/new");
-    const preview = screen.getByRole("region", { name: "Preview" });
+    const preview = screen.getByRole("region", { name: "CV preview" });
 
     await user.type(textArea(), "# Jane Doe\n- React");
 
@@ -164,7 +164,7 @@ describe("CvEditorPage — edit", () => {
 
     expect(await screen.findByDisplayValue("Software Engineer CV")).toBeInTheDocument();
     expect(textArea()).toHaveValue(mockCvs[0]!.content);
-    const preview = screen.getByRole("region", { name: "Preview" });
+    const preview = screen.getByRole("region", { name: "CV preview" });
     expect(within(preview).getByRole("heading", { name: "Test User" })).toBeInTheDocument();
     expect(within(preview).getByRole("heading", { name: "Summary" })).toBeInTheDocument();
   });
@@ -381,8 +381,42 @@ describe("CvEditorPage — layout", () => {
     renderEditor("/cvs/new");
 
     expect(textArea()).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Preview" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "CV preview" })).toBeInTheDocument();
     expect(screen.queryByRole("radiogroup", { name: "Editor view" })).not.toBeInTheDocument();
+  });
+
+  it("gives the text and the preview the same fixed-height box that scrolls inside", () => {
+    mockPhoneWidth(false);
+    renderEditor("/cvs/new");
+
+    const preview = screen.getByRole("region", { name: "CV preview" });
+    const text = textArea();
+    expect(preview.style.height).not.toBe("");
+    expect(preview.style.height).toBe(text.style.height);
+    expect(preview.style.overflowY).toBe("auto");
+    expect(text.style.overflowY).toBe("auto");
+    for (const prop of ["padding", "border", "borderRadius", "backgroundColor"] as const) {
+      expect(preview.style[prop]).toBe(text.style[prop]);
+    }
+    // A scrollable region must be reachable by keyboard
+    expect(preview).toHaveAttribute("tabindex", "0");
+    preview.focus();
+    expect(preview).toHaveFocus();
+  });
+
+  it("uses the same preview box on the phone Preview tab", async () => {
+    mockPhoneWidth(true);
+    const user = userEvent.setup();
+    renderEditor("/cvs/new");
+
+    const textHeight = textArea().style.height;
+    const tabs = screen.getByRole("radiogroup", { name: "Editor view" });
+    await user.click(within(tabs).getByRole("radio", { name: "Preview" }));
+
+    const preview = screen.getByRole("region", { name: "CV preview" });
+    expect(preview.style.height).toBe(textHeight);
+    expect(preview.style.overflowY).toBe("auto");
+    expect(preview).toHaveAttribute("tabindex", "0");
   });
 
   it("uses Edit / Preview tabs on phone width, Edit first", async () => {
@@ -392,13 +426,13 @@ describe("CvEditorPage — layout", () => {
 
     const tabs = screen.getByRole("radiogroup", { name: "Editor view" });
     expect(within(tabs).getByRole("radio", { name: "Edit" })).toHaveAttribute("aria-checked", "true");
-    expect(screen.queryByRole("region", { name: "Preview" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "CV preview" })).not.toBeInTheDocument();
 
     await user.type(textArea(), "## Skills");
     await user.click(within(tabs).getByRole("radio", { name: "Preview" }));
 
     expect(screen.queryByRole("textbox", { name: "CV text" })).not.toBeInTheDocument();
-    const preview = screen.getByRole("region", { name: "Preview" });
+    const preview = screen.getByRole("region", { name: "CV preview" });
     expect(within(preview).getByRole("heading", { name: "Skills" })).toBeInTheDocument();
 
     // The draft survives switching back

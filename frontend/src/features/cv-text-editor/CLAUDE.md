@@ -2,6 +2,7 @@
 
 The CV editor (functional spec 011 §2.1): name field + one textarea for the whole CV, formatting hint, live preview (`CvTextPreview` from `@/entities/cv`, via `useDeferredValue`). Wide screens: editor and preview side by side; phone width (`PHONE_MEDIA_QUERY`): `SegmentedControl` tabs "Edit" / "Preview", "Edit" first. `pages/cv-editor` owns loading, saving, the toast and the `version` sent with PATCH.
 
+- The textarea and the preview share `CV_PANE_BOX_STYLE` (config): fixed `CV_PANE_HEIGHT`, same border/padding/background, each scrolls inside itself (`overflowY: auto`), no textarea resize. The preview is `role="region"` "CV preview" with `tabIndex={0}` so keyboard users can scroll it.
 - `initialValues` are read once (on mount); the page must not remount the editor after a save, or the user's draft is reset.
 - Text limit 20 000 (UTF-16 units, the same unit `maxLength` counts). Typing stops via `maxLength`; a paste is intercepted only when it would pass the limit, then cut to fit by `insertTextWithinLimit` (never splits a surrogate pair), caret placed after the pasted part. A paste that fits stays native so browser undo keeps working.
 - `onExport` (optional) adds "Export PDF", which exports the current draft (name trimmed), not the saved version.

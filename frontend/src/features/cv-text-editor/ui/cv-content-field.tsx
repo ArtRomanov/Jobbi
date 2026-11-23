@@ -6,6 +6,7 @@ import {
   CV_CONTENT_PLACEHOLDER,
   CV_FORMATTING_HINT,
   CV_FORMATTING_HINT_DESCRIPTION,
+  CV_PANE_BOX_STYLE,
 } from "../config";
 import { formatThousands } from "../lib/format-thousands";
 import { insertTextWithinLimit } from "../lib/insert-text-within-limit";
@@ -60,8 +61,9 @@ export function CvContentField({ value, onChange }: CvContentFieldProps) {
       <FormTextarea
         ref={textareaRef}
         label="CV text"
-        rows={24}
         value={value}
+        // Same box as the preview; a fixed height, so no resize handle
+        style={{ ...CV_PANE_BOX_STYLE, resize: "none" }}
         maxLength={CV_CONTENT_MAX_LENGTH}
         placeholder={CV_CONTENT_PLACEHOLDER}
         aria-describedby={showCounter ? `${hintId} ${counterId}` : hintId}
