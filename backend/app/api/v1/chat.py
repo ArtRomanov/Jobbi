@@ -135,7 +135,7 @@ async def _decide_card(
     response_model=ChangeCardRead,
     responses={
         404: {"description": "No such application or card for this user"},
-        409: {"description": "CARD_DECIDED, CARD_STALE or PASSAGE_NOT_UNIQUE"},
+        409: {"description": "CARD_DECIDED, CARD_STALE, PASSAGE_NOT_UNIQUE or CV_BUSY"},
         422: {"description": "TOO_LONG: the CV would exceed 20 000 characters"},
     },
 )
@@ -145,7 +145,13 @@ async def accept_change_card(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ChangeCardRead:
-    """Apply a pending CV change card to the linked CV (bumps the CV version)."""
+    """Apply a pending CV change card to the linked CV (bumps the CV version).
+
+    409 codes: CARD_DECIDED (already accepted or rejected); CARD_STALE (the card
+    is already stale, or the passage / CV is gone, and the card becomes stale);
+    PASSAGE_NOT_UNIQUE (card stays pending); CV_BUSY (the CV kept changing
+    during the Accept, card stays pending, try again).
+    """
     application = await _get_user_application(application_id, current_user, db)
     return await _decide_card(application, card_id, db, accept=True)
 

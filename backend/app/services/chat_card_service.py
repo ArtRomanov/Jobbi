@@ -68,6 +68,13 @@ class CardTooLongError(CardError):
     status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
+class CvBusyError(CardError):
+    """The CV kept changing under the Accept; the card stays pending."""
+
+    code = "CV_BUSY"
+    status_code = status.HTTP_409_CONFLICT
+
+
 class _PassageMissing(Exception):
     """The quoted passage or anchor is not in the CV."""
 
@@ -91,6 +98,11 @@ def _find_once(content: str, needle: str) -> int:
     return first
 
 
+def normalize_newlines(text: str) -> str:
+    """CRLF and lone CR become LF (uploaded or pasted text may carry them)."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 def apply_card_edit(
     content: str,
     *,
@@ -102,8 +114,17 @@ def apply_card_edit(
 ) -> str:
     """Return `content` with the card's edit applied; nothing else changes.
 
+    Line breaks are normalised to LF in the CV and in the card's texts first,
+    so a CRLF CV still matches the model's LF quotes and line-based insert /
+    remove work; the CV is therefore saved with LF line breaks.
+
     Raises _PassageMissing / _PassageNotUnique for the quoted passage or anchor.
     """
+    content = normalize_newlines(content)
+    before_text = normalize_newlines(before_text)
+    after_text = normalize_newlines(after_text)
+    if anchor_text is not None:
+        anchor_text = normalize_newlines(anchor_text)
     match op:
         case "replace":
             start = _find_once(content, before_text)
@@ -193,13 +214,24 @@ async def cards_by_message(
     return grouped
 
 
+CARD_NOTE_HEADER = (
+    "Context note (not part of any reply, never repeat it): "
+    "status of the CV edits proposed in the previous assistant reply."
+)
+
+
 def card_history_line(card: ChatChangeCard) -> str:
     """One line telling the model what became of a card it proposed."""
     quoted = card.after_text if card.op == "insert" else card.before_text
     quoted = " ".join(quoted.split())
     if len(quoted) > HISTORY_QUOTE_CHARS:
         quoted = quoted[:HISTORY_QUOTE_CHARS] + "…"
-    return f"[Card {card.state}: {card.op} '{quoted}']"
+    return f"- {card.state}: {card.op} '{quoted}'"
+
+
+def card_history_note(cards: Sequence[ChatChangeCard]) -> str:
+    """A system note listing the cards of one reply, sent after that reply."""
+    return "\n".join([CARD_NOTE_HEADER, *(card_history_line(c) for c in cards)])
 
 
 async def delete_application_cards(db: AsyncSession, application_id: str) -> None:
@@ -260,9 +292,11 @@ async def accept_card(
     Raises:
         CardNotFoundError: no such card on this application.
         CardDecidedError: the card was already accepted or rejected.
-        CardStaleError: the CV is gone, is no longer linked to the application,
-            or no longer contains the passage (the card becomes stale); or the
-            CV kept changing under us (the card stays pending).
+        CardStaleError: the card is already stale, or the CV is gone, is no
+            longer linked to the application, or no longer contains the
+            passage (the card becomes stale).
+        CvBusyError: the CV changed under us on every attempt (the card stays
+            pending; trying again may work).
         PassageNotUniqueError: the passage appears more than once (stays pending).
         CardTooLongError: the result is over the CV limit (stays pending).
     """
@@ -322,7 +356,7 @@ async def accept_card(
         return card
 
     await db.rollback()
-    raise CardStaleError
+    raise CvBusyError
 
 
 async def reject_card(

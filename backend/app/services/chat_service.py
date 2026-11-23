@@ -10,7 +10,7 @@ from app.models.chat_message import ChatMessage
 from app.models.cv import Cv
 from app.services.chat_card_service import (
     add_cards,
-    card_history_line,
+    card_history_note,
     cards_by_message,
     delete_application_cards,
 )
@@ -89,16 +89,21 @@ async def get_application_context(
 def build_llm_messages(
     history: list[ChatMessage], cards: dict[str, list[ChatChangeCard]]
 ) -> list[dict[str, str]]:
-    """The chat history for the model; each card adds one line to its reply.
+    """The chat history for the model.
 
+    A reply's cards go into a separate system note right after that reply,
+    one line per card, so the model does not copy them into its own replies.
     Pending cards are listed too, so the model does not propose them again.
     """
     messages: list[dict[str, str]] = []
     for message in history:
-        lines = [card_history_line(card) for card in cards.get(message.id, [])]
-        content = "\n".join(part for part in (message.content, *lines) if part)
-        if content:
-            messages.append({"role": message.role, "content": content})
+        if message.content:
+            messages.append({"role": message.role, "content": message.content})
+        message_cards = cards.get(message.id, [])
+        if message_cards:
+            messages.append(
+                {"role": "system", "content": card_history_note(message_cards)}
+            )
     return messages
 
 

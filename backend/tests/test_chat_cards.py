@@ -17,6 +17,11 @@ from app.models.chat_change_card import ChatChangeCard
 from app.models.chat_message import ChatMessage
 from app.models.cv import Cv
 from app.services import cv_service
+from app.services.chat_card_service import (
+    CARD_NOTE_HEADER,
+    apply_card_edit,
+    normalize_newlines,
+)
 from app.services.chat_tools import MALFORMED_CALL_NOTE, parse_propose_cv_edit
 
 APPS = "/api/v1/applications"
@@ -363,7 +368,7 @@ async def test_malformed_call_becomes_inline_error_and_no_card(
     assert message.content == f"Sure.\n\n{MALFORMED_CALL_NOTE}"
 
 
-async def test_history_sent_to_model_has_one_line_per_card(
+async def test_history_puts_card_lines_in_a_system_note_after_the_reply(
     client: httpx.AsyncClient, setup: dict[str, str]
 ) -> None:
     long_before = "Experienced SRE with 5 years of production ops."
@@ -380,12 +385,14 @@ async def test_history_sent_to_model_has_one_line_per_card(
     _, fake = await _send(client, setup, _chunk("ok"), text="Next")
 
     history = fake.calls[0]["messages"][1:]
-    assert [m["role"] for m in history] == ["user", "assistant", "user"]
-    assert history[1]["content"].splitlines() == [
-        "Here you go.",
-        f"[Card accepted: replace '{long_before}']",
-        "[Card rejected: remove '- jQuery']",
-        "[Card pending: insert '- Docker']",
+    assert [m["role"] for m in history] == ["user", "assistant", "system", "user"]
+    # The reply itself stays verbatim: no card lines for the model to copy
+    assert history[1]["content"] == "Here you go."
+    assert history[2]["content"].splitlines() == [
+        CARD_NOTE_HEADER,
+        f"- accepted: replace '{long_before}'",
+        "- rejected: remove '- jQuery'",
+        "- pending: insert '- Docker'",
     ]
 
 
@@ -398,8 +405,65 @@ async def test_history_line_cuts_long_quotes(
 
     _, fake = await _send(client, setup, _chunk("ok"), text="Next")
 
-    line = fake.calls[0]["messages"][2]["content"].splitlines()[-1]
-    assert line == f"[Card pending: insert '{'y' * 60}…']"
+    line = fake.calls[0]["messages"][3]["content"].splitlines()[-1]
+    assert line == f"- pending: insert '{'y' * 60}…'"
+
+
+# ---------------------------------------------------------------------------
+# Line breaks: CRLF / CR CVs
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_newlines() -> None:
+    assert normalize_newlines("a\r\nb\rc\nd") == "a\nb\nc\nd"
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        ({"op": "remove", "before_text": "b", "after_text": ""}, "a\nc"),
+        ({"op": "replace", "before_text": "a\nb", "after_text": "A\nB"}, "A\nB\nc"),
+        (
+            {
+                "op": "insert",
+                "before_text": "",
+                "after_text": "x",
+                "position": "after_line",
+                "anchor_text": "a",
+            },
+            "a\nx\nb\nc",
+        ),
+        # The model's quote carries CRLF too
+        ({"op": "replace", "before_text": "b\r\nc", "after_text": "z"}, "a\nz"),
+    ],
+)
+@pytest.mark.parametrize("newline", ["\r\n", "\r"])
+def test_apply_card_edit_handles_crlf_and_cr(
+    newline: str, kwargs: dict[str, Any], expected: str
+) -> None:
+    content = newline.join(["a", "b", "c"])
+    kwargs = {"position": None, "anchor_text": None, **kwargs}
+
+    assert apply_card_edit(content, **kwargs) == expected
+
+
+async def test_accept_remove_on_a_crlf_cv_leaves_no_blank_line(
+    client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
+) -> None:
+    (card,) = await _propose(client, setup, {"op": "remove", "before": "- jQuery"})
+    await db_session.execute(
+        update(Cv)
+        .where(Cv.id == setup["cv_id"])
+        .values(content=CV_TEXT.replace("\n", "\r\n"))
+    )
+    await db_session.commit()
+
+    resp = await _decide(client, setup, card["id"])
+
+    assert resp.status_code == 200, resp.text
+    assert (await _cv_content(client, setup))["content"] == CV_TEXT.replace(
+        "- jQuery\n", ""
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -730,7 +794,7 @@ async def test_accept_retries_once_when_the_version_moved(
     assert cv["version"] == attempts[1] + 1
 
 
-async def test_accept_gives_up_after_losing_the_race_twice(
+async def test_accept_gives_up_after_losing_the_race_twice_with_cv_busy(
     client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
 ) -> None:
     (card,) = await _propose(client, setup, {"op": "remove", "before": "- jQuery"})
@@ -746,7 +810,7 @@ async def test_accept_gives_up_after_losing_the_race_twice(
         resp = await _decide(client, setup, card["id"])
 
     assert resp.status_code == 409
-    assert resp.json()["detail"] == "CARD_STALE"
+    assert resp.json()["detail"] == "CV_BUSY"
     assert len(attempts) == 2
     assert await _card_state(db_session, card["id"]) == "pending"
     assert (await _cv_content(client, setup))["content"] == CV_TEXT
