@@ -6,7 +6,7 @@ It is NOT a copy-paste implementation guide.
 # Technical Specification: Vacancy Discovery (Inbox)
 
 - **Functional Specification:** `context/spec/009-vacancy-discovery-inbox/functional-spec.md`
-- **Status:** Completed
+- **Status:** Completed (amended by spec 012)
 - **Author(s):** Poe (AI Technical Architect)
 
 ---
@@ -63,7 +63,7 @@ All IDs `String(36)` UUID, timestamps naive UTC, per existing conventions. One A
 
 **`vacancies`** — Inbox cards and posts waiting for evaluation:
 - `user_id`, `source_id` of the first post (nullable; cleared when the source is deleted).
-- `external_key` (of the first post), `url` (the post / job page), `job_link` (normalized URL of the actual job, if any: for boards the job page itself; for Telegram the first link in the post that is not `t.me`), `title`, `company`, `text` (plain, ≤ 20 000 chars), `posted_at`, `found_at`.
+- `external_key` (of the first post), `url` (the post / job page), `job_link` (normalized URL of the actual job, if any: for boards the job page itself; for Telegram the first link in the post that is not `t.me`), `title`, `company`, `text` (plain, ≤ 20 000 chars), `posted_at`, `found_at`. _(Spec 012 changes this for posts that list several vacancies: one card per vacancy, job link per vacancy; see its technical considerations.)_
 - `state`: `pending` (awaiting AI), `new`, `seen`, `dismissed`, `added`.
 - `fit` (`high`/`medium`/`low`), `fit_reason`, `eval_attempts` (per row; after 3 failed validations the post is treated as rejected), `from_initial_scan` (bool: never alerted), `alert_handled_at` (set at the end of the run that made the card `new`, whether or not a message could be sent), `application_id` (nullable; cleared when that application is deleted).
 - UNIQUE (`user_id`, `external_key`). INDEX (`user_id`, `state`, `posted_at`). INDEX (`user_id`, `job_link`).
