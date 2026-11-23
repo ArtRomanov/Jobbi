@@ -49,16 +49,20 @@ Jobbi can only read public channels. Since PR #35 the user can forward a post fr
       - a digest of 6 non-IT jobs (sales, support, logistics) → no cards;
       - "8 vacancies from OZON" + a link → rated as one post, as today.
     - [ ] Cards that existed before this change are not split again.
+    - [ ] **Exclude words are switched off.** One excluded word could drop a whole digest with several relevant vacancies, so the exclude words block disappears from the Sources panel and no post or vacancy is skipped because of them. Words the user already saved are kept but ignored (removing them completely is backlog #12).
+    - [ ] Jobbi reads up to 3,000 characters of each post. If any post read for the user in the last 24 hours was longer, the daily summary (spec 006) adds the line "✂️ N posts in the last 24 hours were longer than Jobbi reads (3,000 characters); vacancies at their end may have been missed."
 
 ### 2.2 Forwarding posts to the bot
 
 - **As a** user with Telegram linked, **I want to** forward a post from any channel to the Jobbi bot, **so that** vacancies from private channels Jobbi cannot read reach my Inbox too.
   - **Acceptance Criteria:**
-    - [ ] A post forwarded from a public or private channel to the bot's private chat is rated like a post from a watched channel: digests are split and only matching vacancies become cards. Exclude words are **not** applied (the user picked the post).
+    - [ ] A post forwarded from a public or private channel to the bot's private chat is rated like a post from a watched channel: digests are split and only matching vacancies become cards.
     - [ ] The bot replies at once: "📥 Got it. Jobbi will rate it and add matching vacancies to your Inbox." Without a search description it replies "📥 Saved. Describe what you're looking for on the Sources page so Jobbi can rate it."; the post then waits up to 7 days, as in spec 009.
     - [ ] After the post is rated (usually within 2 minutes), the bot sends a second message as a reply to the forwarded post:
       - digest with matches: "✅ 2 of 6 vacancies match. Added to your Inbox.";
       - single vacancy that matches: "✅ Added to your Inbox: <Fit> · <Role> — <Company>" ("Unknown role" / "Unknown company" when missing);
+      - single vacancy that matches a card already in the Inbox (same job link, merged into it): "<Role> — <Company> is already in your Inbox.";
+      - in a digest, vacancies merged into existing cards count as matches in "N of M vacancies match";
       - a vacancy or digest with no match: "None of the vacancies in this post match your search.";
       - not a vacancy: "This post doesn't look like a vacancy.";
       - the AI could not rate it after 3 attempts: "Jobbi couldn't rate this post."
@@ -78,6 +82,7 @@ Spec 009 stays Completed. These of its points are superseded by this spec, and 0
 - §2.2 "A post or job Jobbi has seen before never creates a second card" and "the card keeps the date, fit and text of the first post found": a digest can give several cards, each with its own fragment.
 - Terms, "Job link": for a digest it is defined per vacancy.
 - Out-of-Scope, "Private Telegram channels and groups": forwarding their posts is now supported (§2.2 here); reading them directly stays out of scope.
+- §2.1 exclude words (adding, removing, per user) and §2.2 "contains none of the exclude words": exclude words are hidden and no longer applied (§2.1 here).
 
 ---
 
@@ -86,6 +91,8 @@ Spec 009 stays Completed. These of its points are superseded by this spec, and 0
 ### In-Scope
 
 - Splitting digests from watched Telegram channels and from forwarded posts.
+- Hiding and switching off exclude words (stored words are kept).
+- The daily-summary line about posts longer than Jobbi reads.
 - The forward-to-Inbox flow, including the bot's second message with the result.
 - Pointers in spec 009; roadmap: add the Vacancy Discovery item and update "Quick Add from Telegram" (a forward from a channel now goes to the Inbox).
 
