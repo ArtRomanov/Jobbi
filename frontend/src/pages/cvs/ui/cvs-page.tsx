@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { listCvs, deleteCv, duplicateCv, type Cv } from "@/entities/cv";
-import { downloadCvPdf } from "@/features/cv-pdf";
+import { downloadCvTextPdf } from "@/features/cv-pdf";
 import { PageCard, PageHeader, Button, colors } from "@/shared/ui";
 import { handleApiError } from "@/shared/api";
 import { useToast } from "@/shared/ui";
@@ -77,7 +77,7 @@ export function CvsPage() {
     async (cv: Cv) => {
       setDownloadingId(cv.id);
       try {
-        await downloadCvPdf(cv);
+        await downloadCvTextPdf({ name: cv.name, content: cv.content });
       } catch (err: unknown) {
         handleApiError(err, showToast);
       } finally {

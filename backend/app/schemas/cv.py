@@ -1,63 +1,37 @@
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+CV_CONTENT_MAX_CHARS = 20_000
+CV_NAME_MAX_CHARS = 255
 
-class PersonalInfo(BaseModel):
-    full_name: str | None = None
-    email: str | None = None
-    phone: str | None = None
-    location: str | None = None
-    linkedin_url: str | None = None
-
-
-class WorkExperienceEntry(BaseModel):
-    company: str
-    role: str
-    start_date: str | None = None
-    end_date: str | None = None
-    is_current: bool = False
-    description: str | None = None
-
-
-class EducationEntry(BaseModel):
-    institution: str
-    degree: str | None = None
-    field_of_study: str | None = None
-    start_year: str | None = None
-    end_year: str | None = None
-    description: str | None = None
+# Stripped before the length check, so a whitespace-only name is rejected.
+CvName = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True, min_length=1, max_length=CV_NAME_MAX_CHARS
+    ),
+]
+CvContent = Annotated[str, Field(max_length=CV_CONTENT_MAX_CHARS)]
 
 
 class CvCreate(BaseModel):
-    name: str = Field(min_length=1)
-    personal_info: PersonalInfo | None = None
-    summary: str | None = None
-    work_experience: list[WorkExperienceEntry] | None = None
-    education: list[EducationEntry] | None = None
-    skills: str | None = None
-    languages: str | None = None
+    name: CvName
+    content: CvContent = ""
 
 
 class CvUpdate(BaseModel):
-    name: str | None = None
-    personal_info: PersonalInfo | None = None
-    summary: str | None = None
-    work_experience: list[WorkExperienceEntry] | None = None
-    education: list[EducationEntry] | None = None
-    skills: str | None = None
-    languages: str | None = None
+    name: CvName | None = None
+    content: CvContent | None = None
+    version: int
 
 
 class CvRead(BaseModel):
     id: str
     name: str
-    personal_info: PersonalInfo | None
-    summary: str | None
-    work_experience: list[WorkExperienceEntry] | None
-    education: list[EducationEntry] | None
-    skills: str | None
-    languages: str | None
+    content: str
+    version: int
     linked_applications_count: int = 0
     created_at: datetime
     updated_at: datetime
