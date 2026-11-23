@@ -155,9 +155,9 @@ Conventions for every slice:
 
 ---
 
-- [ ] **Slice 7: AI chat proposes CV text edits as change cards**
-  - [ ] Migration: the `chat_change_cards` table (tech spec §2.1). **[Agent: database-expert]**
-  - [ ] Backend:
+- [x] **Slice 7: AI chat proposes CV text edits as change cards**
+  - [x] Migration: the `chat_change_cards` table (tech spec §2.1). **[Agent: database-expert]**
+  - [x] Backend:
     - `services/chat_tools.py` (`propose_cv_edit` schema, Pydantic validation);
     - `groq_client`/`chat_service`:
       - pass tools only when a CV is linked;
@@ -176,16 +176,16 @@ Conventions for every slice:
     - clearing the chat and deleting the application remove the cards.
 
     Tests with a fake Groq tool call. **[Agent: python-backend]**
-  - [ ] `scripts/smoke_chat_cards.py`: live check on the real chat model (prompts "shorten my summary", "add skill X", "remove the line about Y"). The tool calls must be valid and their passages must match the CV. Record the results. **[Agent: python-backend]**
-  - [ ] Frontend:
+  - [x] `scripts/smoke_chat_cards.py`: live check on the real chat model (prompts "shorten my summary", "add skill X", "remove the line about Y"). The tool calls must be valid and their passages must match the CV. Record the results. **[Agent: python-backend]**
+  - [x] Frontend:
     - `features/chat-interface/ui/cv-change-card.tsx` (before/after with `diffLines`, a position label, Accept/Reject, inline error, Accepted/Rejected/Stale styling);
     - the stream reader handles `event: cards`;
     - history renders cards;
     - Pending cards stay clickable after a reload.
 
     Tests. **[Agent: typescript-frontend]**
-  - [ ] Code review: card component, stream handling. **[Agent: react-code-reviewer]**
-  - [ ] Verify:
+  - [x] Code review: card component, stream handling. **[Agent: react-code-reviewer]**
+  - [x] Verify:
     - in a real application chat, ask for an edit: a card appears;
     - Accept changes only that passage (check in the editor);
     - Reject changes nothing;
@@ -193,7 +193,7 @@ Conventions for every slice:
     - Accept a card while the editor is open with changes: the editor's Save shows "changed elsewhere";
     - with no CV linked, there are no cards and the assistant explains.
 
-    **[Agent: qa-tester]**
+    **[Agent: qa-tester]** _(2026-11-23: PR #27 — live smoke on qwen 3/3 valid (14/15 over 5 earlier runs); backend 1211 on 3.11/3.14, Vitest 445; code review no P0/P1; security review no findings. In-browser card flow pending the live check)_
 
 ---
 
