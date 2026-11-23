@@ -33,17 +33,25 @@ appears several times takes the first title marked up as one (heading or
 first non-empty one. Links without any
 title are dropped, unless a pattern was given (then the last path segment is
 used).
+
+ATS hint: every ``<a href>``, ``<iframe src>`` and ``<script src>`` on the
+page, on any host, is run through ``parse_source_input``; Greenhouse, Lever
+and Teamtailor boards count (Greenhouse embed links such as
+``boards.greenhouse.io/embed/job_board?for=<token>`` give the ``for=`` token).
+The board linked most often wins (ties: the first seen). Nothing is fetched.
 """
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, unquote, urljoin, urlsplit
 
 from bs4 import BeautifulSoup, Tag
 
 from app.discovery.normalize import normalize_url
+from app.services.vacancy_source_parsing import SourceInputError, parse_source_input
 
-__all__ = ["ListingJob", "ListingPage", "MAX_TITLE_CHARS", "parse_listing"]
+__all__ = ["AtsHint", "ListingJob", "ListingPage", "MAX_TITLE_CHARS", "parse_listing"]
 
 MAX_TITLE_CHARS = 255
 
@@ -64,6 +72,37 @@ _CHROME_TAGS = ["nav", "header", "footer"]
 _WIDGET_ROLES = frozenset({"option", "tab", "menuitem"})
 _PAGER_RE = re.compile(r"paginat|pager", re.I)
 
+# Board kind -> (service name, canonical link the add flow accepts).
+_ATS_BOARDS: dict[str, tuple[str, str]] = {
+    "greenhouse": ("Greenhouse", "https://job-boards.greenhouse.io/{handle}"),
+    "lever": ("Lever", "https://jobs.lever.co/{handle}"),
+    "lever_eu": ("Lever", "https://jobs.eu.lever.co/{handle}"),
+    "teamtailor": ("Teamtailor", "https://{handle}.teamtailor.com"),
+}
+_ATS_HOST_SUFFIXES = (".greenhouse.io", ".lever.co", ".teamtailor.com")
+_GREENHOUSE_EMBED_HOSTS = frozenset(
+    {
+        "boards.greenhouse.io",
+        "job-boards.greenhouse.io",
+        "boards.eu.greenhouse.io",
+        "job-boards.eu.greenhouse.io",
+    }
+)
+_GREENHOUSE_EMBED_PATH_RE = re.compile(r"/embed/(?:job_board(?:/js)?|job_app)/?")
+
+
+@dataclass(frozen=True, slots=True)
+class AtsHint:
+    """A job board the page links to.
+
+    ``input`` is a link the add flow accepts as that board; ``label`` is the
+    service name shown to the user.
+    """
+
+    kind: str
+    input: str
+    label: str
+
 
 @dataclass(frozen=True, slots=True)
 class ListingJob:
@@ -75,6 +114,7 @@ class ListingJob:
 class ListingPage:
     jobs: list[ListingJob] = field(default_factory=list)
     next_url: str | None = None
+    ats_hint: AtsHint | None = None
 
 
 def _bare_host(host: str) -> str:
@@ -229,10 +269,62 @@ def _attr(tag: Tag, name: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _board_of(raw: str | None, page_url: str) -> tuple[str, str] | None:
+    """``(kind, handle)`` of a Greenhouse/Lever/Teamtailor board link, or None."""
+    if not raw or not (raw := raw.strip()):
+        return None
+    try:
+        parts = urlsplit(urljoin(page_url, raw))
+    except ValueError:
+        return None
+    host = (parts.hostname or "").lower()
+    if parts.scheme not in ("http", "https") or not f".{host}".endswith(
+        _ATS_HOST_SUFFIXES
+    ):
+        return None
+    if host in _GREENHOUSE_EMBED_HOSTS and _GREENHOUSE_EMBED_PATH_RE.fullmatch(
+        parts.path
+    ):
+        # The board pattern rejects `/embed/...`; the token is in `for=`.
+        # Checking the canonical board link keeps the token as strict as a
+        # pasted one (charset, length, reserved words).
+        token = dict(parse_qsl(parts.query)).get("for", "")
+        if not token or "/" in token or "?" in token or "#" in token:
+            return None
+        link = _ATS_BOARDS["greenhouse"][1].format(handle=token)
+    else:
+        # The fragment is page-local; board patterns do not accept it.
+        link = parts._replace(fragment="").geturl()
+    try:
+        parsed = parse_source_input(link)
+    except SourceInputError:
+        return None
+    if parsed.kind not in _ATS_BOARDS:
+        return None
+    return parsed.kind, parsed.handle
+
+
+def _find_ats_hint(soup: BeautifulSoup, page_url: str) -> AtsHint | None:
+    counts: Counter[tuple[str, str]] = Counter()
+    for tag in soup.find_all(["a", "iframe", "script"]):
+        if not isinstance(tag, Tag):
+            continue
+        attribute = "href" if tag.name == "a" else "src"
+        if (board := _board_of(_attr(tag, attribute), page_url)) is not None:
+            counts[board] += 1
+    if not counts:
+        return None
+    # Counter keeps first-seen order and max() returns the first maximum.
+    kind, handle = max(counts, key=counts.__getitem__)
+    label, template = _ATS_BOARDS[kind]
+    return AtsHint(kind=kind, input=template.format(handle=handle), label=label)
+
+
 def parse_listing(
     html: str, page_url: str, job_link_contains: str | None
 ) -> ListingPage:
-    """Job links (page order, deduped by normalized URL) and the next page URL.
+    """Job links (page order, deduped by normalized URL), the next page URL and
+    the job board the page links to most (see the module docstring).
 
     ``page_url`` is the URL the page was fetched from (after redirects).
     """
@@ -273,5 +365,7 @@ def parse_listing(
         jobs.append(ListingJob(url=url, title=title))
 
     return ListingPage(
-        jobs=jobs, next_url=_find_next(soup, anchors, page_url, page_host)
+        jobs=jobs,
+        next_url=_find_next(soup, anchors, page_url, page_host),
+        ats_hint=_find_ats_hint(soup, page_url),
     )

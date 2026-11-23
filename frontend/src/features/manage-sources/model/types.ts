@@ -3,7 +3,12 @@ import type {
   RemovedVacancySource,
   VacancySearchSettings,
   VacancySource,
+  VacancySourcePreview,
 } from "@/entities/vacancy-source";
+import type { WebSourceOptions } from "./schemas";
+
+/** Inline validation messages of the web source preview fields. */
+export type WebSourceFieldErrors = Partial<Record<keyof WebSourceOptions, string>>;
 
 export type SourcesLoadState = "loading" | "error" | "ready";
 
@@ -22,16 +27,12 @@ export interface UseManageSourcesResult {
   /** Daily limit / AI availability; null until the initial load succeeds. */
   status: DiscoveryStatus | null;
   loadState: SourcesLoadState;
-  input: string;
-  setInput: (value: string) => void;
-  /** Inline error under the add input, or null. */
-  addError: string | null;
-  isAdding: boolean;
   /** Ids of sources with a delete request in flight. */
   removingIds: ReadonlySet<string>;
   /** True until the initial list has loaded; adding is blocked meanwhile. */
   isAddDisabled: boolean;
-  addSource: () => Promise<void>;
+  /** Append a just-created source to the local list. */
+  appendSource: (source: VacancySource) => void;
   /** Resolves true when the source was removed. */
   removeSource: (id: string) => Promise<boolean>;
   retryLoad: () => void;
@@ -47,4 +48,37 @@ export interface UseSearchSettingsFormResult {
   isSaving: boolean;
   /** Save both fields; resolves true on success. */
   save: () => Promise<boolean>;
+}
+
+/** Which add-flow request is running ("board": adding the ATS board a preview hints at). */
+export type AddSourceAction = "submit" | "recheck" | "save" | "board";
+
+/** What Add did: created a source, opened a web preview, failed, or did nothing. */
+export type AddSubmitOutcome = "added" | "preview" | "error" | "skipped";
+
+/** An open web page preview. `id` changes on every new Add (the form re-mounts). */
+export interface WebPreview {
+  id: number;
+  /** The trimmed input the preview was made for (Save sends this, not the live input). */
+  input: string;
+  result: VacancySourcePreview;
+}
+
+export interface UseAddSourceResult {
+  input: string;
+  setInput: (value: string) => void;
+  /** Inline error under the add input, or null. */
+  addError: string | null;
+  busyAction: AddSourceAction | null;
+  isBusy: boolean;
+  preview: WebPreview | null;
+  /** Re-check / save error shown inside the preview, or null. */
+  previewError: string | null;
+  submit: () => Promise<AddSubmitOutcome>;
+  recheck: (jobLinkContains: string | null) => Promise<void>;
+  /** Resolves true when the web source was created. */
+  save: (options: WebSourceOptions) => Promise<boolean>;
+  /** Adds the hinted board like a pasted board link; resolves true when created. */
+  addBoard: (boardInput: string) => Promise<boolean>;
+  cancelPreview: () => void;
 }

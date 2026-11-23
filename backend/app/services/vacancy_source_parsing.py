@@ -1,9 +1,12 @@
-"""Turn what the user typed into a (kind, handle) pair.
+"""Turn what the user typed into a (kind, handle) pair, or a web page URL.
 
-The user's text is never fetched. It is only matched against strict, anchored
-patterns; the handle extracted here is later combined with a fixed host
+Telegram and board inputs are only matched against strict, anchored patterns;
+the handle extracted here is later combined with a fixed host
 (`https://t.me/s/<handle>`), so look-alike hosts or odd paths cannot steer a
-request anywhere else (no SSRF).
+request anywhere else (no SSRF). Any other http(s) link becomes a `web`
+source: its URL is fetched only through `discovery/fetchers/safe_http.py`,
+which enforces the address and port rules (this module checks only scheme,
+credentials and the shape of the host).
 
 Supported inputs:
 - Telegram: `@name`, `name`, `t.me/name`, `t.me/s/name` -> kind `telegram`.
@@ -14,23 +17,38 @@ Supported inputs:
   `lever_eu` (Lever keeps a company's data in one region).
 - Teamtailor: `<sub>.teamtailor.com[/any path]` -> `teamtailor`, handle `<sub>`;
   only `https://<sub>.teamtailor.com/jobs.rss` is ever requested.
+- Web page: any other `http(s)://host/...` link, or `host.tld/...` without a
+  scheme (https is assumed) -> `web`, with the normalized URL in `url` and an
+  empty handle (the source id becomes the handle when it is saved).
 
-Which error text an unrecognised input gets (`_invalid_input_message`):
-- its parsed host is, or ends with, `.greenhouse.io`, `.lever.co` or
-  `.teamtailor.com` -> BOARD_INVALID_INPUT_MESSAGE (a host check, not a
-  substring search, so `clever.com/careers` is not taken for a Lever link);
-- anything else -> INVALID_INPUT_MESSAGE (the Telegram hint).
+Order: Telegram -> Greenhouse/Lever -> Teamtailor -> web. Error texts:
+- a scheme other than http/https (`file:`, `ftp:`, `javascript:`, ...), a
+  `user:pass@` part, an invalid port or an over-long link -> UNSAFE_LINK_MESSAGE;
+- the parsed host is, or ends with, `.greenhouse.io`, `.lever.co` or
+  `.teamtailor.com` but no board pattern matched -> BOARD_INVALID_INPUT_MESSAGE
+  (a host check, not a substring search, so `clever.com/careers` is a web page);
+- the host is Telegram's (`t.me`, `telegram.me`) but no channel pattern matched,
+  or the input is neither a channel name nor a link -> INVALID_INPUT_MESSAGE
+  (the Telegram hint).
 """
 
+import ipaddress
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-MAX_INPUT_LENGTH = 200
+from app.discovery.normalize import normalize_url
+
+# Web page links may be long (search filters live in the query string); the
+# column is String(2048). Telegram and board patterns only run on inputs up to
+# MAX_HANDLE_INPUT_LENGTH, which also bounds their regex work.
+MAX_INPUT_LENGTH = 2048
+MAX_HANDLE_INPUT_LENGTH = 200
 
 INVALID_INPUT_MESSAGE = "Enter a Telegram channel as @name or a t.me/name link"
 BOARD_INVALID_INPUT_MESSAGE = "Not a Greenhouse, Lever or Teamtailor job board link"
+UNSAFE_LINK_MESSAGE = "This link can't be used"
 
 # Telegram usernames: 5-32 letters, digits or underscores.
 _TELEGRAM_HANDLE = r"[A-Za-z0-9_]{5,32}"
@@ -92,11 +110,19 @@ _TEAMTAILOR_LINK = re.compile(
 _TEAMTAILOR_RESERVED = frozenset({"www", "app", "api"})
 
 _BOARD_HOST_SUFFIXES = (".greenhouse.io", ".lever.co", ".teamtailor.com")
+_TELEGRAM_HOST_SUFFIXES = (".t.me", ".telegram.me")
 _HAS_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://")
+# `scheme:` at the start. `host.tld:8080` matches too; `_url_scheme` tells
+# the two apart by what follows the colon (a port number).
+_SCHEME_PREFIX = re.compile(
+    r"(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*):(?P<rest>.*)", re.DOTALL
+)
+_HTTP_SCHEMES = frozenset({"http", "https"})
+_HOST_LABEL = re.compile(r"(?!-)[a-z0-9-]{1,63}(?<!-)")
 
 
 class SourceInputError(ValueError):
-    """The input is not a recognised channel or board reference."""
+    """The input is not a recognised channel, board or web page link."""
 
     def __init__(self, message: str = INVALID_INPUT_MESSAGE) -> None:
         super().__init__(message)
@@ -106,7 +132,10 @@ class SourceInputError(ValueError):
 @dataclass(frozen=True, slots=True)
 class ParsedSource:
     kind: str
+    # Lowercased channel / board handle; empty for `web` until it is saved.
     handle: str
+    # `web` only: the normalized listing URL.
+    url: str | None = None
 
 
 def _parse_telegram(text: str) -> ParsedSource | None:
@@ -162,26 +191,110 @@ def _input_host(text: str) -> str | None:
     return parts.hostname
 
 
-def _is_board_host(host: str | None) -> bool:
+def _host_has_suffix(host: str | None, suffixes: tuple[str, ...]) -> bool:
     if not host:
         return False
-    return f".{host.rstrip('.')}".endswith(_BOARD_HOST_SUFFIXES)
+    return f".{host.rstrip('.')}".endswith(suffixes)
+
+
+def _is_board_host(host: str | None) -> bool:
+    return _host_has_suffix(host, _BOARD_HOST_SUFFIXES)
+
+
+def _is_telegram_host(host: str | None) -> bool:
+    return _host_has_suffix(host, _TELEGRAM_HOST_SUFFIXES)
+
+
+def _url_scheme(text: str) -> str | None:
+    """The input's scheme, lowercased; None when it has none.
+
+    `host.tld:8080/x` is a host with a port, not the scheme `host.tld`.
+    """
+    match = _SCHEME_PREFIX.match(text)
+    if match is None:
+        return None
+    rest = match["rest"]
+    if rest[:1].isdigit():
+        return None
+    return match["scheme"].lower()
+
+
+def _is_valid_host(host: str) -> bool:
+    """An IP literal, `localhost`, or a dotted DNS name (IDN allowed).
+
+    Whether the address may be fetched is decided later by `safe_http`.
+    """
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return True
+    host = host.rstrip(".")
+    if host == "localhost":
+        return True
+    try:
+        ascii_host = host.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        return False
+    labels = ascii_host.split(".")
+    if len(labels) < 2 or not any(ch.isalpha() for ch in labels[-1]):
+        return False
+    return all(_HOST_LABEL.fullmatch(label) for label in labels)
 
 
 def _invalid_input_message(text: str) -> str:
-    """Pick the hint for unrecognised input (rule in the module docstring)."""
+    """Pick the error text for input that is not usable as it is."""
     if _is_board_host(_input_host(text)):
         return BOARD_INVALID_INPUT_MESSAGE
+    if _url_scheme(text) is not None:
+        return UNSAFE_LINK_MESSAGE
     return INVALID_INPUT_MESSAGE
 
 
-def parse_source_input(raw: str) -> ParsedSource:
-    """Parse user input into a source kind and a lowercased handle.
+def _parse_web(text: str) -> ParsedSource:
+    """Turn an http(s) link (scheme optional) into a `web` source.
 
     Raises:
-        SourceInputError: if the input is too long, contains whitespace or
-            control characters, or matches no supported pattern. Its message
-            is the Telegram or the board hint (see `_invalid_input_message`).
+        SourceInputError: a non-http scheme, not a link, a Telegram or board
+            host that did not match its pattern, credentials in the link, an
+            invalid port, or a normalized URL longer than MAX_INPUT_LENGTH.
+    """
+    scheme = _url_scheme(text)
+    if scheme is not None and scheme not in _HTTP_SCHEMES:
+        raise SourceInputError(UNSAFE_LINK_MESSAGE)
+    if scheme is None:
+        text = f"https:{text}" if text.startswith("//") else f"https://{text}"
+    try:
+        parts = urlsplit(text)
+        port = parts.port
+    except ValueError as exc:
+        raise SourceInputError(UNSAFE_LINK_MESSAGE) from exc
+    host = parts.hostname
+    if _is_board_host(host):
+        raise SourceInputError(BOARD_INVALID_INPUT_MESSAGE)
+    if _is_telegram_host(host):
+        raise SourceInputError(INVALID_INPUT_MESSAGE)
+    if not host or not _is_valid_host(host):
+        # Without a scheme it was probably a mistyped channel name.
+        raise SourceInputError(
+            INVALID_INPUT_MESSAGE if scheme is None else UNSAFE_LINK_MESSAGE
+        )
+    if parts.username is not None or parts.password is not None or port == 0:
+        raise SourceInputError(UNSAFE_LINK_MESSAGE)
+    url = normalize_url(text)
+    if len(url) > MAX_INPUT_LENGTH:
+        raise SourceInputError(UNSAFE_LINK_MESSAGE)
+    return ParsedSource(kind="web", handle="", url=url)
+
+
+def parse_source_input(raw: str) -> ParsedSource:
+    """Parse user input into a source kind and a lowercased handle (or a URL).
+
+    Raises:
+        SourceInputError: the input is empty, too long, contains whitespace or
+            control characters, or matches no supported form. Its message is
+            one of the texts listed in the module docstring.
     """
     text = raw.strip()
     if not text:
@@ -190,8 +303,9 @@ def parse_source_input(raw: str) -> ParsedSource:
         ch.isspace() or not ch.isprintable() for ch in text
     ):
         raise SourceInputError(_invalid_input_message(text))
-    for parser in _PARSERS:
-        parsed = parser(text)
-        if parsed is not None:
-            return parsed
-    raise SourceInputError(_invalid_input_message(text))
+    if len(text) <= MAX_HANDLE_INPUT_LENGTH:
+        for parser in _PARSERS:
+            parsed = parser(text)
+            if parsed is not None:
+                return parsed
+    return _parse_web(text)

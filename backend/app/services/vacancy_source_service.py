@@ -1,32 +1,53 @@
-"""Watched sources (Telegram channels, Greenhouse / Lever / Teamtailor boards).
+"""Watched sources (Telegram channels, Greenhouse / Lever / Teamtailor boards,
+web listing pages).
 
-Invariant: no network I/O inside a database transaction. `add_source` ends
-the read transaction before the live check and writes in a short one after.
+Invariant: no network I/O inside a database transaction. `add_source` and
+`preview_source` end the read transaction before the live check; `add_source`
+writes in a short one after.
 """
 
+import hashlib
+import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
+from urllib.parse import urlsplit
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.discovery.fetchers.web_listing import AtsHint, ListingJob
+from app.discovery.web_scan import MAX_LISTING_PAGES, web_seen_key
 from app.models.vacancy import Vacancy, VacancyCardSource
 from app.models.vacancy_search_settings import VacancySearchSettings
+from app.models.vacancy_seen_key import VacancySeenKey
 from app.models.vacancy_source import VacancySource
 from app.services.vacancy_source_check import (
+    PREVIEW_TIMEOUT_SECONDS,
+    SAVE_TIMEOUT_SECONDS,
     check_lever_board,
     fetch_greenhouse_board_name,
     fetch_teamtailor_board_name,
     fetch_telegram_channel_title,
+    read_web_listing,
 )
-from app.services.vacancy_source_parsing import ParsedSource, parse_source_input
+from app.services.vacancy_source_parsing import (
+    ParsedSource,
+    SourceInputError,
+    parse_source_input,
+)
 
 MAX_SOURCES = 30
 UNAVAILABLE_AFTER = timedelta(hours=24)
+MAX_SOURCE_NAME_LENGTH = 100
+MAX_JOB_LINK_CONTAINS_LENGTH = 100
+PREVIEW_TITLES = 5
 
 SOURCE_LIMIT_MESSAGE = "You can watch up to 30 sources"
 DUPLICATE_SOURCE_MESSAGE = "Already in your sources"
+NAME_TOO_LONG_MESSAGE = "Name can be up to 100 characters"
+BAD_JOB_LINK_CONTAINS_MESSAGE = "'Job link contains' must be 1–100 characters"
 
 MAX_DESCRIPTION_LENGTH = 500
 MAX_EXCLUDE_TERMS = 50
@@ -49,7 +70,22 @@ class SourceLimitError(Exception):
 
 
 class DuplicateSourceError(Exception):
-    """The same kind + handle is already in the user's sources."""
+    """The same kind + handle (web: the same normalized URL) is already watched."""
+
+
+class SourceNotFoundError(Exception):
+    """The given source id is not one of the user's sources."""
+
+
+@dataclass(frozen=True, slots=True)
+class SourcePreview:
+    """What `preview_source` found; only `kind` is set for non-web sources."""
+
+    kind: str
+    default_name: str | None = None
+    found_count: int | None = None
+    titles: list[str] | None = None
+    ats_hint: AtsHint | None = None
 
 
 class SearchSettingsError(Exception):
@@ -173,33 +209,149 @@ async def update_search_settings(
     raise AssertionError("unreachable")  # pragma: no cover
 
 
-async def _source_exists(db: AsyncSession, user_id: str, parsed: ParsedSource) -> bool:
-    result = await db.execute(
-        select(VacancySource.id)
-        .where(
-            VacancySource.user_id == user_id,
+def url_hash(url: str) -> str:
+    """sha256 hex of an already normalized URL (backs the duplicate check)."""
+    return hashlib.sha256(url.encode("utf-8")).hexdigest()
+
+
+def web_default_name(url: str) -> str:
+    """The listing's host without a leading `www.` (e.g. "geekjob.ru")."""
+    host = (urlsplit(url).hostname or "").lower()
+    return host.removeprefix("www.") or url
+
+
+def normalize_source_name(raw: str | None) -> str | None:
+    """Trim; blank means "use the default name" (None).
+
+    Raises:
+        SourceInputError: longer than MAX_SOURCE_NAME_LENGTH after trimming.
+    """
+    name = (raw or "").strip()
+    if not name:
+        return None
+    if len(name) > MAX_SOURCE_NAME_LENGTH:
+        raise SourceInputError(NAME_TOO_LONG_MESSAGE)
+    return name
+
+
+def normalize_job_link_contains(raw: str | None) -> str | None:
+    """Trim; blank means "pick job links automatically" (None).
+
+    Raises:
+        SourceInputError: longer than MAX_JOB_LINK_CONTAINS_LENGTH after
+            trimming, or contains control characters.
+    """
+    pattern = (raw or "").strip()
+    if not pattern:
+        return None
+    if len(pattern) > MAX_JOB_LINK_CONTAINS_LENGTH or not pattern.isprintable():
+        raise SourceInputError(BAD_JOB_LINK_CONTAINS_MESSAGE)
+    return pattern
+
+
+async def _source_exists(
+    db: AsyncSession,
+    user_id: str,
+    parsed: ParsedSource,
+    exclude_id: str | None = None,
+) -> bool:
+    stmt = select(VacancySource.id).where(VacancySource.user_id == user_id)
+    if parsed.kind == "web":
+        assert parsed.url is not None
+        stmt = stmt.where(VacancySource.url_hash == url_hash(parsed.url))
+    else:
+        stmt = stmt.where(
             VacancySource.kind == parsed.kind,
             VacancySource.handle == parsed.handle,
         )
-        .limit(1)
-    )
+    if exclude_id is not None:
+        stmt = stmt.where(VacancySource.id != exclude_id)
+    result = await db.execute(stmt.limit(1))
     return result.first() is not None
 
 
-async def _count_sources(db: AsyncSession, user_id: str) -> int:
-    result = await db.execute(
+async def _count_sources(
+    db: AsyncSession, user_id: str, exclude_id: str | None = None
+) -> int:
+    stmt = (
         select(func.count())
         .select_from(VacancySource)
         .where(VacancySource.user_id == user_id)
     )
+    if exclude_id is not None:
+        stmt = stmt.where(VacancySource.id != exclude_id)
+    result = await db.execute(stmt)
     return result.scalar_one()
 
 
-async def _check_can_add(db: AsyncSession, user_id: str, parsed: ParsedSource) -> None:
-    if await _source_exists(db, user_id, parsed):
+async def _check_can_add(
+    db: AsyncSession,
+    user_id: str,
+    parsed: ParsedSource,
+    exclude_id: str | None = None,
+) -> None:
+    if await _source_exists(db, user_id, parsed, exclude_id):
         raise DuplicateSourceError
-    if await _count_sources(db, user_id) >= MAX_SOURCES:
+    if await _count_sources(db, user_id, exclude_id) >= MAX_SOURCES:
         raise SourceLimitError
+
+
+async def _check_owned(db: AsyncSession, user_id: str, source_id: str) -> None:
+    result = await db.execute(
+        select(VacancySource.id).where(
+            VacancySource.id == source_id, VacancySource.user_id == user_id
+        )
+    )
+    if result.first() is None:
+        raise SourceNotFoundError
+
+
+async def preview_source(
+    db: AsyncSession,
+    user_id: str,
+    raw_input: str,
+    *,
+    job_link_contains: str | None = None,
+    source_id: str | None = None,
+) -> SourcePreview:
+    """Show what a source would be, without saving anything.
+
+    Non-web kinds: only the parsed kind, no network call and no checks (the
+    create call does those). Web: duplicate and limit checks (`source_id`, the
+    source being edited, is left out of both), then page 1 of the listing.
+
+    Raises:
+        SourceInputError: unrecognised input or a bad `job_link_contains`.
+        SourceNotFoundError: `source_id` is not one of the user's sources.
+        DuplicateSourceError: the same normalized URL is already watched.
+        SourceLimitError: MAX_SOURCES reached.
+        SourceCheckError: unsafe link, page not readable, or no vacancies.
+    """
+    parsed = parse_source_input(raw_input)
+    if parsed.kind != "web":
+        return SourcePreview(kind=parsed.kind)
+    assert parsed.url is not None
+    pattern = normalize_job_link_contains(job_link_contains)
+
+    if source_id is not None:
+        await _check_owned(db, user_id, source_id)
+    await _check_can_add(db, user_id, parsed, exclude_id=source_id)
+    # End the read transaction before going to the network (see add_source).
+    await db.commit()
+
+    listing = await read_web_listing(
+        parsed.url,
+        pattern,
+        max_pages=1,
+        total_timeout_s=PREVIEW_TIMEOUT_SECONDS,
+    )
+    return SourcePreview(
+        kind=parsed.kind,
+        default_name=web_default_name(parsed.url),
+        found_count=len(listing.jobs),
+        titles=[job.title for job in listing.jobs[:PREVIEW_TITLES]],
+        ats_hint=listing.ats_hint,
+    )
 
 
 async def _fetch_display_name(parsed: ParsedSource) -> str:
@@ -216,18 +368,33 @@ async def _fetch_display_name(parsed: ParsedSource) -> str:
             raise NotImplementedError(parsed.kind)
 
 
-async def add_source(db: AsyncSession, user_id: str, raw_input: str) -> VacancySource:
+async def add_source(
+    db: AsyncSession,
+    user_id: str,
+    raw_input: str,
+    *,
+    job_link_contains: str | None = None,
+    name: str | None = None,
+) -> VacancySource:
     """Parse, check limits and duplicates, verify live, then save.
 
+    `job_link_contains` and `name` apply to web pages only; for other kinds
+    `name` is validated but not applied yet (renaming comes with Edit).
+
     Raises:
-        SourceInputError: unrecognised input.
+        SourceInputError: unrecognised input, or a bad name / pattern.
         DuplicateSourceError: already watched (checked before and after the
             live check; the unique constraint closes the race).
         SourceLimitError: MAX_SOURCES reached.
         SourceCheckError: the live check failed (channel not public, board
-            unreadable, or unreachable).
+            unreadable, unreachable; web: unsafe link, page not readable or
+            no vacancies on page 1).
     """
     parsed = parse_source_input(raw_input)
+    custom_name = normalize_source_name(name)
+    if parsed.kind == "web":
+        pattern = normalize_job_link_contains(job_link_contains)
+        return await _add_web_source(db, user_id, parsed, pattern, custom_name)
 
     # Cheap checks first, so a duplicate or a full list costs no network call.
     await _check_can_add(db, user_id, parsed)
@@ -254,6 +421,62 @@ async def add_source(db: AsyncSession, user_id: str, raw_input: str) -> VacancyS
         raise DuplicateSourceError from exc
     await db.refresh(source)
     return source
+
+
+async def _add_web_source(
+    db: AsyncSession,
+    user_id: str,
+    parsed: ParsedSource,
+    pattern: str | None,
+    custom_name: str | None,
+) -> VacancySource:
+    """Read the listing (up to MAX_LISTING_PAGES pages), then save the source
+    with every listed job remembered as seen, in one short transaction.
+
+    The first scan is complete at once: only jobs that appear later are new.
+    """
+    assert parsed.url is not None
+    await _check_can_add(db, user_id, parsed)
+    await db.commit()  # no transaction open during the fetch
+
+    listing = await read_web_listing(
+        parsed.url,
+        pattern,
+        max_pages=MAX_LISTING_PAGES,
+        total_timeout_s=SAVE_TIMEOUT_SECONDS,
+    )
+
+    await _check_can_add(db, user_id, parsed)
+    now = _now_naive()
+    source_id = str(uuid.uuid4())
+    source = VacancySource(
+        id=source_id,
+        user_id=user_id,
+        kind="web",
+        handle=source_id,
+        url=parsed.url,
+        url_hash=url_hash(parsed.url),
+        job_link_contains=pattern,
+        display_name=custom_name or web_default_name(parsed.url),
+        initial_scan_completed_at=now,
+        last_checked_at=now,
+    )
+    db.add(source)
+    db.add_all(_seen_keys(user_id, source_id, listing.jobs))
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise DuplicateSourceError from exc
+    await db.refresh(source)
+    return source
+
+
+def _seen_keys(
+    user_id: str, source_id: str, jobs: list[ListingJob]
+) -> list[VacancySeenKey]:
+    keys = dict.fromkeys(web_seen_key(source_id, job.url) for job in jobs)
+    return [VacancySeenKey(user_id=user_id, external_key=key) for key in keys]
 
 
 async def delete_source(db: AsyncSession, user_id: str, source_id: str) -> bool:

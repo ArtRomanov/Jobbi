@@ -41,6 +41,13 @@ class Vacancy(Base):
         ),
         Index("ix_vacancies_user_id_state_posted_at", "user_id", "state", "posted_at"),
         Index("ix_vacancies_user_id_job_link", "user_id", "job_link"),
+        # Detail step: a web source's needs_detail rows, oldest first.
+        Index(
+            "ix_vacancies_source_id_needs_detail_found_at",
+            "source_id",
+            "needs_detail",
+            "found_at",
+        ),
     )
 
     id: Mapped[str] = mapped_column(
@@ -82,6 +89,14 @@ class Vacancy(Base):
     # Cards from a source's first scan are never alerted.
     from_initial_scan: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
+    )
+    # Web pending rows whose job page is not read yet; the evaluator skips them.
+    needs_detail: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    # Failed job-page reads; at 3 the row is evaluated by its listing title.
+    detail_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=sql_text("0")
     )
     alert_handled_at: Mapped[datetime | None] = mapped_column()
     application_id: Mapped[str | None] = mapped_column(

@@ -458,11 +458,10 @@ async def test_teamtailor_duplicate_across_link_forms(
 @pytest.mark.parametrize(
     "raw",
     [
-        "approvalmax.teamtailor.com.evil.com",
-        "https://evil.com/approvalmax.teamtailor.com",
+        # Look-alikes on other hosts are web pages (tests/test_vacancy_web_sources_api.py).
         "https://a@approvalmax.teamtailor.com/jobs",
         "https://approvalmax.teamtailor.com:8443/jobs",
-        "clever.com/careers",
+        "https://www.teamtailor.com/jobs",
     ],
 )
 async def test_teamtailor_lookalikes_make_no_network_call(

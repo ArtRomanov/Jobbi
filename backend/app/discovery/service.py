@@ -8,8 +8,9 @@ database transaction is open. Every step is either
 Functions never hold an ORM object across a network call; they copy what they
 need into the frozen dataclasses below.
 
-Sources: Telegram channels and Greenhouse / Lever / Teamtailor boards
-(`board_scan`).
+Sources: Telegram channels, Greenhouse / Lever / Teamtailor boards
+(`board_scan`) and web pages (`web_scan` listing, then a detail step that
+reads each new job's own page before the AI sees it).
 
 Reposts (same `job_link` as a user's `new`/`seen`/`dismissed` card) merge into
 that card as an extra `vacancy_card_sources` row. Mostly at store time, before
@@ -20,6 +21,7 @@ card existed (e.g. two channels in one run, both pending) merge after a match.
 
 import asyncio
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass, field
@@ -46,10 +48,17 @@ from app.discovery.evaluator import (
     PostVerdict,
     evaluate_batch,
 )
+from app.discovery.fetchers import safe_http
+from app.discovery.fetchers.board_http import fits_columns
 from app.discovery.fetchers.errors import BoardReadError
+from app.discovery.fetchers.safe_http import PageFetchError, Resolver, UnsafeUrlError
 from app.discovery.fetchers.telegram import SourceReadError, fetch_channel_posts
+from app.discovery.fetchers.web_job import fetch_job
+from app.discovery.fetchers.web_listing import ListingJob
+from app.discovery.normalize import normalize_url
 from app.discovery.prefilter import excluded
 from app.discovery.types import RawPost
+from app.discovery.web_scan import read_listing, web_seen_key
 from app.models.user import User
 from app.models.vacancy import Vacancy, VacancyCardSource
 from app.models.vacancy_search_settings import VacancySearchSettings
@@ -64,6 +73,9 @@ __all__ = [
     "MAX_PAGES",
     "PENDING_WITHOUT_DESCRIPTION_RETENTION",
     "READ_ERROR_MESSAGES",
+    "WEB_DETAIL_LIMIT",
+    "WEB_RUN_BUDGET_S",
+    "WEB_SOURCE_DETAIL_BUDGET_S",
     "CleanupReport",
     "Clock",
     "DiscoveryConfig",
@@ -98,19 +110,41 @@ PENDING_WITHOUT_DESCRIPTION_RETENTION = timedelta(days=7)
 # States a repost can merge into (and that retention deletes after 30 days).
 _VISIBLE_STATES = ("new", "seen", "dismissed")
 
-# Keyed by `SourceReadError.reason` (Telegram) and `BoardReadError.reason`.
+# Keyed by `SourceReadError.reason` (Telegram), `BoardReadError.reason` and
+# the web listing outcomes (`unreachable`, `no_vacancies`).
 READ_ERROR_MESSAGES = {
     "private_or_deleted": "Channel is private or deleted",
     "not_found": "Job board not found",
     "unreachable": "Could not reach the source",
+    "no_vacancies": (
+        "No vacancies found — check the link or the 'Job link contains' field"
+    ),
 }
-SUPPORTED_KINDS = frozenset({"telegram"}) | BOARD_KINDS
+WEB_KIND = "web"
+SUPPORTED_KINDS = frozenset({"telegram", WEB_KIND}) | BOARD_KINDS
+_WEB_KEY_PREFIX = "web:"
+
+# Web sources (spec 010). Per hourly check and source: a listing read of up to
+# 5 pages, then at most WEB_DETAIL_LIMIT job pages, 1 s apart.
+WEB_DETAIL_LIMIT = 30
+WEB_DETAIL_PAUSE_S = 1.0
+# Failed job-page reads (one per check) before the row is rated by its title.
+WEB_DETAIL_MAX_ATTEMPTS = 3
+# Detail budget per source: stop after this many failures in a row or time.
+WEB_DETAIL_MAX_FAILURES_IN_ROW = 3
+WEB_SOURCE_DETAIL_BUDGET_S = 5 * 60.0
+# The whole web part (listings + details) of one `check_all`.
+WEB_RUN_BUDGET_S = 40 * 60.0
+# One listing read (up to 5 pages, each up to 15 s, 1 s apart).
+WEB_LISTING_TIMEOUT_S = 90.0
 
 SessionFactory: TypeAlias = Callable[[], AsyncSession]
 # Returns the current time as naive UTC. Called per source and per AI batch,
 # so long runs (30 s between batches) keep real timestamps and local days.
 Clock: TypeAlias = Callable[[], datetime]
 SleepFn: TypeAlias = Callable[[float], Awaitable[None]]
+# Seconds from an arbitrary start (`time.monotonic`); injectable for tests.
+MonotonicFn: TypeAlias = Callable[[], float]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -155,6 +189,9 @@ class _SourceRef:
     kind: str
     handle: str
     display_name: str
+    # Web only: the listing URL and the optional "Job link contains" filter.
+    url: str | None = None
+    job_link_contains: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -162,6 +199,14 @@ class _PendingRow:
     vacancy_id: str
     eval_attempts: int
     post: RawPost
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _DetailRow:
+    vacancy_id: str
+    url: str
+    title: str | None
+    detail_attempts: int
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -261,20 +306,27 @@ async def check_all(
     config: DiscoveryConfig | None = None,
     sleep: SleepFn = asyncio.sleep,
     bot: Bot | None = None,
+    web_resolver: Resolver = safe_http.system_resolver,
+    monotonic: MonotonicFn = time.monotonic,
 ) -> RunReport:
     """Hourly check: read every source with a completed first scan, store new
     posts, then evaluate the pending posts of every user with a description.
 
     Sources still in their first scan are skipped. One failing source does not
-    stop the run. At the end each user gets one Telegram alert (when `bot` is
-    given and the user linked Telegram) for the cards that became `new` in
-    this run, first-scan cards excluded.
+    stop the run. Web sources are read last, with their own guarded client
+    (`safe_http`): first every web listing, then the detail step of every web
+    source, all within `WEB_RUN_BUDGET_S`. At the end each user gets one
+    Telegram alert (when `bot` is given and the user linked Telegram) for the
+    cards that became `new` in this run, first-scan cards excluded.
     """
     config = config or DiscoveryConfig.from_settings()
     report = RunReport()
 
     async def work() -> None:
-        for source in await _load_sources(session_factory, clock(), initial=False):
+        sources = await _load_sources(session_factory, clock(), initial=False)
+        for source in sources:
+            if source.kind == WEB_KIND:
+                continue
             await _scan_source(
                 session_factory,
                 http_client,
@@ -283,6 +335,17 @@ async def check_all(
                 report,
                 initial=False,
                 sleep=sleep,
+            )
+        web_sources = [source for source in sources if source.kind == WEB_KIND]
+        if web_sources:
+            await _check_web_sources(
+                session_factory,
+                web_sources,
+                clock,
+                report,
+                sleep=sleep,
+                resolver=web_resolver,
+                monotonic=monotonic,
             )
         await evaluate_pending(
             session_factory,
@@ -396,7 +459,9 @@ async def _load_sources(
 ) -> list[_SourceRef]:
     stmt = select(VacancySource).where(VacancySource.kind.in_(sorted(SUPPORTED_KINDS)))
     if initial:
+        # Web sources record what is listed at save time; never a first scan.
         stmt = stmt.where(
+            VacancySource.kind != WEB_KIND,
             VacancySource.initial_scan_completed_at.is_(None),
             (VacancySource.next_initial_attempt_at.is_(None))
             | (VacancySource.next_initial_attempt_at <= now),
@@ -413,6 +478,8 @@ async def _load_sources(
                 kind=s.kind,
                 handle=s.handle,
                 display_name=s.display_name,
+                url=s.url,
+                job_link_contains=s.job_link_contains,
             )
             for s in sources
         ]
@@ -568,11 +635,14 @@ async def _store_posts(
     *,
     initial: bool,
     seen_only_keys: Sequence[str] = (),
+    needs_detail: bool = False,
 ) -> None:
     """Record seen keys and insert `pending` cards in one short transaction.
 
     `seen_only_keys` (board initial scan: jobs outside the window) are only
-    recorded as seen, so they never become cards later.
+    recorded as seen, so they never become cards later. `needs_detail` (web
+    listing items) keeps the new cards away from the AI until the detail
+    step has read their job page.
     """
     values: dict[str, Any] = {
         "last_checked_at": now,
@@ -653,6 +723,7 @@ async def _store_posts(
                     posted_at=post.posted_at,
                     found_at=now,
                     state="pending",
+                    needs_detail=needs_detail,
                     from_initial_scan=initial,
                     # First-scan cards are never alerted.
                     alert_handled_at=now if initial else None,
@@ -801,8 +872,7 @@ async def _promote_earlier_pending(
             state=state,
             fit=verdict.fit.value if verdict.fit is not None else None,
             fit_reason=verdict.reason or None,
-            company=func.coalesce(Vacancy.company, verdict.company),
-            title=func.coalesce(Vacancy.title, verdict.title),
+            **_named_values(pending.external_key, verdict),
             alert_handled_at=func.coalesce(
                 Vacancy.alert_handled_at, target.alert_handled_at
             ),
@@ -833,6 +903,324 @@ async def _already_seen(
 
 
 # --------------------------------------------------------------------------
+# Web page sources: listing, then detail step
+# --------------------------------------------------------------------------
+
+
+async def _check_web_sources(
+    session_factory: SessionFactory,
+    sources: Sequence[_SourceRef],
+    clock: Clock,
+    report: RunReport,
+    *,
+    sleep: SleepFn,
+    resolver: Resolver,
+    monotonic: MonotonicFn,
+) -> None:
+    """The web part of an hourly check, within `WEB_RUN_BUDGET_S`.
+
+    Listings of all sources first (new vacancies get queued everywhere), then
+    the detail step of every source — also of one whose listing just failed,
+    so rows queued before still progress. Work left when the budget is spent
+    waits for the next check.
+    """
+    run_deadline = monotonic() + WEB_RUN_BUDGET_S
+    durations = dict.fromkeys((source.id for source in sources), 0.0)
+    async with safe_http.make_client() as client:
+        for source in sources:
+            remaining = run_deadline - monotonic()
+            if remaining <= 0:
+                logger.warning("Web budget spent: listings of later sources wait")
+                break
+            started = monotonic()
+            await _list_web_source(
+                session_factory,
+                client,
+                source,
+                clock(),
+                report,
+                sleep=sleep,
+                resolver=resolver,
+                timeout_s=min(WEB_LISTING_TIMEOUT_S, remaining),
+            )
+            durations[source.id] += monotonic() - started
+        for source in sources:
+            if monotonic() >= run_deadline:
+                logger.warning("Web budget spent: job pages of later sources wait")
+                break
+            started = monotonic()
+            await _read_job_pages(
+                session_factory,
+                client,
+                source,
+                clock,
+                report,
+                sleep=sleep,
+                resolver=resolver,
+                monotonic=monotonic,
+                deadline=min(started + WEB_SOURCE_DETAIL_BUDGET_S, run_deadline),
+            )
+            durations[source.id] += monotonic() - started
+    for source in sources:
+        logger.info("Web source %s checked in %.1f s", source.id, durations[source.id])
+
+
+async def _web_keys(session_factory: SessionFactory, source: _SourceRef) -> set[str]:
+    """Every seen key of this web source (it lists each job only while open)."""
+    stmt = select(VacancySeenKey.external_key).where(
+        VacancySeenKey.user_id == source.user_id,
+        VacancySeenKey.external_key.startswith(
+            f"{_WEB_KEY_PREFIX}{source.id}/", autoescape=True
+        ),
+    )
+    async with session_factory() as session:
+        return set((await session.scalars(stmt)).all())
+
+
+def _listing_post(source: _SourceRef, job: ListingJob, now: datetime) -> RawPost | None:
+    """A listing item as a pending post: link and listing title, no text yet."""
+    key = web_seen_key(source.id, job.url)
+    link = normalize_url(job.url)
+    if not fits_columns(key, link):
+        return None
+    return RawPost(
+        external_key=key,
+        url=link,
+        job_link=link,
+        title=job.title or None,
+        company=None,
+        text="",
+        posted_at=now,
+    )
+
+
+async def _list_web_source(
+    session_factory: SessionFactory,
+    client: httpx.AsyncClient,
+    source: _SourceRef,
+    now: datetime,
+    report: RunReport,
+    *,
+    sleep: SleepFn,
+    resolver: Resolver,
+    timeout_s: float,
+) -> None:
+    """Read the listing (up to 5 pages, stopping after a page that holds a
+    seen job) and store the new jobs as `pending` + `needs_detail`.
+
+    The seen keys are loaded before the read (a short read session), so the
+    stop rule needs no database access while pages are fetched.
+    """
+    known = await _web_keys(session_factory, source)
+
+    def holds_seen_job(page_jobs: list[ListingJob]) -> bool:
+        return any(web_seen_key(source.id, job.url) in known for job in page_jobs)
+
+    reason: str | None = None
+    jobs: list[ListingJob] = []
+    if not source.url:
+        reason = "unreachable"
+    else:
+        try:
+            listing = await read_listing(
+                source.url,
+                source.job_link_contains,
+                total_timeout_s=timeout_s,
+                client=client,
+                resolver=resolver,
+                sleep=sleep,
+                stop_after=holds_seen_job,
+            )
+        except UnsafeUrlError:
+            # E.g. the host now resolves to a private address.
+            reason = "unreachable"
+        except PageFetchError as exc:
+            logger.info("Web source %s listing failed: %s", source.id, exc.reason)
+            reason = "unreachable"
+        else:
+            jobs = listing.jobs
+            if not jobs:
+                reason = "no_vacancies"
+    if reason is not None:
+        logger.warning("Web source %s could not be read: %s", source.id, reason)
+        await _record_read_failure(
+            session_factory, source, READ_ERROR_MESSAGES[reason], now, initial=False
+        )
+        report.sources_failed += 1
+        return
+
+    posts = [
+        post
+        for job in jobs
+        if (post := _listing_post(source, job, now)) is not None
+        and post.external_key not in known
+    ]
+    await _store_posts(
+        session_factory, source, posts, now, report, initial=False, needs_detail=True
+    )
+
+
+async def _detail_rows(
+    session_factory: SessionFactory, source: _SourceRef
+) -> list[_DetailRow]:
+    """Up to `WEB_DETAIL_LIMIT` rows of this source waiting for their job page,
+    oldest first; none when the user has no search description (the rows
+    wait, and retention drops them after 7 days)."""
+    async with session_factory() as session:
+        description = await session.scalar(
+            select(VacancySearchSettings.description).where(
+                VacancySearchSettings.user_id == source.user_id
+            )
+        )
+        if not (description or "").strip():
+            return []
+        rows = (
+            await session.execute(
+                select(Vacancy.id, Vacancy.url, Vacancy.title, Vacancy.detail_attempts)
+                .where(
+                    Vacancy.source_id == source.id,
+                    Vacancy.state == "pending",
+                    Vacancy.needs_detail.is_(True),
+                )
+                .order_by(Vacancy.found_at, Vacancy.id)
+                .limit(WEB_DETAIL_LIMIT)
+            )
+        ).all()
+    return [
+        _DetailRow(vacancy_id=id_, url=url, title=title, detail_attempts=attempts)
+        for id_, url, title, attempts in rows
+    ]
+
+
+async def _read_job_pages(
+    session_factory: SessionFactory,
+    client: httpx.AsyncClient,
+    source: _SourceRef,
+    clock: Clock,
+    report: RunReport,
+    *,
+    sleep: SleepFn,
+    resolver: Resolver,
+    monotonic: MonotonicFn,
+    deadline: float,
+) -> None:
+    """Detail step of one web source: read job pages one by one, 1 s apart,
+    until the rows, `deadline` or `WEB_DETAIL_MAX_FAILURES_IN_ROW` run out.
+
+    Each page is fetched with no session open, then written in its own short
+    transaction.
+    """
+    failures_in_row = 0
+    for index, row in enumerate(await _detail_rows(session_factory, source)):
+        if index:
+            await sleep(WEB_DETAIL_PAUSE_S)
+        if monotonic() >= deadline:
+            logger.info("Web source %s: job pages wait (time budget)", source.id)
+            return
+        try:
+            page = await fetch_job(row.url, client=client, resolver=resolver)
+        except PageFetchError as exc:
+            if exc.reason == "not_found":
+                # The job is gone: drop the row, keep the seen key, no AI.
+                failures_in_row = 0
+                await _drop_detail_row(session_factory, row.vacancy_id)
+                continue
+            await _count_detail_failure(session_factory, row)
+            failures_in_row += 1
+        except UnsafeUrlError:
+            await _count_detail_failure(session_factory, row)
+            failures_in_row += 1
+        else:
+            failures_in_row = 0
+            await _fill_detail(
+                session_factory,
+                source,
+                row,
+                text=page.text,
+                posted_at=page.posted_at,
+                title=page.title,
+                company=page.company,
+                report=report,
+            )
+            continue
+        if failures_in_row >= WEB_DETAIL_MAX_FAILURES_IN_ROW:
+            logger.info("Web source %s: job pages wait (failures)", source.id)
+            return
+
+
+async def _drop_detail_row(session_factory: SessionFactory, vacancy_id: str) -> None:
+    async with session_factory() as session, session.begin():
+        await _delete_pending(session, vacancy_id)
+
+
+async def _count_detail_failure(
+    session_factory: SessionFactory, row: _DetailRow
+) -> None:
+    """One more failed read; at the last one the row is rated by its title."""
+    attempts = row.detail_attempts + 1
+    values: dict[str, Any] = {"detail_attempts": attempts}
+    if attempts >= WEB_DETAIL_MAX_ATTEMPTS:
+        values |= {"needs_detail": False, "text": row.title or ""}
+    async with session_factory() as session, session.begin():
+        await session.execute(
+            update(Vacancy)
+            .where(
+                Vacancy.id == row.vacancy_id,
+                Vacancy.state == "pending",
+                Vacancy.needs_detail.is_(True),
+            )
+            .values(**values)
+        )
+
+
+async def _fill_detail(
+    session_factory: SessionFactory,
+    source: _SourceRef,
+    row: _DetailRow,
+    *,
+    text: str,
+    posted_at: datetime | None,
+    title: str | None,
+    company: str | None,
+    report: RunReport,
+) -> None:
+    """Store the job page; an exclude word in it drops the row (seen key kept)."""
+    title = title or row.title
+    text = text or title or ""
+    async with session_factory() as session, session.begin():
+        exclude_terms: list[str] = (
+            await session.scalar(
+                select(VacancySearchSettings.exclude_terms).where(
+                    VacancySearchSettings.user_id == source.user_id
+                )
+            )
+            or []
+        )
+        if excluded(title, text, exclude_terms):
+            await _delete_pending(session, row.vacancy_id)
+            report.posts_excluded += 1
+            return
+        values: dict[str, Any] = {
+            "needs_detail": False,
+            "text": text,
+            "title": title,
+        }
+        if company:
+            values["company"] = company
+        if posted_at is not None:
+            values["posted_at"] = posted_at
+        await session.execute(
+            update(Vacancy)
+            .where(
+                Vacancy.id == row.vacancy_id,
+                Vacancy.state == "pending",
+                Vacancy.needs_detail.is_(True),
+            )
+            .values(**values)
+        )
+
+
+# --------------------------------------------------------------------------
 # Evaluation
 # --------------------------------------------------------------------------
 
@@ -848,6 +1236,7 @@ async def _users_with_pending(
         .join(VacancySearchSettings, VacancySearchSettings.user_id == Vacancy.user_id)
         .where(
             Vacancy.state == "pending",
+            Vacancy.needs_detail.is_(False),
             VacancySearchSettings.description.is_not(None),
         )
         .group_by(Vacancy.user_id)
@@ -906,7 +1295,11 @@ async def _next_batch(
 
         stmt = (
             select(Vacancy)
-            .where(Vacancy.user_id == user_id, Vacancy.state == "pending")
+            .where(
+                Vacancy.user_id == user_id,
+                Vacancy.state == "pending",
+                Vacancy.needs_detail.is_(False),
+            )
             .order_by(
                 Vacancy.found_at, Vacancy.posted_at, Vacancy.external_key, Vacancy.id
             )
@@ -1103,8 +1496,7 @@ async def _apply_evaluation(
                         state="new",
                         fit=verdict.fit.value,
                         fit_reason=verdict.reason or None,
-                        company=func.coalesce(Vacancy.company, verdict.company),
-                        title=func.coalesce(Vacancy.title, verdict.title),
+                        **_named_values(row.post.external_key, verdict),
                     )
                 )
                 if result.rowcount:
@@ -1129,6 +1521,24 @@ async def _apply_evaluation(
     report.posts_evaluated += len(evaluated_keys)
     # After the commit: only cards that really became `new` are alerted.
     report.new_card_ids.setdefault(user_id, []).extend(new_ids)
+
+
+def _named_values(external_key: str, verdict: PostVerdict) -> dict[str, Any]:
+    """Company and title for a rated card.
+
+    Telegram and boards: the stored values win, the AI fills the gaps. Web:
+    the AI wins; the stored ones (JobPosting or listing title) are the
+    fallback, as listing titles are often noisy.
+    """
+    if external_key.startswith(_WEB_KEY_PREFIX):
+        return {
+            "company": verdict.company or Vacancy.company,
+            "title": verdict.title or Vacancy.title,
+        }
+    return {
+        "company": func.coalesce(Vacancy.company, verdict.company),
+        "title": func.coalesce(Vacancy.title, verdict.title),
+    }
 
 
 async def _count_failed_attempt(

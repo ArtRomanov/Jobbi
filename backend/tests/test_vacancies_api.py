@@ -239,6 +239,10 @@ class TestSourcesStatus:
         await add_card(db_session, user_id, "p1", state="pending")
         await add_card(db_session, user_id, "p2", state="pending")
         await add_card(db_session, user_id, "n1")
+        # A web row whose job page is not read yet is not waiting for the AI.
+        unread = await add_card(db_session, user_id, "w1", state="pending")
+        unread.needs_detail = True
+        await db_session.commit()
         today_utc = datetime.now(UTC).date()
         db_session.add(
             VacancySearchSettings(

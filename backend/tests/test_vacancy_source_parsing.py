@@ -4,6 +4,7 @@ from app.services.vacancy_source_parsing import (
     BOARD_INVALID_INPUT_MESSAGE,
     INVALID_INPUT_MESSAGE,
     MAX_INPUT_LENGTH,
+    UNSAFE_LINK_MESSAGE,
     ParsedSource,
     SourceInputError,
     parse_source_input,
@@ -52,21 +53,12 @@ def test_telegram_handle_length_bounds_accepted(handle: str) -> None:
         "t.me/abcd",
         "@" + "a" * 33,
         "t.me/s/" + "a" * 33,
-        # Other hosts and look-alikes
-        "https://t.me.evil.com/durov_jobs",
-        "t.me.evil.com/durov_jobs",
-        "evil.com/t.me/durov_jobs",
-        "https://evilt.me/durov_jobs",
+        # Telegram hosts in forms that are not a channel
         "https://www.t.me/durov_jobs",
         "https://telegram.me/durov_jobs",
         "https://user@t.me/durov_jobs",
-        "https://t.me@evil.com/durov_jobs",
         "https://t.me:8080/durov_jobs",
         "//t.me/durov_jobs",
-        "ftp://t.me/durov_jobs",
-        "javascript:alert(1)",
-        "javascript://t.me/durov_jobs",
-        "file:///etc/passwd",
         # Path traversal / extra path segments
         "t.me/../durov_jobs",
         "t.me/s/../../etc/passwd",
@@ -88,9 +80,10 @@ def test_telegram_handle_length_bounds_accepted(handle: str) -> None:
         "t.me/Kelvin_jobs",
         "t.me/ſome_jobs",
         "@durоv_jobs",
-        # Not channels
-        "durov.jobs",
+        # Neither channels nor links
         "@durov-jobs",
+        "durov_jobs.",
+        "-bad-.com/x",
     ],
 )
 def test_hostile_or_unsupported_input_rejected(raw: str) -> None:
@@ -191,9 +184,7 @@ def test_lever_eu_forms_accepted(raw: str) -> None:
         "https://boards.greenhouse.io:8443/acme",
         "https://jobs.lever.co:443/acme",
         # Schemes
-        "ftp://jobs.lever.co/acme",
         "//boards.greenhouse.io/acme",
-        "javascript://boards.greenhouse.io/acme",
         # Paths
         "https://boards.greenhouse.io/",
         "https://boards.greenhouse.io",
@@ -223,28 +214,112 @@ def test_hostile_or_unknown_board_links_rejected(raw: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "raw",
+    ("raw", "url"),
     [
-        "jobs.lever.co.evil.com/acme",
-        "https://jobs.lever.co.evil.com/acme",
-        "https://jobs.eu.lever.co.evil.com/acme",
-        "https://boards.greenhouse.io.evil.com/acme",
-        "https://evil.com/jobs.lever.co/acme",
-        "evil.com/boards.greenhouse.io/acme",
-        "https://evil.com/?u=jobs.lever.co/acme",
-        "https://jobs.lever.co@evil.com/acme",
-        "https://jobs.lever.c\u043e/acme",  # Cyrillic o in the host
-        "https://evil.com/durov_jobs",
-        "https://example.com/careers",
-        "http://localhost:8000/admin",
-        "https://169.254.169.254/latest/meta-data",
+        ("jobs.lever.co.evil.com/acme", "https://jobs.lever.co.evil.com/acme"),
+        ("https://jobs.lever.co.evil.com/acme", "https://jobs.lever.co.evil.com/acme"),
+        (
+            "https://jobs.eu.lever.co.evil.com/acme",
+            "https://jobs.eu.lever.co.evil.com/acme",
+        ),
+        (
+            "https://boards.greenhouse.io.evil.com/acme",
+            "https://boards.greenhouse.io.evil.com/acme",
+        ),
+        ("https://evil.com/jobs.lever.co/acme", "https://evil.com/jobs.lever.co/acme"),
+        (
+            "evil.com/boards.greenhouse.io/acme",
+            "https://evil.com/boards.greenhouse.io/acme",
+        ),
+        (
+            "https://evil.com/?u=jobs.lever.co/acme",
+            "https://evil.com?u=jobs.lever.co%2Facme",
+        ),
+        ("https://jobs.lever.c\u043e/acme", "https://jobs.lever.c\u043e/acme"),
+        ("https://t.me.evil.com/durov_jobs", "https://t.me.evil.com/durov_jobs"),
+        ("evil.com/t.me/durov_jobs", "https://evil.com/t.me/durov_jobs"),
+        ("https://evilt.me/durov_jobs", "https://evilt.me/durov_jobs"),
+        ("https://example.com/careers", "https://example.com/careers"),
+        # Address rules are enforced when fetching (safe_http), not here.
+        ("http://localhost:8000/admin", "http://localhost:8000/admin"),
+        (
+            "https://169.254.169.254/latest/meta-data",
+            "https://169.254.169.254/latest/meta-data",
+        ),
     ],
 )
-def test_board_lookalikes_on_other_hosts_get_no_board_hint(raw: str) -> None:
-    # The board hint follows the parsed host, not a substring of the text.
+def test_board_and_telegram_lookalikes_on_other_hosts_are_web_pages(
+    raw: str, url: str
+) -> None:
+    # The board / Telegram rules follow the parsed host, not a substring.
+    assert parse_source_input(raw) == ParsedSource(kind="web", handle="", url=url)
+
+
+@pytest.mark.parametrize(
+    ("raw", "url"),
+    [
+        ("clever.com/careers", "https://clever.com/careers"),
+        ("https://clever.com/careers/", "https://clever.com/careers"),
+        (
+            "HTTP://GeekJob.RU/vacancies?q=react&utm_source=x#top",
+            "http://geekjob.ru/vacancies?q=react",
+        ),
+        ("https://www.example.com:443/jobs", "https://www.example.com/jobs"),
+        ("//example.com/jobs", "https://example.com/jobs"),
+        ("example.com", "https://example.com"),
+        ("localhost:8000", "https://localhost:8000"),
+        (
+            "https://\u043f\u0440\u0438\u043c\u0435\u0440.\u0440\u0444/\u0432\u0430\u043a\u0430\u043d\u0441\u0438\u0438",
+            "https://\u043f\u0440\u0438\u043c\u0435\u0440.\u0440\u0444/\u0432\u0430\u043a\u0430\u043d\u0441\u0438\u0438",
+        ),
+    ],
+)
+def test_other_http_links_are_web_pages_with_normalized_url(raw: str, url: str) -> None:
+    parsed = parse_source_input(raw)
+    assert parsed == ParsedSource(kind="web", handle="", url=url)
+
+
+def test_long_web_link_is_accepted_up_to_the_limit() -> None:
+    raw = "https://example.com/search?q=" + "a" * (MAX_INPUT_LENGTH - 29)
+    assert len(raw) == MAX_INPUT_LENGTH
+    assert parse_source_input(raw).kind == "web"
+    with pytest.raises(SourceInputError) as exc_info:
+        parse_source_input(raw + "a")
+    assert exc_info.value.message == UNSAFE_LINK_MESSAGE
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "file:///etc/passwd",
+        "ftp://example.com/jobs",
+        "ftp://t.me/durov_jobs",
+        "ftp://jobs.lever.co/acme",
+        "ftp://x.teamtailor.com/jobs",
+        "javascript:alert(1)",
+        "javascript://t.me/durov_jobs",
+        "javascript://boards.greenhouse.io/acme",
+        "javascript://x.teamtailor.com/jobs",
+        "data:text/html,<b>x</b>",
+        "mailto:jobs@example.com",
+        "gopher://example.com/",
+        # Credentials and bad ports
+        "https://t.me@evil.com/durov_jobs",
+        "https://jobs.lever.co@evil.com/acme",
+        "https://x.teamtailor.com@evil.com/jobs",
+        "https://user:pass@example.com/jobs",
+        "https://example.com:99999/jobs",
+        "https://example.com:0/jobs",
+        # A scheme, but no usable host
+        "https:///jobs",
+        "https://exa_mple.com/jobs",
+        "https://example/jobs",
+    ],
+)
+def test_unusable_links_cannot_be_used(raw: str) -> None:
     with pytest.raises(SourceInputError) as exc_info:
         parse_source_input(raw)
-    assert exc_info.value.message == INVALID_INPUT_MESSAGE
+    assert exc_info.value.message == UNSAFE_LINK_MESSAGE
 
 
 @pytest.mark.parametrize(
@@ -253,24 +328,18 @@ def test_board_lookalikes_on_other_hosts_get_no_board_hint(raw: str) -> None:
         # The parsed host is a board domain -> board hint.
         ("boards.greenhouse.io/", BOARD_INVALID_INPUT_MESSAGE),
         ("x.teamtailor.com:443", BOARD_INVALID_INPUT_MESSAGE),
-        # A board domain elsewhere in the text, or another host -> no board hint.
-        ("jobs.lever.co.evil.com/acme", INVALID_INPUT_MESSAGE),
-        ("https://example.com/x", INVALID_INPUT_MESSAGE),
-        ("clever.com/careers", INVALID_INPUT_MESSAGE),
-        ("https://clever.com/careers", INVALID_INPUT_MESSAGE),
-        ("https://www.clever.co/jobs", INVALID_INPUT_MESSAGE),
-        ("notgreenhouse.io/acme", INVALID_INPUT_MESSAGE),
-        ("myteamtailor.com/jobs", INVALID_INPUT_MESSAGE),
+        ("https://boards.greenhouse.io/" + "a" * 300, BOARD_INVALID_INPUT_MESSAGE),
         # Telegram-looking input -> Telegram hint.
         ("@abc", INVALID_INPUT_MESSAGE),
         ("t.me/abc", INVALID_INPUT_MESSAGE),
         ("https://t.me/joinchat/AAAAAE", INVALID_INPUT_MESSAGE),
-        ("https://t.me.evil.com/durov_jobs", INVALID_INPUT_MESSAGE),
         ("https://telegram.me/durov_jobs", INVALID_INPUT_MESSAGE),
         ("@clever_jobs!", INVALID_INPUT_MESSAGE),  # "lever" inside is not a link
-        # Anything else without a scheme -> Telegram hint.
-        ("durov.jobs", INVALID_INPUT_MESSAGE),
-        ("javascript:alert(1)", INVALID_INPUT_MESSAGE),
+        # A link with whitespace inside cannot be used.
+        ("https://example.com/a b", UNSAFE_LINK_MESSAGE),
+        # Non-http schemes.
+        ("javascript:alert(1)", UNSAFE_LINK_MESSAGE),
+        ("file:///etc/passwd", UNSAFE_LINK_MESSAGE),
     ],
 )
 def test_error_hint_follows_what_the_input_looks_like(raw: str, message: str) -> None:
@@ -333,8 +402,6 @@ def test_teamtailor_subdomain_bounds_accepted(sub: str) -> None:
         "https://x.teamtailor.com:443/jobs",
         "x.teamtailor.com:8080",
         "https://x.teamtailor.com.:443/jobs",
-        "ftp://x.teamtailor.com/jobs",
-        "javascript://x.teamtailor.com/jobs",
         "//x.teamtailor.com/jobs",
         "https://x.teamtailor.com/jobs#frag",
         "https://x.teamtailor.com/jo bs",
@@ -358,7 +425,6 @@ def test_teamtailor_bad_links_get_board_hint(raw: str) -> None:
         "https://evil.com/x.teamtailor.com",
         "x.teamtailor.com.evil.com",
         "https://x.teamtailor.com.evil.com/jobs",
-        "https://x.teamtailor.com@evil.com/jobs",
         "https://evil.com/?u=x.teamtailor.com",
         "https://xteamtailor.com/jobs",
         "https://x.teamtailor.co/jobs",
@@ -368,10 +434,8 @@ def test_teamtailor_bad_links_get_board_hint(raw: str) -> None:
         "https://аcme.teamtailor.com.evil.com/jobs",  # Cyrillic a
     ],
 )
-def test_teamtailor_lookalikes_rejected_without_board_hint(raw: str) -> None:
-    with pytest.raises(SourceInputError) as exc_info:
-        parse_source_input(raw)
-    assert exc_info.value.message == INVALID_INPUT_MESSAGE
+def test_teamtailor_lookalikes_are_web_pages_not_boards(raw: str) -> None:
+    assert parse_source_input(raw).kind == "web"
 
 
 def test_teamtailor_unicode_subdomain_is_not_a_board() -> None:

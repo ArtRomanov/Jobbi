@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getErrorMessage, handleApiError } from "@/shared/api";
+import { handleApiError } from "@/shared/api";
 import { useToast } from "@/shared/ui";
-import {
-  addVacancySource,
-  deleteVacancySource,
-  getVacancySources,
-} from "@/entities/vacancy-source";
+import { deleteVacancySource, getVacancySources } from "@/entities/vacancy-source";
 import { notifyVacanciesChanged } from "@/entities/vacancy";
 import type {
   DiscoveryStatus,
@@ -18,9 +14,8 @@ import type { SourcesChangeHandler, SourcesLoadState, UseManageSourcesResult } f
 
 /**
  * Owns the Sources panel: initial load (with retry) of sources and the saved
- * search settings, adding a source from the
- * input (inline error on failure, input cleared on success) and removing one
- * (toast on failure).
+ * search settings, appending a source created by the add flow
+ * (`useAddSource`) and removing one (toast on failure).
  *
  * Adding is blocked until the initial load succeeds, so a late GET can never
  * overwrite a source the user just added.
@@ -46,12 +41,7 @@ export function useManageSources(
   const [status, setStatus] = useState<DiscoveryStatus | null>(null);
   const [loadState, setLoadState] = useState<SourcesLoadState>("loading");
   const [reloadKey, setReloadKey] = useState(0);
-  const [input, setInputValue] = useState("");
-  const [addError, setAddError] = useState<string | null>(null);
-  const [isAdding, setIsAdding] = useState(false);
   const [removingIds, setRemovingIds] = useState<ReadonlySet<string>>(() => new Set());
-  // Guards against a second submit before React re-renders with isAdding=true
-  const isAddingRef = useRef(false);
   const isReady = loadState === "ready";
   const isAddDisabled = !isReady;
   const isAnyScanning = sources.some((source) => source.scanning);
@@ -161,28 +151,9 @@ export function useManageSources(
     };
   }, [isAnyScanning, isReady]);
 
-  const setInput = useCallback((value: string): void => {
-    setInputValue(value);
-    setAddError(null);
+  const appendSource = useCallback((source: VacancySource): void => {
+    setSources((prev) => [...prev, source]);
   }, []);
-
-  const addSource = useCallback(async (): Promise<void> => {
-    const value = input.trim();
-    if (value === "" || isAddDisabled || isAddingRef.current) return;
-    isAddingRef.current = true;
-    setIsAdding(true);
-    setAddError(null);
-    try {
-      const created = await addVacancySource(value);
-      setSources((prev) => [...prev, created]);
-      setInputValue("");
-    } catch (error: unknown) {
-      setAddError(getErrorMessage(error));
-    } finally {
-      isAddingRef.current = false;
-      setIsAdding(false);
-    }
-  }, [input, isAddDisabled]);
 
   const refreshRemovedSources = useCallback(async (): Promise<void> => {
     removedRequestRef.current += 1;
@@ -232,13 +203,9 @@ export function useManageSources(
     setSettings,
     status,
     loadState,
-    input,
-    setInput,
-    addError,
-    isAdding,
     removingIds,
     isAddDisabled,
-    addSource,
+    appendSource,
     removeSource,
     retryLoad,
   };

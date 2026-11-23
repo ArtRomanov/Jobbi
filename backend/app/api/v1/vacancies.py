@@ -12,6 +12,7 @@ from app.models.vacancy_source import VacancySource
 from app.schemas.application import PaginatedResponse
 from app.schemas.vacancy import (
     AddToTrackerRequest,
+    AtsHint,
     AddToTrackerResponse,
     DiscoveryStatus,
     DuplicateApplicationConflict,
@@ -24,6 +25,8 @@ from app.schemas.vacancy import (
     VacancySearchSettingsUpdate,
     VacancySort,
     VacancySourceCreate,
+    VacancySourcePreview,
+    VacancySourcePreviewRequest,
     VacancySourceRead,
     VacancySourcesResponse,
 )
@@ -54,12 +57,14 @@ from app.services.vacancy_source_service import (
     DuplicateSourceError,
     SearchSettingsError,
     SourceLimitError,
+    SourceNotFoundError,
     add_source,
     delete_source,
     get_search_settings,
     is_scanning,
     is_unavailable,
     list_sources,
+    preview_source,
     update_search_settings,
 )
 
@@ -83,6 +88,11 @@ def _source_to_read(source: VacancySource) -> VacancySourceRead:
         scanning=is_scanning(source),
         unavailable=is_unavailable(source),
         last_error=source.last_error,
+        url=source.url,
+        job_link_contains=source.job_link_contains,
+        watching_since=(
+            source.initial_scan_completed_at if source.kind == "web" else None
+        ),
     )
 
 
@@ -131,10 +141,75 @@ async def get_vacancy_sources(
 
 
 @router.post(
+    "/vacancy-sources/preview",
+    response_model=VacancySourcePreview,
+    response_model_exclude_unset=True,
+    summary="Preview a source before saving it (never writes)",
+    description=(
+        "Non-web kinds return only `kind`, without any network call. Web "
+        "pages: page 1 of the listing is read (15 s) and `default_name`, "
+        "`found_count`, up to 5 `titles` in page order and `ats_hint` are "
+        "returned. `source_id` (a source being edited) is left out of the "
+        "duplicate and limit checks. 400 for an unusable link, an unreadable "
+        "page or no vacancies; 409 when already watched; 404 for an unknown "
+        "`source_id`."
+    ),
+)
+async def preview_vacancy_source(
+    body: VacancySourcePreviewRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> VacancySourcePreview:
+    try:
+        preview = await preview_source(
+            db,
+            current_user.id,
+            body.input,
+            job_link_contains=body.job_link_contains,
+            source_id=body.source_id,
+        )
+    except (SourceInputError, SourceCheckError) as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=exc.message) from exc
+    except SourceLimitError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail=SOURCE_LIMIT_MESSAGE
+        ) from exc
+    except DuplicateSourceError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail=DUPLICATE_SOURCE_MESSAGE
+        ) from exc
+    except SourceNotFoundError as exc:
+        raise not_found("Source") from exc
+    if preview.kind != "web":
+        # Only `kind` is serialized (response_model_exclude_unset).
+        return VacancySourcePreview(kind=preview.kind)
+    return VacancySourcePreview(
+        kind=preview.kind,
+        default_name=preview.default_name,
+        found_count=preview.found_count,
+        titles=preview.titles,
+        ats_hint=(
+            AtsHint(
+                kind=preview.ats_hint.kind,
+                input=preview.ats_hint.input,
+                label=preview.ats_hint.label,
+            )
+            if preview.ats_hint is not None
+            else None
+        ),
+    )
+
+
+@router.post(
     "/vacancy-sources",
     response_model=VacancySourceRead,
     status_code=status.HTTP_201_CREATED,
-    summary="Add a Telegram channel or a Greenhouse / Lever board after a live check",
+    summary="Add a Telegram channel, a job board or a web page after a live check",
+    description=(
+        "Web pages: the listing is read (up to 5 pages) and every vacancy "
+        "listed now is remembered as seen, so only later ones reach the "
+        "Inbox. `job_link_contains` and `name` apply to web pages only."
+    ),
 )
 async def create_vacancy_source(
     body: VacancySourceCreate,
@@ -143,7 +218,13 @@ async def create_vacancy_source(
 ) -> VacancySourceRead:
     user_id = current_user.id
     try:
-        source = await add_source(db, user_id, body.input)
+        source = await add_source(
+            db,
+            user_id,
+            body.input,
+            job_link_contains=body.job_link_contains,
+            name=body.name,
+        )
     except (SourceInputError, SourceCheckError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=exc.message) from exc
     except SourceLimitError as exc:

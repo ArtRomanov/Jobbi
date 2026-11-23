@@ -1,6 +1,9 @@
 import type { DiscoveryStatus, VacancySource } from "@/entities/vacancy-source";
+import { formatTimeAgo } from "@/shared/lib";
 import {
   AI_UNAVAILABLE_NOTICE,
+  LAST_CHECKED_PREFIX,
+  WATCHING_SINCE_PREFIX,
   SCAN_POLL_INTERVAL_MS,
   STATUS_POLL_INTERVAL_MS,
 } from "./constants";
@@ -47,6 +50,7 @@ export function mergePolledSources(
           last_checked_at: fresh.last_checked_at,
           unavailable: fresh.unavailable,
           last_error: fresh.last_error,
+          watching_since: fresh.watching_since,
         }
       : source;
   });
@@ -79,4 +83,22 @@ export function getStatusNotices(status: DiscoveryStatus | null): string[] {
 /** Next poll delay: fast while a source scans, slow otherwise. */
 export function getPollInterval(isAnyScanning: boolean): number {
   return isAnyScanning ? SCAN_POLL_INTERVAL_MS : STATUS_POLL_INTERVAL_MS;
+}
+
+/** "Found N vacancies" ("Found 1 vacancy"). */
+export function formatFoundCount(count: number): string {
+  return `Found ${count} ${count === 1 ? "vacancy" : "vacancies"}`;
+}
+
+/**
+ * Check status after the kind label: "Watching since <time>" for a web page not
+ * checked since it was saved, else "Last checked <time>", else null (never
+ * checked). Scanning is handled by the caller.
+ */
+export function getCheckedLabel(source: VacancySource): string | null {
+  const { kind, last_checked_at: lastCheckedAt, watching_since: watchingSince } = source;
+  if (kind === "web" && watchingSince && (lastCheckedAt === null || lastCheckedAt === watchingSince)) {
+    return `${WATCHING_SINCE_PREFIX} ${formatTimeAgo(watchingSince)}`;
+  }
+  return lastCheckedAt ? `${LAST_CHECKED_PREFIX} ${formatTimeAgo(lastCheckedAt)}` : null;
 }

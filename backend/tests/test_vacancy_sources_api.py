@@ -14,6 +14,7 @@ from app.services import vacancy_source_check, vacancy_source_service
 from app.services.vacancy_source_parsing import (
     BOARD_INVALID_INPUT_MESSAGE,
     INVALID_INPUT_MESSAGE,
+    UNSAFE_LINK_MESSAGE,
 )
 from tests.conftest import TestSessionLocal
 
@@ -194,7 +195,13 @@ async def test_add_public_channel(
         "scanning",
         "unavailable",
         "last_error",
+        "url",
+        "job_link_contains",
+        "watching_since",
     }
+    assert data["url"] is None
+    assert data["job_link_contains"] is None
+    assert data["watching_since"] is None
     assert data["kind"] == "telegram"
     assert data["key"] == "telegram:durov_jobs"
     assert data["display_name"] == "Durov's Jobs"
@@ -344,13 +351,11 @@ async def test_total_timeout_budget(
 @pytest.mark.parametrize(
     ("raw", "message"),
     [
-        ("t.me.evil.com/durov_jobs", INVALID_INPUT_MESSAGE),
-        ("javascript:alert(1)", INVALID_INPUT_MESSAGE),
+        ("https://www.t.me/durov_jobs", INVALID_INPUT_MESSAGE),
+        ("javascript:alert(1)", UNSAFE_LINK_MESSAGE),
+        ("file:///etc/passwd", UNSAFE_LINK_MESSAGE),
+        ("https://user:pw@example.com/jobs", UNSAFE_LINK_MESSAGE),
         ("@abc", INVALID_INPUT_MESSAGE),
-        ("https://evil.com/durov_jobs", INVALID_INPUT_MESSAGE),
-        ("https://jobs.lever.co.evil.com/acme", INVALID_INPUT_MESSAGE),
-        ("https://x.teamtailor.com.evil.com/jobs", INVALID_INPUT_MESSAGE),
-        ("https://clever.com/careers", INVALID_INPUT_MESSAGE),
         ("https://jobs.lever.co/acme/admin", BOARD_INVALID_INPUT_MESSAGE),
         ("https://x.teamtailor.com:8443/jobs", BOARD_INVALID_INPUT_MESSAGE),
     ],

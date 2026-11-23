@@ -1,14 +1,13 @@
 import { useCallback } from "react";
 import type { VacancySource } from "@/entities/vacancy-source";
 import { Button, colors } from "@/shared/ui";
-import { formatTimeAgo } from "@/shared/lib";
 import {
-  LAST_CHECKED_PREFIX,
   SCANNING_LABEL,
   SOURCE_KIND_LABELS,
   UNAVAILABLE_FALLBACK_REASON,
   UNAVAILABLE_LABEL,
 } from "../lib/constants";
+import { getCheckedLabel } from "../lib/helpers";
 
 interface SourceListItemProps {
   source: VacancySource;
@@ -26,6 +25,7 @@ export function SourceListItem({
   onRegisterRemoveButton,
 }: SourceListItemProps) {
   const { id, unavailable } = source;
+  const checkedLabel = source.scanning ? null : getCheckedLabel(source);
   const removeButtonRef = useCallback(
     (element: HTMLButtonElement | null) => onRegisterRemoveButton(id, element),
     [id, onRegisterRemoveButton],
@@ -58,9 +58,7 @@ export function SourceListItem({
         <p style={{ fontSize: "0.75rem", color: unavailable ? colors.textSecondary : colors.textMuted }}>
           {SOURCE_KIND_LABELS[source.kind]}
           {source.scanning ? ` · ${SCANNING_LABEL}` : null}
-          {!source.scanning && source.last_checked_at
-            ? ` · ${LAST_CHECKED_PREFIX} ${formatTimeAgo(source.last_checked_at)}`
-            : null}
+          {checkedLabel ? ` · ${checkedLabel}` : null}
         </p>
         {/* Plain text in reading order: name, kind, then "Unavailable — reason" */}
         {unavailable ? (

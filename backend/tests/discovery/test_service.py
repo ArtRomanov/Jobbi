@@ -1381,7 +1381,24 @@ async def test_no_http_or_groq_call_while_a_transaction_is_open(
     )
     lever_board.mount(respx_mock)
     lever_board.add("a", "lever news", NOW - timedelta(days=1))
+    # Web source (spec 010): listing pages and job pages (read, gone, failing,
+    # excluded by a word in the job text) are tracked too.
+    from tests.discovery.test_web_service import make_web_source
+    from tests.discovery.web_stubs import Sites, WebSite, resolve
+
+    web = Sites(respx_mock).add(
+        WebSite(
+            on_request=lambda request: http_violations.append(
+                factory.open_transactions()
+            )
+        )
+    )
+    web.add("read", "web job text")
+    web.add("gone", "MATCH", status=404)
+    web.add("excl", "spam MATCH")
+    web.listed.append("failing")  # no page: answers 500
     user_id = await make_user(db, exclude=["spam"])
+    await make_web_source(db, user_id, web)
     await link_telegram(db, user_id)
     await make_source(db, user_id)
     await make_source(db, user_id, handle="second_channel", scanned=True)
@@ -1419,13 +1436,20 @@ async def test_no_http_or_groq_call_while_a_transaction_is_open(
         config=CONFIG,
         sleep=sleep,
         bot=bot,
+        web_resolver=resolve,
     )
 
     assert board.detail_requests == [1, 3]
+    assert web.listing_requests == [1, 2]
+    assert sorted(web.job_requests) == ["excl", "failing", "gone", "read"]
     assert lever_board.requests
     assert len(bot.sent) == 1 and bot.violations == 0
     assert len(http_violations) >= 8 and set(http_violations) == {0}
     assert len(ai.calls) >= 3 and ai.violations == 0
     # The checks are meaningful: sessions were opened and wrote data.
     assert len(factory.sessions) > 10
-    assert len(await vacancies(db)) == 11
+    rows = await vacancies(db)
+    assert len([row for row in rows if not row.needs_detail]) == 11
+    # The web job whose page failed waits for the next check.
+    [waiting] = [row for row in rows if row.needs_detail]
+    assert waiting.url.endswith("/failing") and waiting.detail_attempts == 1

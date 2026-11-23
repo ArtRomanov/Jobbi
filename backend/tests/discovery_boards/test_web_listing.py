@@ -6,6 +6,7 @@ import pytest
 
 from app.discovery.fetchers.web_listing import (
     MAX_TITLE_CHARS,
+    AtsHint,
     ListingJob,
     ListingPage,
     parse_listing,
@@ -376,4 +377,125 @@ def test_next_from_page_query_param(
 def test_no_jobs_and_no_next_on_empty_page() -> None:
     assert parse_listing("", "https://acme.com/", None) == ListingPage(
         jobs=[], next_url=None
+    )
+
+
+# --- ATS hint -----------------------------------------------------------------
+
+GREENHOUSE_WRIKE = AtsHint(
+    kind="greenhouse",
+    input="https://job-boards.greenhouse.io/wrike",
+    label="Greenhouse",
+)
+
+
+def _hint(body: str, page_url: str = "https://example.com/careers") -> AtsHint | None:
+    return parse_listing(f"<html><body>{body}</body></html>", page_url, None).ats_hint
+
+
+def test_wrike_page_hints_its_greenhouse_board() -> None:
+    page = _parse("wrike", "https://www.wrike.com/jobs/")
+
+    assert page.ats_hint == GREENHOUSE_WRIKE
+
+
+@pytest.mark.parametrize(
+    "fixture,page_url",
+    [
+        ("geekjob", "https://geekjob.ru/vacancies"),
+        ("hirehi", "https://hirehi.ru/"),
+    ],
+)
+def test_page_without_board_links_has_no_hint(fixture: str, page_url: str) -> None:
+    assert _parse(fixture, page_url).ats_hint is None
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '<a href="https://boards.greenhouse.io/embed/job_board?for=Wrike">Jobs</a>',
+        '<iframe src="https://job-boards.greenhouse.io/embed/job_board?for=wrike&b=x">'
+        "</iframe>",
+        '<a href="//boards.greenhouse.io/embed/job_app?for=wrike&token=4238976005">'
+        "Apply</a>",
+        '<script src="https://boards.greenhouse.io/embed/job_board/js?for=wrike">'
+        "</script>",
+        '<a href="https://boards.eu.greenhouse.io/wrike/jobs/4238976005#apply">Job</a>',
+    ],
+)
+def test_greenhouse_links_and_embeds_give_the_board_token(body: str) -> None:
+    assert _hint(body) == GREENHOUSE_WRIKE
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        '<a href="https://boards.greenhouse.io/embed/job_board">Jobs</a>',
+        '<a href="https://boards.greenhouse.io/embed/job_board?for=embed">Jobs</a>',
+        '<a href="https://boards.greenhouse.io/embed/job_board?for=a/b">Jobs</a>',
+        '<a href="https://evil.com/embed/job_board?for=wrike">Jobs</a>',
+        '<a href="https://www.greenhouse.io/careers">Greenhouse careers</a>',
+        '<a href="https://jobs.lever.co.evil.com/acme">Look-alike</a>',
+        '<a href="https://t.me/acme_jobs">Telegram</a>',
+        '<a href="mailto:jobs@acme.com">Mail</a>',
+    ],
+)
+def test_non_board_links_give_no_hint(body: str) -> None:
+    assert _hint(body) is None
+
+
+def test_lever_board_hint() -> None:
+    body = (
+        '<a href="https://jobs.lever.co/Acme/0b5c6a1e-1234-4abc-9def-0123456789ab">'
+        "Job</a>"
+        '<a href="https://jobs.lever.co/acme?team=Eng">All jobs</a>'
+    )
+
+    assert _hint(body) == AtsHint(
+        kind="lever", input="https://jobs.lever.co/acme", label="Lever"
+    )
+
+
+def test_lever_eu_board_hint() -> None:
+    assert _hint('<a href="https://jobs.eu.lever.co/acme">Jobs</a>') == AtsHint(
+        kind="lever_eu", input="https://jobs.eu.lever.co/acme", label="Lever"
+    )
+
+
+def test_teamtailor_board_hint() -> None:
+    body = '<a href="https://acme.teamtailor.com/jobs/123-react-dev">React dev</a>'
+
+    assert _hint(body) == AtsHint(
+        kind="teamtailor", input="https://acme.teamtailor.com", label="Teamtailor"
+    )
+
+
+def test_most_linked_board_wins() -> None:
+    body = (
+        '<a href="https://acme.teamtailor.com/jobs/1">One</a>'
+        '<a href="https://jobs.lever.co/acme">Lever</a>'
+        '<a href="https://acme.teamtailor.com/jobs/2">Two</a>'
+    )
+
+    assert _hint(body) == AtsHint(
+        kind="teamtailor", input="https://acme.teamtailor.com", label="Teamtailor"
+    )
+
+
+def test_tie_goes_to_the_first_board_seen() -> None:
+    body = (
+        '<a href="https://jobs.lever.co/acme">Lever</a>'
+        '<a href="https://acme.teamtailor.com/jobs/1">Teamtailor</a>'
+    )
+
+    assert _hint(body) == AtsHint(
+        kind="lever", input="https://jobs.lever.co/acme", label="Lever"
+    )
+
+
+def test_relative_link_on_a_board_host_counts() -> None:
+    assert _hint('<a href="/jobs/1">Job</a>', "https://acme.teamtailor.com/jobs") == (
+        AtsHint(
+            kind="teamtailor", input="https://acme.teamtailor.com", label="Teamtailor"
+        )
     )

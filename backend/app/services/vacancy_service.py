@@ -204,6 +204,21 @@ async def _count_state(db: AsyncSession, user_id: str, state: str) -> int:
     return result or 0
 
 
+async def _count_waiting(db: AsyncSession, user_id: str) -> int:
+    """Pending posts waiting for the AI. Web rows whose job page is not read
+    yet (`needs_detail`) are not waiting for the AI, so they don't count."""
+    result = await db.scalar(
+        select(func.count())
+        .select_from(Vacancy)
+        .where(
+            Vacancy.user_id == user_id,
+            Vacancy.state == "pending",
+            Vacancy.needs_detail.is_(False),
+        )
+    )
+    return result or 0
+
+
 async def removed_sources(db: AsyncSession, user_id: str) -> list[CardSourceData]:
     """Sources of visible cards that are no longer watched: identity (kind +
     handle) not among the user's live sources. A re-added source (same kind
@@ -240,7 +255,7 @@ async def discovery_status(
     now: datetime | None = None,
 ) -> DiscoveryStatusData:
     now = now or _now_naive()
-    waiting = await _count_state(db, user.id, "pending")
+    waiting = await _count_waiting(db, user.id)
     if settings_row is None:
         return DiscoveryStatusData(
             ai_unavailable=False, limit_reached=False, waiting_count=waiting
