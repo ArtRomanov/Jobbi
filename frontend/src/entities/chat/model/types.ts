@@ -1,40 +1,16 @@
 import type { components } from "@/shared/api";
 
-// ---------------------------------------------------------------------------
-// Change cards (spec 011, slice 7).
-// TEMPORARY local types: written against the agreed backend contract before
-// the backend landed. Once `schema.d.ts` is regenerated, replace them with
-// `components["schemas"]["ChangeCardRead"]` (and drop the `cards` extension
-// of ChatMessage below if ChatMessageRead already carries it).
-// ---------------------------------------------------------------------------
+/** One proposed CV text edit (spec 011 §2.7), as generated from the backend. */
+export type ChangeCard = components["schemas"]["ChangeCardRead"];
 
-export type ChangeCardOp = "replace" | "insert" | "remove";
+export type ChangeCardOp = ChangeCard["op"];
 
-export type ChangeCardState = "pending" | "accepted" | "rejected" | "stale";
+export type ChangeCardState = ChangeCard["state"];
 
-export type ChangeCardPosition = "start" | "end" | "after_line";
-
-/** One proposed CV text edit, as `ChangeCardRead` from the backend. */
-export interface ChangeCard {
-  id: string;
-  op: ChangeCardOp;
-  before_text: string;
-  after_text: string;
-  position: ChangeCardPosition | null;
-  anchor_text: string | null;
-  state: ChangeCardState;
-  cv_id: string;
-  /** The assistant message the card belongs to. */
-  message_id: string;
-  created_at: string;
-  /** Set when accepted or rejected; null while pending or stale. */
-  decided_at: string | null;
-}
+export type ChangeCardPosition = NonNullable<ChangeCard["position"]>;
 
 /**
- * The generated ChatMessageRead schema plus the cards an assistant message
- * carries (absent or empty for user messages).
+ * The generated ChatMessageRead schema. `cards` is always present: empty for
+ * user messages and for replies without CV edits.
  */
-export type ChatMessage = components["schemas"]["ChatMessageRead"] & {
-  cards?: ChangeCard[];
-};
+export type ChatMessage = components["schemas"]["ChatMessageRead"];

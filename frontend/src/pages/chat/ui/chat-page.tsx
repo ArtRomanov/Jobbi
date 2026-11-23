@@ -119,6 +119,7 @@ export function ChatPage() {
         role: "user",
         content,
         created_at: new Date().toISOString(),
+        cards: [],
       };
       setMessages((prev) => [...prev, optimisticUserMsg]);
 
@@ -160,6 +161,7 @@ export function ChatPage() {
                 role: "assistant",
                 content: text,
                 created_at: new Date().toISOString(),
+                cards: [],
               },
             ]);
           }

@@ -43,6 +43,7 @@ export const mockChatMessages = [
     role: "user",
     content: "Help me prepare for my interview at Acme Corp.",
     created_at: "2026-03-01T10:00:00Z",
+    cards: [],
   },
   {
     id: "msg-2",
@@ -51,6 +52,7 @@ export const mockChatMessages = [
     content:
       "I'd be happy to help you prepare for your interview at Acme Corp! Let's start with some common questions.",
     created_at: "2026-03-01T10:01:00Z",
+    cards: [],
   },
 ];
 

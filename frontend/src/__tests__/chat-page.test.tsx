@@ -2,7 +2,7 @@ import { StrictMode, useState } from "react";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useLocation } from "react-router-dom";
-import { http, HttpResponse } from "msw";
+import { delay, http, HttpResponse } from "msw";
 import { ChatPage } from "@/pages/chat/ui/chat-page";
 import { mockChangeCards } from "./mocks/handlers";
 import { server } from "./setup";
@@ -171,6 +171,7 @@ describe("ChatPage change cards", () => {
     role: "user",
     content: "Improve my CV",
     created_at: "2026-03-01T10:00:00Z",
+    cards: [],
   };
   const assistantMessage = {
     id: "msg-2",
@@ -243,13 +244,16 @@ describe("ChatPage change cards", () => {
 
   const cardsFrame = (cards: unknown[]): string =>
     `event: cards\ndata: ${JSON.stringify(cards)}\n\n`;
-  const DONE = "event: done\ndata: \n\n";
+  // Same framing as the backend: JSON payloads on one `data:` line
+  const tokenFrame = (text: string): string =>
+    `event: token\ndata: ${JSON.stringify({ text })}\n\n`;
+  const DONE = `event: done\ndata: ${JSON.stringify({ status: "complete" })}\n\n`;
 
   it("attaches cards from the SSE stream to the streamed reply", async () => {
     const getCalls = mockStream(
       [
-        "event: token\ndata: Added \n\n",
-        "event: token\ndata: it.\n\n",
+        tokenFrame("Added "),
+        tokenFrame("it."),
         cardsFrame([mockChangeCards.insert]),
         DONE,
       ],
@@ -292,9 +296,44 @@ describe("ChatPage change cards", () => {
     expect(container.querySelectorAll('[data-message-role="assistant"]')).toHaveLength(0);
   });
 
+  it("shows the decoded text of token frames, not their JSON", async () => {
+    mockStream(
+      [tokenFrame('Line one\nwith "quotes"'), cardsFrame([]), DONE],
+      [],
+    );
+    const { container } = renderChatPage("app-1");
+    await screen.findByText(/No messages yet/);
+    // Hold the reload after `done`, so the streamed reply stays on screen
+    server.use(
+      http.get(`${BASE_URL}/api/v1/applications/:id/chat`, async () => {
+        await delay("infinite");
+        return HttpResponse.json([]);
+      }),
+    );
+    await send("Hi");
+
+    await waitFor(() =>
+      expect(
+        container.querySelector('[data-message-role="assistant"]'),
+      ).toHaveTextContent('Line one with "quotes"'),
+    );
+    expect(screen.queryByText(/\{"text"/)).not.toBeInTheDocument();
+  });
+
+  it("shows the decoded detail of an error frame", async () => {
+    mockStream(
+      [`event: error\ndata: ${JSON.stringify({ detail: "Model unavailable" })}\n\n`],
+      [],
+    );
+    renderChatPage("app-1");
+    await send("Hi");
+
+    expect(await screen.findByText("Model unavailable")).toBeInTheDocument();
+  });
+
   it("ignores an empty cards event", async () => {
     const getCalls = mockStream(
-      ["event: token\ndata: No edits needed.\n\n", cardsFrame([]), DONE],
+      [tokenFrame("No edits needed."), cardsFrame([]), DONE],
       [
         { ...userMessage, content: "Is my CV fine?" },
         { ...assistantMessage, content: "No edits needed.", cards: [] },

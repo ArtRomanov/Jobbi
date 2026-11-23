@@ -13,11 +13,29 @@ export interface ChatStreamHandlers {
 }
 
 /**
+ * The backend JSON-encodes frame payloads: `token` is `{"text": "..."}`,
+ * `error` is `{"detail": "..."}`. Falls back to the raw data for a plain frame.
+ */
+function readField(data: string, key: "text" | "detail"): string {
+  try {
+    const parsed: unknown = JSON.parse(data);
+    if (typeof parsed === "object" && parsed !== null && key in parsed) {
+      const value = (parsed as Record<string, unknown>)[key];
+      if (typeof value === "string") return value;
+    }
+  } catch {
+    // Not JSON: use the data as is
+  }
+  return data;
+}
+
+/**
  * Send a chat message and consume the SSE streaming response.
  *
  * Uses raw fetch() instead of apiClient because the response is an SSE stream,
  * not JSON. Each SSE frame has an `event:` line and a `data:` line.
- * Events: `token` (text), `cards` (JSON `ChangeCard[]`), `done`, `error`.
+ * Events: `token` (`{"text"}`), `cards` (JSON `ChangeCard[]`, always sent
+ * before `done`, possibly `[]`), `done`, `error` (`{"detail"}`).
  */
 export function sendChatMessage(
   applicationId: string,
@@ -83,7 +101,7 @@ export function sendChatMessage(
 
           switch (eventType) {
             case "token":
-              onToken(data);
+              onToken(readField(data, "text"));
               break;
             case "cards":
               onCards(parseCardsEvent(data));
@@ -92,7 +110,7 @@ export function sendChatMessage(
               onDone();
               return;
             case "error":
-              onError(data || "Stream error");
+              onError(readField(data, "detail") || "Stream error");
               return;
           }
         }
