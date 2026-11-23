@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import re
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
@@ -24,6 +25,7 @@ from sqlalchemy.ext.asyncio import (
 from app.core.config import get_settings
 from app.core.database import Base
 from app.discovery import service
+from app.discovery.evaluator import MAX_POST_CHARS
 from app.discovery.service import (
     EVAL_PAUSE_S,
     DiscoveryConfig,
@@ -724,6 +726,94 @@ class TestEvaluation:
         assert [len(call) for call in ai.calls] == [5, 2]
         assert ai.posts_sent == [f"MATCH {n}" for n in range(1, 8)]  # oldest first
         assert sleep.calls == [EVAL_PAUSE_S]
+
+    async def test_batches_by_characters(self, factory, db, ai, sleep) -> None:
+        # Windowed text: 3 000 + 3 000 fits the 7 500 budget, a third long
+        # post does not and starts the next batch.
+        user_id = await make_user(db)
+        await make_pending(db, user_id, 3, text="MATCH " + "x" * 3_000)
+        await make_pending(db, user_id, 2, start=4)
+
+        await evaluate_pending(factory, ai, at(NOW), config=CONFIG, sleep=sleep)
+
+        assert [len(call) for call in ai.calls] == [2, 3]
+        assert all(len(text) == MAX_POST_CHARS for text in ai.calls[0])
+        assert ai.calls[1][1:] == ["MATCH 4", "MATCH 5"]
+        assert sleep.calls == [EVAL_PAUSE_S]
+
+    async def test_size_batches_respect_the_daily_cap(
+        self, factory, db, ai, sleep
+    ) -> None:
+        user_id = await make_user(db)
+        config = DiscoveryConfig(model="m", daily_limit=4)
+        await make_pending(db, user_id, 3, text="MATCH " + "x" * 3_000)
+        await make_pending(db, user_id, 3, start=4)
+
+        report = await evaluate_pending(
+            factory, ai, at(NOW), config=config, sleep=sleep
+        )
+
+        # 2 long | 1 long + 1 short (cap of 4 reached, 2 short wait).
+        assert [len(call) for call in ai.calls] == [2, 2]
+        assert report.posts_evaluated == 4
+        assert report.users_capped == {user_id}
+        assert [r.state for r in await vacancies(db)].count("pending") == 2
+
+    async def test_long_posts_are_flagged_cut(
+        self, factory, db, ai, sleep, caplog
+    ) -> None:
+        user_id = await make_user(db)
+        long_tail = "x" * MAX_POST_CHARS
+        await make_pending(db, user_id, 1, text="MATCH " + long_tail)  # 3 008
+        await make_pending(db, user_id, 1, text="news " + long_tail, start=2)
+        await make_pending(db, user_id, 1, text="SKIP " + long_tail, start=3)
+        await make_pending(db, user_id, 1, text="MATCH", start=4)
+        await make_pending(  # exactly the window: read in full
+            db, user_id, 1, text="MATCH " + "y" * (MAX_POST_CHARS - 8), start=5
+        )
+
+        with caplog.at_level(logging.WARNING, logger="app.discovery.service"):
+            report = await evaluate_pending(
+                factory, ai, at(NOW), config=CONFIG, sleep=sleep
+            )
+
+        async with db() as session:
+            flags = dict(
+                (
+                    await session.execute(
+                        select(VacancySeenKey.external_key, VacancySeenKey.cut_for_ai)
+                    )
+                ).all()
+            )
+        assert flags == {
+            "tg:other/1": True,
+            "tg:other/2": True,  # rejected posts count too
+            "tg:other/3": False,  # no verdict yet: not evaluated, not counted
+            "tg:other/4": False,
+            "tg:other/5": False,
+        }
+        keys = await seen_keys(db)
+        assert keys["tg:other/1"] == NOW and keys["tg:other/2"] == NOW
+        assert report.posts_cut == 2
+        assert report.posts_evaluated == 4
+        cut_logs = [
+            r.getMessage() for r in caplog.records if "AI read only" in r.getMessage()
+        ]
+        assert cut_logs == [
+            (
+                f"Post tg:other/1 is {6 + MAX_POST_CHARS + 2} characters long; "
+                f"the AI read only the first {MAX_POST_CHARS}"
+            ),
+            (
+                f"Post tg:other/2 is {5 + MAX_POST_CHARS + 2} characters long; "
+                f"the AI read only the first {MAX_POST_CHARS}"
+            ),
+        ]
+        assert all(
+            r.levelno == logging.WARNING
+            for r in caplog.records
+            if "AI read only" in r.getMessage()
+        )
 
     async def test_no_description_stays_pending(self, factory, db, ai, sleep) -> None:
         user_id = await make_user(db, description=None)

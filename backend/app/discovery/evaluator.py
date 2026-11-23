@@ -1,7 +1,8 @@
 """AI evaluation of discovered posts: is it a vacancy, does it match, how well it fits.
 
-One Groq JSON-mode request evaluates a batch of up to `BATCH_SIZE` posts. Post text
-is untrusted: it is cut, stripped of fence markers and placed inside fences the
+One Groq JSON-mode request evaluates a batch of up to `BATCH_SIZE` posts whose
+windowed text fits `BATCH_CHAR_BUDGET` (see `batch_take`). Post text is
+untrusted: it is cut, stripped of fence markers and placed inside fences the
 model is told to treat as data only. The output is validated with Pydantic and
 limited to booleans, enums and short strings.
 """
@@ -28,6 +29,7 @@ from app.discovery.types import RawPost
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "BATCH_CHAR_BUDGET",
     "BATCH_SIZE",
     "MAX_POST_CHARS",
     "MAX_REASON_CHARS",
@@ -40,13 +42,19 @@ __all__ = [
     "EvaluationTransportError",
     "Fit",
     "PostVerdict",
+    "batch_take",
     "build_messages",
     "evaluate_batch",
+    "is_cut",
     "parse_response",
 ]
 
 BATCH_SIZE = 5
-MAX_POST_CHARS = 1_500
+# The AI window: only the first MAX_POST_CHARS characters of a post's text are sent.
+MAX_POST_CHARS = 3_000
+# Characters of windowed post text per AI call: 5 x 1,500 (the old maximum), so
+# tokens per call and the 45 s pause stay within the 8,000 tokens/minute limit.
+BATCH_CHAR_BUDGET = 7_500
 MAX_REASON_CHARS = 200
 MAX_DESCRIPTION_CHARS = 500
 MAX_PROFILE_VALUE_CHARS = 100
@@ -260,6 +268,30 @@ def _profile_lines(profile: Mapping[str, Any]) -> list[str]:
         rendered = _defang(str(value).strip())[:MAX_PROFILE_VALUE_CHARS]
         lines.append(f"- {label}: {rendered}")
     return lines
+
+
+def is_cut(post: RawPost) -> bool:
+    """The post is longer than the AI window; its end is never read."""
+    return len(post.text) > MAX_POST_CHARS
+
+
+def _windowed_length(post: RawPost) -> int:
+    return min(len(post.text), MAX_POST_CHARS)
+
+
+def batch_take(posts: Sequence[RawPost]) -> int:
+    """How many leading `posts` form the next batch.
+
+    Posts are taken in order until `BATCH_SIZE` posts or until the next one
+    would push their windowed text over `BATCH_CHAR_BUDGET`; that post starts
+    the next batch. The first post is always taken (0 only for no posts).
+    """
+    used = 0
+    for count, post in enumerate(posts[:BATCH_SIZE]):
+        used += _windowed_length(post)
+        if count and used > BATCH_CHAR_BUDGET:
+            return count
+    return min(len(posts), BATCH_SIZE)
 
 
 def _post_block(key: str, post: RawPost) -> str:
