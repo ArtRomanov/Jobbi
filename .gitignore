@@ -10,6 +10,8 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 htmlcov/
+# Dependencies install with pip from pyproject.toml; uv lock files are not used
+uv.lock
 coverage/
 .coverage
 

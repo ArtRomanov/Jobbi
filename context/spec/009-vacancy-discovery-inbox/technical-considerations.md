@@ -6,7 +6,7 @@ It is NOT a copy-paste implementation guide.
 # Technical Specification: Vacancy Discovery (Inbox)
 
 - **Functional Specification:** `context/spec/009-vacancy-discovery-inbox/functional-spec.md`
-- **Status:** Draft
+- **Status:** Completed
 - **Author(s):** Poe (AI Technical Architect)
 
 ---
