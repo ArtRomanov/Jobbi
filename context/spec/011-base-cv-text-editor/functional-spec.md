@@ -25,7 +25,7 @@ The user already has a CV — usually a PDF or Word file — and wants Jobbi to 
 - **Own CV** — any CV that is not a tailored copy (the base CV is also an own CV).
 - **Tailored copy** — a CV that "Add & tailor CV" created for an application.
 - **Formatting** — simple text markup the preview and the PDF show formatted: `# Heading`, `## Section`, `### Subsection`, `**bold**`, `*italic*`, `- list item`, `1. numbered item`, and links written as `[text](https://…)` or as a bare web or email address. Only web (`http`, `https`) and email links are clickable; any other link is shown as plain text. Any other markup (tables, HTML tags, images) is shown exactly as typed.
-- **Change card** (from spec 008) — a block in the application chat in which the assistant proposes one edit, showing "before" and "after" with Accept and Reject buttons. Nothing changes until the user clicks Accept. Each card is decided on its own, its state (Pending, Accepted, Rejected, Stale) is kept in the chat history, Pending cards stay clickable after a reload, and a decided card cannot be decided again.
+- **Change card** (designed in spec 008, built for the first time by this spec, for CV text only) — a block in the application chat in which the assistant proposes one edit, showing "before" and "after" with Accept and Reject buttons. Nothing changes until the user clicks Accept. Each card is decided on its own, its state (Pending, Accepted, Rejected, Stale) is kept in the chat history, Pending cards stay clickable after a reload, and a decided card cannot be decided again.
 
 ---
 
@@ -128,14 +128,14 @@ The user already has a CV — usually a PDF or Word file — and wants Jobbi to 
   - **Acceptance Criteria:**
     - [ ] In the application chat, the assistant works from the full current text of the CV linked to the application (and still from the application itself): asked about any part of the CV, it can quote it.
     - [ ] A proposed CV edit appears as a change card titled "CV text" that shows the passage as it is now ("before") and the proposed passage ("after"), with removed lines and added lines marked in different colours, plus Accept and Reject. An addition shows only "after", labelled with where it goes ("Added at the start", "Added after: <first words of the preceding line>" or "Added at the end"). A removal shows only "before", labelled "Removed".
-    - [ ] Accept saves the CV at once: it replaces exactly that passage (or inserts or removes it) and changes nothing else. Reject changes nothing.
+    - [ ] Accept saves the CV at once (an editor open on the same CV then gets the "changed elsewhere" message on its next save, see 2.1): it replaces exactly that passage (or inserts or removes it) and changes nothing else. Reject changes nothing.
     - [ ] Accept fails, the card stays Pending with an error under it, and the CV does not change, when:
       - the passage is no longer in the CV (the user or another accepted card changed it): "This part of the CV has changed since the suggestion. Ask the assistant again." — and the card is marked Stale (Reject still works);
       - the passage appears more than once in the CV: "This text appears more than once in the CV. Ask the assistant to quote a longer part.";
       - the result would be longer than 20 000 characters: "This change would make the CV longer than 20 000 characters."
     - [ ] One assistant reply can contain several CV cards, and each is accepted or rejected on its own. Cards still Pending when a new reply arrives stay clickable. The next reply works from the CV text after all accepted cards.
     - [ ] If no CV is linked to the application, the assistant proposes no CV cards and, when asked, says that no CV is linked and suggests linking one in the application panel.
-    - [ ] Edits to application fields (status, notes, role, company, job link) work as before. Pending CV cards from chats before this change, which point at old form fields, become Stale.
+    - [ ] The assistant proposes no edits to the application itself (status, notes, role, company, job link); those cards stay in spec 008 for later. Asked to change the application, it explains what to change and where.
 
 ### 2.8 Export to PDF
 
@@ -157,7 +157,7 @@ The user already has a CV — usually a PDF or Word file — and wants Jobbi to 
 - One base CV per user: "Make base", the base on upload when none exists, no automatic base otherwise (including after the conversion).
 - CVs page split into "My CVs" and "Tailored for applications", including copies made before this change; delete with confirmation.
 - "Add & tailor CV" preselecting the base CV, or nothing when there is none.
-- AI chat change cards for CV text passages (replacing spec 008's CV field edits); application field edits unchanged.
+- AI chat change cards for CV text passages, built for the first time here (spec 008's CV field edits are replaced by text edits).
 - PDF export of the whole formatted text, including non-Latin text.
 
 ### Out-of-Scope
@@ -165,6 +165,6 @@ The user already has a CV — usually a PDF or Word file — and wants Jobbi to 
 - AI tidying or rewording of uploaded text; OCR of scanned files; keeping the original file, its layout or images; uploading several files at once.
 - A visual (WYSIWYG) editor, PDF design themes or templates, and CV languages or translations.
 - More than one base CV, or a base per role or language.
-- The AI chat creating or duplicating CVs (still manual, as in spec 008).
+- The AI chat creating or duplicating CVs (still manual, as in spec 008), and change cards for application fields (left to spec 008).
 - Other backlog items (batch adding sources, digest posts, AI limit notices, chat streaming display, collapsible Inbox sections, undo on source removal) and spec 010 (aggregator site parsers).
 - Other roadmap items: HeadHunter Integration, LinkedIn Integration.
