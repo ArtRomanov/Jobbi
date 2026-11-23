@@ -16,10 +16,10 @@ Conventions for every slice:
 
 ---
 
-- [ ] **Slice 2: Every CV becomes text, edited with a live preview, exported as a full PDF**
-  - [ ] Migration: add `cvs.content` (Text, default `''`) and `cvs.version` (Integer, default 1). Convert every CV to text with a frozen converter inside the migration (layout from functional spec 2.2). Old columns are left untouched. Downgrade is tested on a copy of the DB. **[Agent: database-expert]**
-  - [ ] Converter unit tests: every field, an empty name (falls back to the CV name), an empty CV. **[Agent: python-backend]**
-  - [ ] API:
+- [x] **Slice 2: Every CV becomes text, edited with a live preview, exported as a full PDF**
+  - [x] Migration: add `cvs.content` (Text, default `''`) and `cvs.version` (Integer, default 1). Convert every CV to text with a frozen converter inside the migration (layout from functional spec 2.2). Old columns are left untouched. Downgrade is tested on a copy of the DB. **[Agent: database-expert]**
+  - [x] Converter unit tests: every field, an empty name (falls back to the CV name), an empty CV. **[Agent: python-backend]**
+  - [x] API:
     - `CvCreate`/`CvUpdate`/`CvRead` move to `name` + `content` (≤ 20 000 characters) + `version`;
     - `PATCH` bumps `version`;
     - duplicate and `build_cv_copy` copy `content`;
@@ -27,7 +27,7 @@ Conventions for every slice:
     - the structured-field schemas and `_cv_lines` are removed.
 
     Update the existing tests. **[Agent: python-backend]**
-  - [ ] Frontend:
+  - [x] Frontend:
     - `entities/cv`: new types, `lib/cv-markdown.ts` (one `marked` lexer and a token walker), `ui/cv-text-preview.tsx`;
     - `shared/lib/is-safe-cv-link-url.ts` (http/https/mailto);
     - `features/cv-text-editor` (name, textarea with `maxLength` and paste cut, hint, preview with `useDeferredValue`, Edit/Preview tabs on phone width, Save, "CV saved" toast);
@@ -35,21 +35,21 @@ Conventions for every slice:
     - delete `features/cv-editor`.
 
     Tests, including hostile links. **[Agent: typescript-frontend]**
-  - [ ] PDF:
+  - [x] PDF:
     - rewrite `features/cv-pdf/ui/cv-document.tsx` on the shared lexer;
     - register Noto Sans (Regular/Bold/Italic/BoldItalic) as local TTFs in the lazy PDF chunk, with the OFL licence committed;
     - turn hyphenation off;
     - the filename keeps Cyrillic and replaces only characters not allowed in file names with "_".
 
     Tests. **[Agent: typescript-frontend]**
-  - [ ] Code review: FSD placement of the Markdown parts, no `dangerouslySetInnerHTML`, link allowlist on every href, preview/PDF parity, bundle (fonts only in the lazy chunk). **[Agent: react-code-reviewer]**
-  - [ ] Verify:
+  - [x] Code review: FSD placement of the Markdown parts, no `dangerouslySetInnerHTML`, link allowlist on every href, preview/PDF parity, bundle (fonts only in the lazy chunk). **[Agent: react-code-reviewer]**
+  - [x] Verify:
     - run the migration on a copy of the live DB: every existing CV has text containing all its old values, and the old columns are unchanged;
     - edit a CV: the preview updates;
     - export a CV with Russian text to PDF: the whole text is shown and the Cyrillic is correct;
     - the AI chat answers using the CV text.
 
-    **[Agent: qa-tester]**
+    **[Agent: qa-tester]** _(2026-11-23: PRs #23 (markdown/preview/PDF) + #24 (backend + wiring). Migration run on a copy of the live DB: 4 CVs, all form fields were empty, nothing lost. Backend 1097 on 3.11/3.14, Vitest 376, tsc clean, vite build OK; code review no P0/P1; /security-review no findings. Browser checks (preview, Cyrillic PDF, chat) pending the live check — Chrome not connected)_
 
 ---
 
