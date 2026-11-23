@@ -89,6 +89,29 @@ describe("InboxPage", () => {
     expect(within(row!).getByText(/^Teamtailor/)).toBeInTheDocument();
   });
 
+  it("shows the Ashby kind label and board link for an Ashby board", async () => {
+    serveSources([
+      {
+        ...mockVacancySource,
+        id: "ashby",
+        kind: "ashby",
+        key: "ashby:manychat",
+        display_name: "Manychat",
+      },
+    ]);
+    const user = userEvent.setup();
+    renderWithProviders(<InboxPage />);
+
+    const list = await screen.findByRole("list", { name: "Watched sources" });
+    const [row] = within(list).getAllByRole("listitem");
+    expect(within(row!).getByText("Manychat", OUTSIDE_SOURCE_FILTER)).toBeInTheDocument();
+    expect(within(row!).getByText(/^Ashby/)).toBeInTheDocument();
+
+    await user.click(within(row!).getByRole("button", { name: "Edit Manychat" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("Link")).toHaveValue("https://jobs.ashbyhq.com/manychat");
+  });
+
   it("adds a channel on Enter: it appears in the list and the input is cleared", async () => {
     const bodies: unknown[] = [];
     server.use(
