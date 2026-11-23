@@ -185,8 +185,8 @@ class FakeGroq:
     """Answers by post text: "MATCH" → match (fit from "HIGH"/"LOW", else
     medium), "SKIP" → left out of the answer, "BADITEM" → a malformed item
     (match without fit), "GARBAGE" anywhere in a call → the whole answer is
-    not JSON, "NOVAC" → match without `is_vacancy` (live Qwen quirk), anything
-    else → not a vacancy. `errors` are raised by the next calls, one each."""
+    not JSON, "NOVAC" → match without `is_vacancy` (live Qwen quirk),
+    "NOMATCH" → a vacancy that does not match, anything else → not a vacancy. `errors` are raised by the next calls, one each."""
 
     def __init__(self, factory: TrackingFactory | None = None) -> None:
         self.factory = factory
@@ -219,6 +219,8 @@ class FakeGroq:
             return {"key": key, "is_vacancy": True, "match": True, "fit": None}
         if "NOVAC" in text:
             return {"key": key, "match": True, "fit": "high", "reason": "ok"}
+        if "NOMATCH" in text:
+            return {"key": key, "is_vacancy": True, "match": False, "reason": "Java"}
         if "MATCH" not in text:
             return {"key": key, "is_vacancy": False, "match": False, "reason": "News"}
         fit = "high" if "HIGH" in text else "low" if "LOW" in text else "medium"

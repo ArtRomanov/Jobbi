@@ -30,19 +30,19 @@ __all__ = [
     "ADDED_NO_DESCRIPTION_MESSAGE",
     "ALREADY_SEEN_MESSAGE",
     "CHANNEL_FORWARD",
-    "MERGED_MESSAGE",
     "NO_TEXT_MESSAGE",
     "build_forwarded_post",
     "handle_channel_forward",
 ]
 
-ADDED_MESSAGE = "📥 Added to your Inbox. Jobbi will rate the fit in a minute or two."
+# Functional spec 012, 2.2. The rating result follows as a reply to the
+# forwarded message, sent by the discovery worker (`forward_replies`).
+ADDED_MESSAGE = (
+    "📥 Got it. Jobbi will rate it and add matching vacancies to your Inbox."
+)
 ADDED_NO_DESCRIPTION_MESSAGE = (
     "📥 Saved. Describe what you're looking for on the Sources page so Jobbi "
-    "can rate it; it shows up in your Inbox once rated (it is kept for 7 days)."
-)
-MERGED_MESSAGE = (
-    "This job is already in your Inbox. I added this channel to its sources."
+    "can rate it."
 )
 ALREADY_SEEN_MESSAGE = "Jobbi has already seen this post."
 NO_TEXT_MESSAGE = "This post has no text, so there is nothing to add to the Inbox."
@@ -199,6 +199,7 @@ async def handle_channel_forward(
     """Store a forwarded channel post for a linked user and reply."""
     assert update.effective_chat is not None and update.message is not None
     chat_id = update.effective_chat.id
+    message_id = update.message.message_id
 
     built = build_forwarded_post(update.message, origin)
     if built is None:
@@ -206,7 +207,15 @@ async def handle_channel_forward(
         return
     channel, post = built
     now = datetime.now(UTC).replace(tzinfo=None)
-    outcome = await store_forwarded_post(async_session, user_id, channel, post, now)
+    outcome = await store_forwarded_post(
+        async_session,
+        user_id,
+        channel,
+        post,
+        now,
+        chat_id=chat_id,
+        message_id=message_id,
+    )
 
     if outcome is ForwardOutcome.ADDED:
         reply = (
@@ -214,8 +223,6 @@ async def handle_channel_forward(
             if await _has_description(user_id)
             else ADDED_NO_DESCRIPTION_MESSAGE
         )
-    elif outcome is ForwardOutcome.MERGED:
-        reply = MERGED_MESSAGE
     else:
         reply = ALREADY_SEEN_MESSAGE
     await context.bot.send_message(chat_id=chat_id, text=reply)

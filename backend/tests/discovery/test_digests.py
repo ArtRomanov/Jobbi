@@ -556,7 +556,7 @@ async def test_forwarded_post_with_several_links_is_not_merged_at_store(
     links = (PostLink(2, REACT_LINK), PostLink(3, "https://jobs.example.com/java"))
 
     outcome = await store_forwarded_post(
-        factory, user_id, CHANNEL, _forwarded(links), NOW
+        factory, user_id, CHANNEL, _forwarded(links), NOW, chat_id=1, message_id=2
     )
 
     assert outcome is ForwardOutcome.ADDED
@@ -566,15 +566,22 @@ async def test_forwarded_post_with_several_links_is_not_merged_at_store(
     ]
 
 
-async def test_forwarded_post_with_one_link_still_merges_at_store(factory, db) -> None:
+async def test_forwarded_post_with_one_link_is_not_merged_at_store(factory, db) -> None:
     user_id = await make_user(db)
     await make_card(db, user_id, job_link=REACT_LINK)
 
     outcome = await store_forwarded_post(
-        factory, user_id, CHANNEL, _forwarded((PostLink(2, REACT_LINK),)), NOW
+        factory,
+        user_id,
+        CHANNEL,
+        _forwarded((PostLink(2, REACT_LINK),)),
+        NOW,
+        chat_id=1,
+        message_id=2,
     )
 
-    assert outcome is ForwardOutcome.MERGED
+    assert outcome is ForwardOutcome.ADDED
+    assert sorted(c.state for c in await vacancies(db)) == ["pending", "seen"]
 
 
 # --- through a watched channel -------------------------------------------------

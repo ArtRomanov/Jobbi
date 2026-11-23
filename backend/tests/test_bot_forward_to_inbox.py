@@ -32,6 +32,7 @@ from app.bot.handlers.inbox_forward import (
 )
 from app.discovery.fetchers.telegram import MAX_TEXT_CHARS
 from app.discovery.types import PostLink
+from app.models.forwarded_post import ForwardedPost
 from app.models.telegram_conversation import TelegramConversation
 from app.models.telegram_link import TelegramLink
 from app.models.user import User
@@ -40,6 +41,7 @@ from app.models.vacancy_search_settings import VacancySearchSettings
 from tests.conftest import TestSessionLocal
 
 CHAT_ID = 424_242
+FORWARD_MESSAGE_ID = 1  # `_message` id in the user's chat with the bot
 PRIVATE_CHANNEL_ID = -1001234567890
 POSTED = datetime(2026, 11, 20, 9, 30, tzinfo=UTC)
 
@@ -180,6 +182,16 @@ def test_post_without_text_is_not_built() -> None:
 # --- the handler -------------------------------------------------------------------
 
 
+def test_reply_texts_follow_the_spec() -> None:
+    assert ADDED_MESSAGE == (
+        "📥 Got it. Jobbi will rate it and add matching vacancies to your Inbox."
+    )
+    assert ADDED_NO_DESCRIPTION_MESSAGE == (
+        "📥 Saved. Describe what you're looking for on the Sources page so Jobbi "
+        "can rate it."
+    )
+
+
 async def test_channel_forward_adds_pending_card(
     db_session: AsyncSession, linked_user: str
 ) -> None:
@@ -195,6 +207,51 @@ async def test_channel_forward_adds_pending_card(
     assert _replies(context) == [ADDED_MESSAGE]
     conversation = await db_session.scalar(select(TelegramConversation))
     assert conversation is None  # no tracker dialog started
+    [forward] = (await db_session.scalars(select(ForwardedPost))).all()
+    assert (
+        forward.user_id,
+        forward.external_key,
+        forward.chat_id,
+        forward.message_id,
+        forward.reported_at,
+    ) == (linked_user, "tgc:1234567890/42", CHAT_ID, FORWARD_MESSAGE_ID, None)
+
+
+async def test_channel_forward_of_a_known_job_link_is_not_merged_at_once(
+    db_session: AsyncSession, linked_user: str
+) -> None:
+    """Merging happens after rating; the bot only says it got the post."""
+    await _set_description(db_session, linked_user, "React, remote")
+    link = "https://jobs.example.com/1"
+    db_session.add(
+        Vacancy(
+            user_id=linked_user,
+            external_key="tg:public/7",
+            url="https://t.me/public/7",
+            job_link=link,
+            text="React role",
+            posted_at=datetime(2026, 11, 19),
+            found_at=datetime(2026, 11, 19),
+            state="new",
+            fit="high",
+        )
+    )
+    await db_session.commit()
+    text = f"Apply: {link}"
+    message = _message(
+        text=text,
+        entities=[MessageEntity(MessageEntity.URL, 7, len(link))],
+        origin=_channel_origin(),
+    )
+    context = _context()
+
+    await dialog.handle_message(_update(message), context)
+
+    assert sorted(card.state for card in await _cards(db_session)) == [
+        "new",
+        "pending",
+    ]
+    assert _replies(context) == [ADDED_MESSAGE]
 
 
 async def test_channel_forward_without_description_says_how_to_rate(
@@ -218,6 +275,7 @@ async def test_same_post_forwarded_twice(
 
     assert len(await _cards(db_session)) == 1
     assert _replies(context)[-1] == ALREADY_SEEN_MESSAGE
+    assert len((await db_session.scalars(select(ForwardedPost))).all()) == 1
 
 
 async def test_media_only_forward_is_rejected(
@@ -230,6 +288,7 @@ async def test_media_only_forward_is_rejected(
 
     assert await _cards(db_session) == []
     assert _replies(context) == [NO_TEXT_MESSAGE]
+    assert (await db_session.scalars(select(ForwardedPost))).all() == []
 
 
 async def test_unlinked_chat_stores_nothing(db_session: AsyncSession) -> None:

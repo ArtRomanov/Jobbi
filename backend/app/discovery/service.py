@@ -23,6 +23,10 @@ is already on a card merges into it. The pending row of the post is deleted.
 A post with several outside links is never merged at store time: it may be a
 digest whose first link is only one of its vacancies (a single post with
 several links merges after rating instead).
+
+Forwarded posts (spec 012, 2.2) are never merged at store time; they are rated
+like channel posts, and each rated one gets a `ForwardResult` in the run
+report, sent as the bot's reply after the run (`forward_replies`).
 """
 
 import asyncio
@@ -62,7 +66,13 @@ from app.discovery.evaluator import (
 )
 from app.discovery.fetchers.errors import BoardReadError
 from app.discovery.fetchers.telegram import SourceReadError, fetch_channel_posts
+from app.discovery.forward_replies import (
+    ForwardResult,
+    ForwardResultKind,
+    send_forward_replies,
+)
 from app.discovery.types import PostLink, RawPost
+from app.models.forwarded_post import ForwardedPost
 from app.models.user import User
 from app.models.vacancy import Vacancy, VacancyCardSource
 from app.models.vacancy_search_settings import VacancySearchSettings
@@ -73,11 +83,10 @@ __all__ = [
     "CARD_RETENTION",
     "EVAL_PAUSE_S",
     "FORWARDED_KIND",
+    "FORWARDED_POST_RETENTION",
     "LOOKBACK",
     "MAX_EVAL_ATTEMPTS",
     "MAX_PAGES",
-    "NOT_A_MATCH_REASON",
-    "NOT_RATED_REASON",
     "PENDING_WITHOUT_DESCRIPTION_RETENTION",
     "READ_ERROR_MESSAGES",
     "CleanupReport",
@@ -116,6 +125,7 @@ _INITIAL_BACKOFF_HOURLY = timedelta(hours=1)
 # Retention (daily `cleanup`).
 CARD_RETENTION = timedelta(days=30)
 PENDING_WITHOUT_DESCRIPTION_RETENTION = timedelta(days=7)
+FORWARDED_POST_RETENTION = timedelta(days=30)
 # States a repost can merge into (and that retention deletes after 30 days).
 _VISIBLE_STATES = ("new", "seen", "dismissed")
 
@@ -129,10 +139,6 @@ SUPPORTED_KINDS = frozenset({"telegram"}) | BOARD_KINDS
 # Card-source kind of posts the user forwarded to the bot. Not a
 # `VacancySource` kind: nothing is ever fetched for it.
 FORWARDED_KIND = "tg_forward"
-# `fit_reason` of a forwarded post the AI rejected without a reason, or could
-# not rate.
-NOT_A_MATCH_REASON = "Does not match your search"
-NOT_RATED_REASON = "Jobbi could not rate this post"
 
 SessionFactory: TypeAlias = Callable[[], AsyncSession]
 # Returns the current time as naive UTC. Called per source and per AI batch,
@@ -175,6 +181,9 @@ class RunReport:
     # Cards that became `new` in this run, per user (input for alerts).
     new_card_ids: dict[str, list[str]] = field(default_factory=dict)
     alerts_sent: int = 0
+    # Rated posts the user forwarded to the bot (input for the bot's replies).
+    forward_results: list[ForwardResult] = field(default_factory=list)
+    forward_replies_sent: int = 0
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -191,9 +200,6 @@ class _PendingRow:
     vacancy_id: str
     eval_attempts: int
     post: RawPost
-    # Forwarded to the bot by the user: never deleted by the AI (see
-    # `_keep_forwarded`).
-    forwarded: bool = False
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -341,15 +347,17 @@ async def _run_then_alert(
     report: RunReport,
     sleep: SleepFn,
 ) -> None:
-    """Run `work`, then alert about the cards it made `new` — also when it
-    fails half way, so those cards are not left unannounced with
-    `alert_handled_at` NULL forever.
+    """Run `work`, then alert about the cards it made `new` and reply about
+    the forwarded posts it rated — also when it fails half way, so those
+    cards are not left unannounced with `alert_handled_at` NULL forever.
 
-    - Success or an ordinary exception: alert normally, then re-raise.
+    - Success or an ordinary exception: alert and reply normally, then
+      re-raise.
     - Cancellation (worker shutting down), also while the alert itself is
       being sent: no network — the cards are only marked handled (one short
       write), then the cancellation goes on. They stay in the Inbox; they are
-      just not announced.
+      just not announced. Forward replies not sent yet keep `reported_at`
+      NULL (nothing is written for them).
     """
     try:
         await work
@@ -358,6 +366,7 @@ async def _run_then_alert(
         raise
     except Exception:
         await _alert_safely(session_factory, bot, clock, report, sleep)
+        await _reply_safely(session_factory, bot, clock, report, sleep)
         raise
     try:
         report.alerts_sent = await send_run_alerts(
@@ -367,6 +376,9 @@ async def _run_then_alert(
         # Cards already announced are handled; this marks the rest.
         await _alert_safely(session_factory, None, clock, report, sleep)
         raise
+    report.forward_replies_sent = await send_forward_replies(
+        session_factory, bot, report.forward_results, clock, sleep=sleep
+    )
 
 
 async def _alert_safely(
@@ -383,6 +395,22 @@ async def _alert_safely(
         )
     except Exception:
         logger.exception("Alerts after an interrupted run failed")
+
+
+async def _reply_safely(
+    session_factory: SessionFactory,
+    bot: Bot | None,
+    clock: Clock,
+    report: RunReport,
+    sleep: SleepFn,
+) -> None:
+    """Forward replies on the failure path: never hide the original error."""
+    try:
+        report.forward_replies_sent = await send_forward_replies(
+            session_factory, bot, report.forward_results, clock, sleep=sleep
+        )
+    except Exception:
+        logger.exception("Forward replies after an interrupted run failed")
 
 
 async def evaluate_pending(
@@ -704,7 +732,6 @@ async def _store_posts(
 
 class ForwardOutcome(Enum):
     ADDED = auto()  # new pending card; rated by the next per-minute run
-    MERGED = auto()  # same job link as an existing card; source added to it
     ALREADY_SEEN = auto()  # this post was found or forwarded before
 
 
@@ -726,11 +753,18 @@ async def store_forwarded_post(
     channel: ForwardedChannel,
     post: RawPost,
     now: datetime,
+    *,
+    chat_id: int,
+    message_id: int,
 ) -> ForwardOutcome:
-    """Put a post the user forwarded to the bot into their Inbox as `pending`.
+    """Put a post the user forwarded to the bot into their Inbox as `pending`,
+    and remember where to reply with its rating result (`forwarded_posts`).
 
-    Unlike `_store_posts` there is no alert (the user already knows about
-    it). Dedup and repost merging work as for watched sources.
+    Unlike `_store_posts` there is no alert (the user already knows about it)
+    and no merge at store time: the post may be a digest, and a single post
+    merges into a card with its job link after rating, like a channel post.
+    `chat_id`/`message_id`: the user's chat with the bot and the forwarded
+    message in it.
     """
     try:
         async with session_factory() as session, session.begin():
@@ -752,25 +786,15 @@ async def store_forwarded_post(
                     user_id=user_id, external_key=post.external_key, first_seen_at=now
                 )
             )
-            if (
-                post.job_link is not None
-                # Several links: maybe a digest, merged per vacancy after rating.
-                and len(post.links) <= 1
-                and (target_id := await _merge_target(session, user_id, post.job_link))
-            ):
-                if not await _has_card_source(
-                    session, target_id, FORWARDED_KIND, channel.handle
-                ):
-                    session.add(
-                        VacancyCardSource(
-                            vacancy_id=target_id,
-                            source_id=None,
-                            source_kind=FORWARDED_KIND,
-                            source_handle=channel.handle,
-                            label=channel.label,
-                        )
-                    )
-                return ForwardOutcome.MERGED
+            session.add(
+                ForwardedPost(
+                    user_id=user_id,
+                    external_key=post.external_key,
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    created_at=now,
+                )
+            )
             vacancy_id = str(uuid.uuid4())
             session.add(
                 Vacancy(
@@ -1116,16 +1140,6 @@ async def _next_batch(
         posts = [_raw_post(row) for row in rows]
         take = batch_take(posts)
         rows, posts = rows[:take], posts[:take]
-        forwarded_ids = set(
-            (
-                await session.scalars(
-                    select(VacancyCardSource.vacancy_id).where(
-                        VacancyCardSource.vacancy_id.in_([row.id for row in rows]),
-                        VacancyCardSource.source_kind == FORWARDED_KIND,
-                    )
-                )
-            ).all()
-        )
         return _Batch(
             description=description,
             profile=_profile(user),
@@ -1133,7 +1147,6 @@ async def _next_batch(
                 _PendingRow(
                     vacancy_id=row.id,
                     eval_attempts=row.eval_attempts,
-                    forwarded=row.id in forwarded_ids,
                     post=post,
                 )
                 for row, post in zip(rows, posts, strict=True)
@@ -1276,69 +1289,45 @@ async def _apply_evaluation(
 ) -> None:
     """Apply verdicts in one short transaction.
 
-    Match → card `new`; no match → card deleted, seen key kept (a forwarded
-    post is kept as a low-fit card instead). A digest becomes one card per
-    matching vacancy (`_split_digest`). A post without a valid verdict
-    (left out, malformed item, or invalid single-post answer) gets one attempt
-    counted; after MAX_EVAL_ATTEMPTS it is treated as rejected.
+    Match → card `new`; no match → card deleted, seen key kept. A digest
+    becomes one card per matching vacancy (`_split_digest`). A post without a
+    valid verdict (left out, malformed item, or invalid single-post answer)
+    gets one attempt counted; after MAX_EVAL_ATTEMPTS it is treated as
+    rejected. Forwarded posts follow the same rules; each one with an
+    unreported `forwarded_posts` row gets a `ForwardResult` in the report.
     """
     evaluated_keys: list[str] = []
     cut_keys: list[str] = []
     new_ids: list[str] = []
+    results: list[ForwardResult] = []
     async with session_factory() as session, session.begin():
+        forwarded = await _unreported_forwards(
+            session, user_id, [row.post.external_key for row in rows]
+        )
         for row in rows:
-            verdict = evaluation.results.get(row.post.external_key)
+            key = row.post.external_key
+            verdict = evaluation.results.get(key)
             if verdict is None:
-                await _count_failed_attempt(session, row, report)
+                is_rejected = await _count_failed_attempt(session, row, report)
+                if is_rejected and key in forwarded:
+                    results.append(
+                        ForwardResult(
+                            user_id=user_id,
+                            external_key=key,
+                            kind=ForwardResultKind.UNRATABLE,
+                        )
+                    )
                 continue
             if is_cut(row.post):
-                cut_keys.append(row.post.external_key)
+                cut_keys.append(key)
             else:
-                evaluated_keys.append(row.post.external_key)
-            if verdict.is_digest:
-                new_ids.extend(
-                    await _split_digest(session, user_id, row, verdict, report)
-                )
-                continue
-            if verdict.match and verdict.fit is not None:
-                report.matches += 1
-                # A repost whose card appeared after this post was stored
-                # (e.g. both posts waited in the same run): merge, so the
-                # card keeps the first post and the alert counts it once.
-                if row.post.job_link is not None and (
-                    target_id := await _merge_target(
-                        session, user_id, row.post.job_link, exclude_id=row.vacancy_id
-                    )
-                ):
-                    if await _promote_earlier_pending(
-                        session, row.vacancy_id, target_id, verdict
-                    ):
-                        # Alerted only if the replaced card was not yet
-                        # (the alert step filters on `alert_handled_at`).
-                        new_ids.append(row.vacancy_id)
-                    else:
-                        await _merge_pending_into(session, row.vacancy_id, target_id)
-                    report.posts_merged += 1
-                    continue
-                result = await session.execute(
-                    update(Vacancy)
-                    .where(Vacancy.id == row.vacancy_id, Vacancy.state == "pending")
-                    .values(
-                        state="new",
-                        fit=verdict.fit.value,
-                        fit_reason=verdict.reason or None,
-                        company=func.coalesce(Vacancy.company, verdict.company),
-                        title=func.coalesce(Vacancy.title, verdict.title),
-                    )
-                )
-                if result.rowcount:
-                    new_ids.append(row.vacancy_id)
-            elif row.forwarded:
-                await _keep_forwarded(
-                    session, row.vacancy_id, verdict.reason or NOT_A_MATCH_REASON
-                )
-            else:
-                await _delete_pending(session, row.vacancy_id)
+                evaluated_keys.append(key)
+            row_new_ids, result = await _apply_verdict(
+                session, user_id, row, verdict, report
+            )
+            new_ids.extend(row_new_ids)
+            if result is not None and key in forwarded:
+                results.append(result)
         for keys, values in (
             (evaluated_keys, {"evaluated_at": now}),
             (cut_keys, {"evaluated_at": now, "cut_for_ai": True}),
@@ -1368,8 +1357,111 @@ async def _apply_evaluation(
             lengths[key],
             MAX_POST_CHARS,
         )
-    # After the commit: only cards that really became `new` are alerted.
+    # After the commit: only cards that really became `new` are alerted, and
+    # only results that were really stored are replied about.
     report.new_card_ids.setdefault(user_id, []).extend(new_ids)
+    report.forward_results.extend(results)
+
+
+async def _unreported_forwards(
+    session: AsyncSession, user_id: str, keys: Sequence[str]
+) -> set[str]:
+    """Which of `keys` are forwarded posts whose result was not replied yet."""
+    if not keys:
+        return set()
+    return set(
+        (
+            await session.scalars(
+                select(ForwardedPost.external_key).where(
+                    ForwardedPost.user_id == user_id,
+                    ForwardedPost.external_key.in_(list(keys)),
+                    ForwardedPost.reported_at.is_(None),
+                )
+            )
+        ).all()
+    )
+
+
+async def _apply_verdict(
+    session: AsyncSession,
+    user_id: str,
+    row: _PendingRow,
+    verdict: PostVerdict,
+    report: RunReport,
+) -> tuple[list[str], ForwardResult | None]:
+    """Apply one post's verdict: (ids of cards that became `new`, the result
+    to reply with if the post was forwarded; None when the pending row was
+    gone meanwhile)."""
+    key = row.post.external_key
+
+    def result(kind: ForwardResultKind, **fields: Any) -> ForwardResult:
+        return ForwardResult(user_id=user_id, external_key=key, kind=kind, **fields)
+
+    if verdict.is_digest:
+        split = await _split_digest(session, user_id, row, verdict, report)
+        if split is None:
+            return [], None
+        matched = len(split.new_ids) + split.merged
+        if not matched:
+            return [], result(ForwardResultKind.NONE)
+        return split.new_ids, result(
+            ForwardResultKind.DIGEST,
+            matched=matched,
+            total=max(verdict.vacancy_count or 0, matched),
+        )
+    if not (verdict.match and verdict.fit is not None):
+        await _delete_pending(session, row.vacancy_id)
+        return [], result(
+            ForwardResultKind.NOT_VACANCY
+            if verdict.is_vacancy is False
+            else ForwardResultKind.NONE
+        )
+
+    report.matches += 1
+    # A repost whose card appeared after this post was stored (e.g. both
+    # posts waited in the same run, or a forwarded post): merge, so the card
+    # keeps the first post and the alert counts it once.
+    if row.post.job_link is not None and (
+        target_id := await _merge_target(
+            session, user_id, row.post.job_link, exclude_id=row.vacancy_id
+        )
+    ):
+        target = (
+            await session.execute(
+                select(Vacancy.title, Vacancy.company).where(Vacancy.id == target_id)
+            )
+        ).one()
+        merged = result(
+            ForwardResultKind.MERGED,
+            title=target.title or verdict.title,
+            company=target.company or verdict.company,
+        )
+        report.posts_merged += 1
+        if await _promote_earlier_pending(session, row.vacancy_id, target_id, verdict):
+            # Alerted only if the replaced card was not yet (the alert step
+            # filters on `alert_handled_at`).
+            return [row.vacancy_id], merged
+        await _merge_pending_into(session, row.vacancy_id, target_id)
+        return [], merged
+    updated = await session.execute(
+        update(Vacancy)
+        .where(Vacancy.id == row.vacancy_id, Vacancy.state == "pending")
+        .values(
+            state="new",
+            fit=verdict.fit.value,
+            fit_reason=verdict.reason or None,
+            company=func.coalesce(Vacancy.company, verdict.company),
+            title=func.coalesce(Vacancy.title, verdict.title),
+        )
+    )
+    if not updated.rowcount:
+        return [], None
+    return [row.vacancy_id], result(
+        ForwardResultKind.MATCHED,
+        fit=verdict.fit.value,
+        title=row.post.title or verdict.title,
+        company=row.post.company or verdict.company,
+    )
 
 
 def _item_job_link(post: RawPost, item: VacancyItem) -> str | None:
@@ -1378,15 +1470,22 @@ def _item_job_link(post: RawPost, item: VacancyItem) -> str | None:
     return next((link.url for link in post.links if start <= link.line <= end), None)
 
 
+@dataclass(frozen=True, slots=True)
+class _DigestSplit:
+    new_ids: list[str]  # cards created
+    merged: int  # vacancies merged into existing cards
+
+
 async def _split_digest(
     session: AsyncSession,
     user_id: str,
     row: _PendingRow,
     verdict: PostVerdict,
     report: RunReport,
-) -> list[str]:
+) -> _DigestSplit | None:
     """Turn a rated digest into one `new` card per matching vacancy, then
-    delete its pending row (the post's seen key stays). Returns the new card ids.
+    delete its pending row (the post's seen key stays). None when the pending
+    row was gone meanwhile (e.g. its source was deleted).
 
     Each card is `<post key>#<n>` (`n` = the vacancy's 1-based position in the
     AI answer) with the vacancy's lines as its text and the first outside link
@@ -1397,7 +1496,7 @@ async def _split_digest(
     """
     pending = await session.get(Vacancy, row.vacancy_id)
     if pending is None or pending.state != "pending":
-        return []  # removed meanwhile (e.g. its source was deleted)
+        return None
     card_sources = (
         await session.scalars(
             select(VacancyCardSource).where(
@@ -1406,6 +1505,7 @@ async def _split_digest(
         )
     ).all()
     new_ids: list[str] = []
+    merged = 0
     for n, item in enumerate(verdict.vacancies[:MAX_DIGEST_VACANCIES], start=1):
         text = fragment(row.post.text, item.lines)
         if not text:
@@ -1422,6 +1522,7 @@ async def _split_digest(
         ):
             await _copy_card_sources(session, card_sources, target_id)
             report.posts_merged += 1
+            merged += 1
             continue
         card_id = str(uuid.uuid4())
         session.add(
@@ -1451,7 +1552,7 @@ async def _split_digest(
         new_ids.append(card_id)
         report.matches += 1
     await _delete_pending(session, row.vacancy_id)
-    return new_ids
+    return _DigestSplit(new_ids=new_ids, merged=merged)
 
 
 async def _copy_card_sources(
@@ -1478,35 +1579,24 @@ async def _copy_card_sources(
 
 async def _count_failed_attempt(
     session: AsyncSession, row: _PendingRow, report: RunReport
-) -> None:
+) -> bool:
+    """Count one failed attempt; True when this was the last one and the post
+    was deleted (rejected)."""
     if row.eval_attempts + 1 >= MAX_EVAL_ATTEMPTS:
         logger.warning(
             "Post %s rejected: no valid AI verdict after %d attempts",
             row.post.external_key,
             MAX_EVAL_ATTEMPTS,
         )
-        if row.forwarded:
-            await _keep_forwarded(session, row.vacancy_id, NOT_RATED_REASON)
-        else:
-            await _delete_pending(session, row.vacancy_id)
+        await _delete_pending(session, row.vacancy_id)
         report.rejected += 1
-        return
+        return True
     await session.execute(
         update(Vacancy)
         .where(Vacancy.id == row.vacancy_id, Vacancy.state == "pending")
         .values(eval_attempts=Vacancy.eval_attempts + 1)
     )
-
-
-async def _keep_forwarded(session: AsyncSession, vacancy_id: str, reason: str) -> None:
-    """Show a forwarded post the AI rejected (or could not rate) as a low-fit
-    card: the user picked it by hand and was told it is in their Inbox, and
-    its seen key would block forwarding it again."""
-    await session.execute(
-        update(Vacancy)
-        .where(Vacancy.id == vacancy_id, Vacancy.state == "pending")
-        .values(state="new", fit="low", fit_reason=reason[:255])
-    )
+    return False
 
 
 async def _delete_pending(session: AsyncSession, vacancy_id: str) -> None:
@@ -1557,6 +1647,7 @@ class CleanupReport:
     cards_deleted: int
     pending_deleted: int
     card_sources_deleted: int
+    forwarded_posts_deleted: int
 
 
 async def cleanup(session_factory: SessionFactory, clock: Clock) -> CleanupReport:
@@ -1568,7 +1659,9 @@ async def cleanup(session_factory: SessionFactory, clock: Clock) -> CleanupRepor
       search description (posts waiting for the AI or the daily cap stay);
     - `added` cards stay while they link to their application; once the
       application is deleted (`application_id` cleared) they are deleted too;
-    - seen keys are never deleted, so deleted cards never come back.
+    - seen keys are never deleted, so deleted cards never come back;
+    - `forwarded_posts` rows (where to reply about a forwarded post) are
+      deleted 30 days after the forward, replied or not.
 
     Card sources are deleted explicitly (SQLite does not enforce the FK
     cascade here): after the cards, every card source whose card is gone.
@@ -1606,17 +1699,24 @@ async def cleanup(session_factory: SessionFactory, clock: Clock) -> CleanupRepor
                 .exists()
             )
         )
+        forwards = await session.execute(
+            delete(ForwardedPost).where(
+                ForwardedPost.created_at < now - FORWARDED_POST_RETENTION
+            )
+        )
     report = CleanupReport(
         cards_deleted=cards.rowcount,
         pending_deleted=pending.rowcount,
         card_sources_deleted=orphans.rowcount,
+        forwarded_posts_deleted=forwards.rowcount,
     )
     logger.info(
         "Discovery cleanup: cards deleted=%d, pending deleted=%d, "
-        "card sources deleted=%d",
+        "card sources deleted=%d, forwarded posts deleted=%d",
         report.cards_deleted,
         report.pending_deleted,
         report.card_sources_deleted,
+        report.forwarded_posts_deleted,
     )
     return report
 
@@ -1625,7 +1725,7 @@ def _log_report(name: str, report: RunReport) -> None:
     logger.info(
         "Discovery %s: sources read=%d failed=%d, posts stored=%d "
         "merged=%d, AI calls=%d evaluated=%d cut=%d matches=%d rejected=%d, "
-        "users at daily cap=%d, alerts sent=%d",
+        "users at daily cap=%d, alerts sent=%d, forward replies sent=%d",
         name,
         report.sources_read,
         report.sources_failed,
@@ -1638,4 +1738,5 @@ def _log_report(name: str, report: RunReport) -> None:
         report.rejected,
         len(report.users_capped),
         report.alerts_sent,
+        report.forward_replies_sent,
     )
