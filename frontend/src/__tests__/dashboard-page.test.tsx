@@ -1,6 +1,5 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
-import { Link, MemoryRouter, useLocation } from "react-router-dom";
-import { ToastProvider } from "@/shared/ui";
+import { screen, waitFor, within } from "@testing-library/react";
+import { Link, useLocation } from "react-router-dom";
 import userEvent from "@testing-library/user-event";
 import { DashboardPage } from "@/pages/dashboard";
 import { renderWithProviders } from "./utils";
@@ -44,13 +43,12 @@ describe("DashboardPage ?application= deep link", () => {
 
   it("opens the application panel for that id and clears the param", async () => {
     localStorage.setItem("jobbi_token", "test-token");
-    render(
-      <MemoryRouter initialEntries={["/dashboard?application=app-1"]}>
-        <ToastProvider>
-          <DashboardPage />
-          <SearchProbe />
-        </ToastProvider>
-      </MemoryRouter>,
+    renderWithProviders(
+      <>
+        <DashboardPage />
+        <SearchProbe />
+      </>,
+      { initialEntries: ["/dashboard?application=app-1"] },
     );
 
     const panel = await screen.findByRole("dialog", { name: "Application details" });
@@ -66,14 +64,13 @@ describe("DashboardPage ?application= deep link", () => {
 
   function renderAt(entry: string) {
     localStorage.setItem("jobbi_token", "test-token");
-    return render(
-      <MemoryRouter initialEntries={[entry]}>
-        <ToastProvider>
-          <DashboardPage />
-          <SearchProbe />
-          <Link to="/dashboard?application=app-1">Open app-1 again</Link>
-        </ToastProvider>
-      </MemoryRouter>,
+    return renderWithProviders(
+      <>
+        <DashboardPage />
+        <SearchProbe />
+        <Link to="/dashboard?application=app-1">Open app-1 again</Link>
+      </>,
+      { initialEntries: [entry] },
     );
   }
 

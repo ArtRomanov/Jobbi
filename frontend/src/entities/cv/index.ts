@@ -14,3 +14,7 @@ export { getCv } from "./api/get-cv";
 export { updateCv } from "./api/update-cv";
 export { deleteCv } from "./api/delete-cv";
 export { duplicateCv } from "./api/duplicate-cv";
+
+export { parseCvMarkdown } from "./lib/cv-markdown";
+export type { CvBlock, CvInline, CvListItem, CvHeadingLevel } from "./lib/cv-markdown";
+export { CvTextPreview } from "./ui/cv-text-preview";
