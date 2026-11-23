@@ -26,9 +26,13 @@ function pdfFile(name = "resume.pdf", size?: number): File {
   return file;
 }
 
-/** Editor stand-in: shows the notice and the router state it received. */
+/** Router state each EditorStub render saw (the notice clears it right away). */
+let editorStates: unknown[] = [];
+
+/** Editor stand-in: shows the notice and records the router state it received. */
 function EditorStub() {
   const location = useLocation();
+  editorStates.push(location.state);
   return (
     <div>
       <p>Editor {location.pathname}</p>
@@ -51,6 +55,7 @@ function fileInput(): HTMLInputElement {
 
 beforeEach(() => {
   localStorage.setItem("jobbi_token", "test-token");
+  editorStates = [];
 });
 
 describe("UploadCvButton", () => {
@@ -82,7 +87,7 @@ describe("UploadCvButton", () => {
     await waitFor(() => {
       expect(router.state.location.pathname).toBe("/cvs/cv-new/edit");
     });
-    expect(router.state.location.state).toEqual({
+    expect(editorStates[0]).toEqual({
       uploadNotice: { truncated: false, becameBase: false },
     });
     expect(auth).toBe("Bearer test-token");
@@ -201,6 +206,31 @@ describe("UploadNotice", () => {
   it("renders nothing without upload state", () => {
     renderWithProviders(<UploadNotice />);
 
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("is shown once: clears the router state, and a reload shows nothing", async () => {
+    const entry = {
+      pathname: "/cvs/1/edit",
+      search: "?x=1",
+      state: { uploadNotice: { truncated: false, becameBase: false } },
+    };
+    const first = renderWithProviders(<UploadNotice />, { initialEntries: [entry] });
+
+    expect(screen.getByRole("status")).toHaveTextContent("Text extracted from your file.");
+    await waitFor(() => {
+      expect(first.router.state.location.state).toBeNull();
+    });
+    // Same URL, replaced in place, and the notice stays up for this visit
+    expect(first.router.state.location.pathname).toBe("/cvs/1/edit");
+    expect(first.router.state.location.search).toBe("?x=1");
+    expect(first.router.state.historyAction).toBe("REPLACE");
+    expect(screen.getByRole("status")).toBeInTheDocument();
+
+    // A reload restores the (now empty) history entry
+    const reloadAt = first.router.state.location;
+    first.unmount();
+    renderWithProviders(<UploadNotice />, { initialEntries: [reloadAt] });
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 

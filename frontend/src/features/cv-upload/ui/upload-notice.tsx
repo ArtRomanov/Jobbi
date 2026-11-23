@@ -1,4 +1,5 @@
-import { useLocation } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { colors } from "@/shared/ui";
 import { readUploadNotice } from "../model/upload-notice-state";
 
@@ -11,9 +12,25 @@ export const UPLOAD_BASE_TEXT = "This CV is now your base CV.";
 /**
  * Notice shown in the CV editor right after an upload. Renders nothing unless
  * the router state carries `uploadNotice` (set by `UploadCvButton`).
+ *
+ * Shown once: the notice is kept in component state and the router state is
+ * cleared right away (replace, same URL), so a reload or coming back through
+ * history does not show it again.
  */
 export function UploadNotice() {
-  const notice = readUploadNotice(useLocation().state);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [notice] = useState(() => readUploadNotice(location.state));
+  const hasRouterNotice = readUploadNotice(location.state) !== null;
+
+  useEffect(() => {
+    if (!hasRouterNotice) return;
+    void navigate(
+      { pathname: location.pathname, search: location.search, hash: location.hash },
+      { replace: true, state: null },
+    );
+  }, [hasRouterNotice, location.pathname, location.search, location.hash, navigate]);
+
   if (!notice) return null;
 
   return (

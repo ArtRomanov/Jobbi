@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { createCv, getCv, updateCv, type Cv } from "@/entities/cv";
 import { CvTextEditor, type CvTextEditorValues } from "@/features/cv-text-editor";
 import { downloadCvTextPdf } from "@/features/cv-pdf";
+import { UploadNotice } from "@/features/cv-upload";
 import { PageCard, PageHeader, colors, useToast } from "@/shared/ui";
 import { handleApiError } from "@/shared/api";
 
@@ -145,6 +146,9 @@ export function CvEditorPage() {
         title={isEditMode ? "Edit CV" : "Create New CV"}
         subtitle="Write your CV as text; the preview shows how it will look."
       />
+
+      {/* Only after an upload (router state); shown once */}
+      <UploadNotice />
 
       {isLoading && (
         <p style={{ color: colors.textMuted, fontSize: "0.875rem" }}>Loading...</p>
