@@ -8,16 +8,19 @@ import zipfile
 
 import pytest
 
+from app.services import cv_upload
 from app.services.cv_upload import (
     DEFAULT_CV_NAME,
     MAX_CV_NAME_LENGTH,
     MAX_DOCX_UNCOMPRESSED_BYTES,
+    MAX_PDF_DECODED_BYTES,
     MAX_PDF_PAGES,
     MAX_TEXT_CHARS,
     MAX_UPLOAD_BYTES,
     CvUploadError,
     FileTooLarge,
     NoText,
+    PdfDecodeLimitExceeded,
     UnsupportedFile,
     UploadFailed,
     _is_safe_zip,
@@ -312,3 +315,76 @@ async def test_async_wrapper_returns_same_result() -> None:
 async def test_async_wrapper_propagates_errors() -> None:
     with pytest.raises(UnsupportedFile):
         await extract_cv_text_async(b"nope", "cv.pdf")
+
+
+# --------------------------------------------------------------------------
+# PDF decompression bombs (pre-merge F5)
+# --------------------------------------------------------------------------
+
+BOMB_PADDING = MAX_PDF_DECODED_BYTES + 1024 * 1024
+
+
+@pytest.mark.parametrize("filter", ["flate", "rle"])
+def test_compressed_pdf_still_extracts(filter: str) -> None:
+    data = make_pdf([["Иван Петров", "Python Developer"]], filter=filter)
+
+    assert "Иван Петров" in extract_cv_text(data, "cv.pdf").text
+
+
+@pytest.mark.parametrize("filter", ["flate", "rle"])
+def test_pdf_decompression_bomb_is_rejected_at_the_cap(filter: str) -> None:
+    data = make_pdf([["Hello"]], padding=BOMB_PADDING, filter=filter)
+    assert len(data) < MAX_UPLOAD_BYTES
+
+    with pytest.raises(UnsupportedFile) as caught:
+        extract_cv_text(data, "bomb.pdf")
+
+    # Rejected by the decode cap, not by running out of memory or text
+    assert isinstance(caught.value.__cause__, PdfDecodeLimitExceeded)
+
+
+def test_decode_cap_is_per_document_and_off_outside_extraction() -> None:
+    import zlib
+
+    from pdfminer import pdftypes
+
+    big = zlib.compress(b" " * BOMB_PADDING)
+    # Outside an extraction pdfminer decodes as usual
+    assert len(pdftypes.zlib.decompress(big)) == BOMB_PADDING
+    # Two documents under the cap in a row both pass
+    small = make_pdf([["Hello"]], padding=MAX_PDF_DECODED_BYTES // 2, filter="flate")
+    assert extract_cv_text(small, "a.pdf").text == "Hello"
+    assert extract_cv_text(small, "b.pdf").text == "Hello"
+
+
+# --------------------------------------------------------------------------
+# Subprocess isolation (pre-merge F5)
+# --------------------------------------------------------------------------
+
+
+async def test_async_bomb_is_rejected_in_the_worker() -> None:
+    data = make_pdf([["Hello"]], padding=BOMB_PADDING, filter="flate")
+
+    with pytest.raises(UnsupportedFile):
+        await extract_cv_text_async(data, "bomb.pdf")
+
+
+async def test_async_worker_timeout_is_upload_failed(monkeypatch) -> None:
+    monkeypatch.setattr(cv_upload, "EXTRACT_TIMEOUT_SECONDS", 0.001)
+
+    with pytest.raises(UploadFailed):
+        await extract_cv_text_async(make_docx(), "cv.docx")
+
+
+async def test_async_worker_crash_is_upload_failed(monkeypatch) -> None:
+    monkeypatch.setattr(cv_upload, "_WORKER_MODULE", "app.services.no_such_worker")
+
+    with pytest.raises(UploadFailed):
+        await extract_cv_text_async(make_docx(), "cv.docx")
+
+
+async def test_async_too_large_never_starts_a_worker(monkeypatch) -> None:
+    monkeypatch.setattr(cv_upload, "_WORKER_MODULE", "app.services.no_such_worker")
+
+    with pytest.raises(FileTooLarge):
+        await extract_cv_text_async(b"%PDF-" + b"0" * MAX_UPLOAD_BYTES, "cv.pdf")

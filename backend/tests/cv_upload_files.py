@@ -8,16 +8,21 @@
 
 import io
 import zipfile
+import zlib
 
 from docx import Document
 from pypdf import PdfReader, PdfWriter
 
 
-def make_pdf(pages: list[list[str]]) -> bytes:
+def make_pdf(pages: list[list[str]], *, padding: int = 0, filter: str = "") -> bytes:
     """Build a minimal text PDF: one list of lines per page.
 
     Every distinct character gets a one-byte code; a ``/ToUnicode`` CMap maps
     the codes back to Unicode, which is what text extractors read.
+
+    ``padding`` appends that many spaces to each page's content stream;
+    ``filter`` ("flate" or "rle") encodes the content streams. Together they
+    build decompression bombs: a few hundred KB that decode to many MB.
     """
     chars = sorted({ch for page in pages for line in page for ch in line})
     if len(chars) > 250:
@@ -66,7 +71,15 @@ def make_pdf(pages: list[list[str]]) -> bytes:
             encoded = "".join(f"{codes[ch]:02X}" for ch in line).encode()
             ops.append(b"<" + encoded + b"> Tj T*")
         ops.append(b"ET")
-        content_id = add(stream(b"\n".join(ops)))
+        content = b"\n".join(ops) + b" " * padding
+        if filter == "flate":
+            content_id = add(
+                stream(zlib.compress(content, 9), b"/Filter /FlateDecode ")
+            )
+        elif filter == "rle":
+            content_id = add(stream(_rle_encode(content), b"/Filter /RunLengthDecode "))
+        else:
+            content_id = add(stream(content))
         page_ids.append(
             add(
                 b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 612 792] "
@@ -96,6 +109,23 @@ def make_pdf(pages: list[list[str]]) -> bytes:
         % (len(objects) + 1, catalog_id, xref_at)
     )
     return out.getvalue()
+
+
+def _rle_encode(data: bytes) -> bytes:
+    """RunLengthDecode encoding: a literal run per byte, then full space runs.
+
+    Trailing spaces (the padding) are encoded as runs of 128, so a bomb is
+    built fast; it decodes back to exactly ``data``.
+    """
+    body = data.rstrip(b" ")
+    spaces = len(data) - len(body)
+    out = bytearray()
+    for byte in body:
+        out += bytes([0, byte])
+    out += bytes([129, 0x20]) * (spaces // 128)
+    if spaces % 128:
+        out += bytes([0, 0x20]) * (spaces % 128)
+    return bytes(out + b"\x80")
 
 
 def make_image_only_pdf() -> bytes:

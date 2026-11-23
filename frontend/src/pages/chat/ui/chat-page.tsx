@@ -124,6 +124,18 @@ export function ChatPage() {
       };
       setMessages((prev) => [...prev, optimisticUserMsg]);
 
+      // Re-fetch history to get persisted messages from the server
+      const reloadHistory = (): void => {
+        getChatHistory(applicationId)
+          // A card decided while the reload was in flight keeps its new state
+          .then((history) =>
+            setMessages((prev) => mergeCardStates(prev, history)),
+          )
+          .catch(() => {
+            // History refresh failed — keep optimistic messages
+          });
+      };
+
       abortRef.current = sendChatMessage(applicationId, content, {
         onToken: (token) => {
           streamedTextRef.current += token;
@@ -168,20 +180,17 @@ export function ChatPage() {
           }
           setStreamingContent(null);
           setIsSending(false);
-          // Re-fetch history to get persisted messages from the server
-          getChatHistory(applicationId)
-            // A card decided while the reload was in flight keeps its new state
-            .then((history) =>
-              setMessages((prev) => mergeCardStates(prev, history)),
-            )
-            .catch(() => {
-              // History refresh failed — keep optimistic messages
-            });
+          reloadHistory();
         },
         onError: (detail) => {
           setStreamingContent(null);
           setIsSending(false);
           showToast(detail, "error");
+          // The reply may have been saved before the failure: show what the
+          // server has instead of dropping the streamed text
+          if (streamedTextRef.current !== "" || replyCommittedRef.current) {
+            reloadHistory();
+          }
         },
       });
     },
