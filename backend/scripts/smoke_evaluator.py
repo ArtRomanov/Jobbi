@@ -7,7 +7,7 @@ Usage (from backend/; the key is never printed):
     set -a; . ../.env; set +a; python scripts/smoke_evaluator.py
     python scripts/smoke_evaluator.py --env-file ../.env
 Env: GROQ_API_KEY (required, from the environment or --env-file),
-GROQ_DISCOVERY_MODEL (default qwen/qwen3.8-27b), SMOKE_PAUSE_S (default 30).
+GROQ_DISCOVERY_MODEL (default openai/gpt-oss-20b), SMOKE_PAUSE_S (default 30).
 """
 
 import asyncio
@@ -28,7 +28,7 @@ from app.discovery.evaluator import (
 )
 from app.discovery.types import RawPost
 
-DEFAULT_MODEL = "qwen/qwen3.8-27b"
+DEFAULT_MODEL = "openai/gpt-oss-20b"
 
 
 @dataclass(frozen=True, slots=True)

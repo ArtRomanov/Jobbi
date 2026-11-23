@@ -21,7 +21,7 @@ from app.discovery.evaluator import (
 )
 from app.discovery.types import RawPost
 
-MODEL = "qwen/qwen3.8-27b"
+MODEL = "openai/gpt-oss-20b"
 DESCRIPTION = "Senior frontend, React, remote, from 4000 €"
 GROQ_REQUEST = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
 
@@ -292,6 +292,20 @@ class TestParseResponse:
 
         assert results["p1"].match is True
 
+    def test_think_tags_inside_answers_do_not_hide_other_verdicts(self) -> None:
+        # A post can make the model copy "<think>" / "</think>" into reasons;
+        # only a leading reasoning block may be stripped.
+        raw = response_json(
+            verdict("p1", reason="x <think>"),
+            verdict("p2", reason="victim"),
+            verdict("p3", reason="</think> y"),
+        )
+
+        results, missing = parse_response(raw, ["p1", "p2", "p3"])
+
+        assert sorted(results) == ["p1", "p2", "p3"]
+        assert missing == []
+
     def test_blank_company_becomes_none(self) -> None:
         raw = response_json(verdict("p1", company="  ", title=None))
 
@@ -318,6 +332,24 @@ async def test_evaluate_batch_maps_keys_and_uses_json_mode() -> None:
     call = client.completions.calls[0]
     assert call["model"] == MODEL
     assert call["response_format"] == {"type": "json_object"}
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("openai/gpt-oss-20b", "medium"),
+        ("openai/gpt-oss-120b", "medium"),
+        ("qwen/qwen3.8-27b", None),
+    ],
+)
+async def test_evaluate_batch_reasoning_effort_per_model(
+    model: str, expected: str | None
+) -> None:
+    client = FakeGroq(response_json(verdict("p1")))
+
+    await evaluate_batch(client, model, DESCRIPTION, {}, [make_post(1)])  # type: ignore[arg-type]
+
+    assert client.completions.calls[0].get("reasoning_effort") == expected
 
 
 async def test_evaluate_batch_reports_invalid_items_as_missing() -> None:
