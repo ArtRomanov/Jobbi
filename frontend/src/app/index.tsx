@@ -1,13 +1,10 @@
-import { BrowserRouter } from "react-router-dom";
-import { ToastProvider } from "@/shared/ui";
-import { AppRouter } from "./router";
+import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { appRoutes } from "./router";
+
+// A data router (not <BrowserRouter>) so data-router-only APIs such as
+// useBlocker work. Created once at module scope, as the react-router docs advise.
+const router = createBrowserRouter(appRoutes);
 
 export function App() {
-  return (
-    <BrowserRouter>
-      <ToastProvider>
-        <AppRouter />
-      </ToastProvider>
-    </BrowserRouter>
-  );
+  return <RouterProvider router={router} />;
 }

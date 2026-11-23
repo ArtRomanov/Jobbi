@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Outlet, type RouteObject } from "react-router-dom";
 import { useAuthStore } from "@/features/auth";
 import { LoginPage } from "@/pages/login";
 import { RegisterPage } from "@/pages/register";
@@ -13,9 +13,10 @@ import { ChatPage } from "@/pages/chat";
 import { MetricsPage } from "@/pages/metrics";
 import { InboxPage } from "@/pages/inbox";
 import { Layout } from "@/app/layout";
+import { ToastProvider } from "@/shared/ui";
 import type { ReactNode } from "react";
 
-function ProtectedRoute({ children }: { children: ReactNode }) {
+export function ProtectedRoute({ children }: { children: ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
 
   if (!isAuthenticated) {
@@ -25,35 +26,50 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-export function AppRouter() {
+/**
+ * Root route element. ToastProvider has to sit inside the router because
+ * toasts render `<Link>`; with a data router, "inside" means a route element.
+ */
+function AppRoot() {
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route path="/register" element={<RegisterPage />} />
-      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-      <Route path="/reset-password" element={<ResetPasswordPage />} />
+    <ToastProvider>
+      <Outlet />
+    </ToastProvider>
+  );
+}
 
-      {/* Protected routes wrapped in the app shell layout */}
-      <Route
-        element={
+/** The app's route table: `createBrowserRouter` in the app, `createMemoryRouter` in tests. */
+export const appRoutes: RouteObject[] = [
+  {
+    element: <AppRoot />,
+    children: [
+      { path: "/login", element: <LoginPage /> },
+      { path: "/register", element: <RegisterPage /> },
+      { path: "/forgot-password", element: <ForgotPasswordPage /> },
+      { path: "/reset-password", element: <ResetPasswordPage /> },
+
+      // Protected routes wrapped in the app shell layout
+      {
+        element: (
           <ProtectedRoute>
             <Layout />
           </ProtectedRoute>
-        }
-      >
-        <Route path="/dashboard" element={<DashboardPage />} />
-        <Route path="/metrics" element={<MetricsPage />} />
-        <Route path="/inbox" element={<InboxPage />} />
-        <Route path="/new-application" element={<NewApplicationPage />} />
-        <Route path="/cvs" element={<CvsPage />} />
-        <Route path="/cvs/new" element={<CvEditorPage />} />
-        <Route path="/cvs/:id/edit" element={<CvEditorPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/applications/:id/chat" element={<ChatPage />} />
-      </Route>
+        ),
+        children: [
+          { path: "/dashboard", element: <DashboardPage /> },
+          { path: "/metrics", element: <MetricsPage /> },
+          { path: "/inbox", element: <InboxPage /> },
+          { path: "/new-application", element: <NewApplicationPage /> },
+          { path: "/cvs", element: <CvsPage /> },
+          { path: "/cvs/new", element: <CvEditorPage /> },
+          { path: "/cvs/:id/edit", element: <CvEditorPage /> },
+          { path: "/settings", element: <SettingsPage /> },
+          { path: "/applications/:id/chat", element: <ChatPage /> },
+        ],
+      },
 
-      {/* Default: redirect to dashboard (which redirects to login if not authed) */}
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
-    </Routes>
-  );
-}
+      // Default: redirect to dashboard (which redirects to login if not authed)
+      { path: "*", element: <Navigate to="/dashboard" replace /> },
+    ],
+  },
+];
