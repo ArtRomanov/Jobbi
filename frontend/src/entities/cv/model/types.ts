@@ -7,3 +7,4 @@ export type PersonalInfo = components["schemas"]["PersonalInfo"];
 export type WorkExperienceEntry = components["schemas"]["WorkExperienceEntry"];
 export type EducationEntry = components["schemas"]["EducationEntry"];
 export type CvDuplicateRequest = components["schemas"]["CvDuplicateRequest"];
+export type CvUploadResult = components["schemas"]["CvUploadRead"];
