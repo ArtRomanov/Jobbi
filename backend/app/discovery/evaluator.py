@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "BATCH_CHAR_BUDGET",
     "BATCH_SIZE",
+    "MAX_DIGEST_VACANCIES",
     "MAX_POST_CHARS",
     "MAX_REASON_CHARS",
     "SYSTEM_PROMPT",
@@ -42,11 +43,14 @@ __all__ = [
     "EvaluationTransportError",
     "Fit",
     "PostVerdict",
+    "VacancyItem",
     "batch_take",
     "build_messages",
     "evaluate_batch",
+    "fragment",
     "is_cut",
     "parse_response",
+    "post_lines",
 ]
 
 BATCH_SIZE = 5
@@ -174,18 +178,38 @@ class Fit(StrEnum):
     LOW = "low"
 
 
-class PostVerdict(BaseModel):
-    """The AI verdict for one post."""
+# Spec 012: at most this many matching vacancies are kept from one digest post.
+MAX_DIGEST_VACANCIES = 20
+
+
+def post_lines(text: str) -> list[str]:
+    """The lines the AI sees for a post (the windowed text split on "\n").
+
+    Line numbers in `VacancyItem.lines` and `PostLink.line` are 1-based
+    indexes into this list. The window only cuts the end of the text, so they
+    are also valid line numbers of the full stored text.
+    """
+    return text[:MAX_POST_CHARS].split("\n")
+
+
+def fragment(text: str, lines: tuple[int, int]) -> str:
+    """The text of lines `from..to` (1-based, inclusive) of a post."""
+    start, end = lines
+    return "\n".join(post_lines(text)[start - 1 : end]).strip()
+
+
+class VacancyItem(BaseModel):
+    """One matching vacancy inside a digest post (spec 012), located by the
+    1-based, inclusive line range of the post text the AI saw.
+
+    `parse_response` checks the range against the post's line count and drops
+    invalid items; consumers can rely on `1 <= from <= to <= len(post_lines)`.
+    """
 
     model_config = ConfigDict(extra="ignore", frozen=True)
 
-    key: str
-    # Qwen sometimes leaves this field out (seen live 2026-11-22: a whole batch
-    # without it). A missing value is taken from `match`: a match is a vacancy,
-    # and a non-match creates no card either way.
-    is_vacancy: bool | None = None
-    match: bool
-    fit: Fit | None = None
+    lines: tuple[int, int]
+    fit: Fit
     reason: str = ""
     company: str | None = None
     title: str | None = None
@@ -211,7 +235,66 @@ class PostVerdict(BaseModel):
         return value
 
     @model_validator(mode="after")
+    def _ordered(self) -> "VacancyItem":
+        start, end = self.lines
+        if not 1 <= start <= end:
+            raise ValueError("lines must be 1 <= from <= to")
+        return self
+
+
+class PostVerdict(BaseModel):
+    """The AI verdict for one post.
+
+    Spec 012: `vacancy_count >= 2` marks a digest. Then only `vacancies` (the
+    matching ones, already range-checked and capped at MAX_DIGEST_VACANCIES by
+    `parse_response`) is used, and the top-level match/fit are ignored. With
+    `vacancy_count` <= 1 or missing, the top-level fields work as before.
+    """
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    key: str
+    # Qwen sometimes leaves this field out (seen live 2026-11-22: a whole batch
+    # without it). A missing value is taken from `match`: a match is a vacancy,
+    # and a non-match creates no card either way.
+    is_vacancy: bool | None = None
+    match: bool
+    fit: Fit | None = None
+    reason: str = ""
+    company: str | None = None
+    title: str | None = None
+    vacancy_count: int | None = None
+    vacancies: tuple[VacancyItem, ...] = ()
+
+    @property
+    def is_digest(self) -> bool:
+        return self.vacancy_count is not None and self.vacancy_count >= 2
+
+    @field_validator("fit", mode="before")
+    @classmethod
+    def _lowercase_fit(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _clip_reason(cls, value: object) -> object:
+        if value is None:
+            return ""
+        return value.strip()[:MAX_REASON_CHARS] if isinstance(value, str) else value
+
+    @field_validator("company", "title", mode="before")
+    @classmethod
+    def _blank_to_none(cls, value: object) -> object:
+        if isinstance(value, str):
+            value = value.strip()[:MAX_NAME_CHARS]
+            return value or None
+        return value
+
+    @model_validator(mode="after")
     def _consistent(self) -> "PostVerdict":
+        if self.is_digest:
+            # Top-level match/fit are ignored for a digest (see the docstring).
+            return self
         if self.is_vacancy is None:
             return self.model_copy(update={"is_vacancy": self.match})._consistent()
         if self.match and not self.is_vacancy:
