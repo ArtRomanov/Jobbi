@@ -19,11 +19,16 @@ CvContent = Annotated[str, Field(max_length=CV_CONTENT_MAX_CHARS)]
 class CvCreate(BaseModel):
     name: CvName
     content: CvContent = ""
+    # True: the new CV becomes the user's base CV in the same transaction.
+    is_base: bool = False
 
 
 class CvUpdate(BaseModel):
     name: CvName | None = None
     content: CvContent | None = None
+    # True: make this CV the base. False: clear the base only if it is this
+    # CV. None/absent: unchanged. Does not bump `version`.
+    is_base: bool | None = None
     version: int
 
 
@@ -57,10 +62,12 @@ class CvDuplicateRequest(BaseModel):
     name: str | None = None
 
 
-class CvUploadRead(CvRead):
-    """``POST /cvs/upload`` response: the new CV plus upload facts."""
+class CvExtractRead(BaseModel):
+    """``POST /cvs/upload`` response: text extracted from the file. Nothing
+    is saved; the client opens it as an unsaved draft."""
 
-    # The user had no base CV, so this upload became it.
-    became_base: bool
+    # From the file name (extension dropped).
+    name: str
+    content: str
     # The extracted text was over 20 000 characters and was cut.
     truncated: bool
