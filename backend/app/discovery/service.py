@@ -15,6 +15,14 @@ that card as an extra `vacancy_card_sources` row. Mostly at store time, before
 any AI call: the card keeps the first post's date, fit and text anyway, so
 rating the repost would only spend the daily cap. Posts stored before their
 card existed (e.g. two channels in one run, both pending) merge after a match.
+
+Digests (spec 012): a post the AI rates as several vacancies becomes one card
+per matching vacancy (`<post key>#<n>`, its lines of the post as the text, the
+first outside link on those lines as the job link); a vacancy whose job link
+is already on a card merges into it. The pending row of the post is deleted.
+A post with several outside links is never merged at store time: it may be a
+digest whose first link is only one of its vacancies (a single post with
+several links merges after rating instead).
 """
 
 import asyncio
@@ -39,19 +47,22 @@ from app.discovery.alerts import send_run_alerts
 from app.discovery.board_scan import BOARD_KINDS, board_key_prefix, fetch_board
 from app.discovery.evaluator import (
     BATCH_SIZE,
+    MAX_DIGEST_VACANCIES,
     MAX_POST_CHARS,
     BatchEvaluation,
     EvaluationFormatError,
     EvaluationRateLimitedError,
     EvaluationTransportError,
     PostVerdict,
+    VacancyItem,
     batch_take,
     evaluate_batch,
+    fragment,
     is_cut,
 )
 from app.discovery.fetchers.errors import BoardReadError
 from app.discovery.fetchers.telegram import SourceReadError, fetch_channel_posts
-from app.discovery.types import RawPost
+from app.discovery.types import PostLink, RawPost
 from app.models.user import User
 from app.models.vacancy import Vacancy, VacancyCardSource
 from app.models.vacancy_search_settings import VacancySearchSettings
@@ -645,8 +656,15 @@ async def _store_posts(
             )
             # A repost of a job already on a card: add this source to that card
             # (no AI call; the card keeps the first post's date, fit and text).
-            if post.job_link is not None and (
-                target_id := await _merge_target(session, source.user_id, post.job_link)
+            if (
+                post.job_link is not None
+                # Several links: maybe a digest, merged per vacancy after rating.
+                and len(post.links) <= 1
+                and (
+                    target_id := await _merge_target(
+                        session, source.user_id, post.job_link
+                    )
+                )
             ):
                 await _add_card_source(session, target_id, source)
                 report.posts_merged += 1
@@ -663,6 +681,7 @@ async def _store_posts(
                     title=post.title,
                     company=post.company,
                     text=post.text,
+                    links=_links_to_json(post.links),
                     posted_at=post.posted_at,
                     found_at=now,
                     state="pending",
@@ -733,8 +752,11 @@ async def store_forwarded_post(
                     user_id=user_id, external_key=post.external_key, first_seen_at=now
                 )
             )
-            if post.job_link is not None and (
-                target_id := await _merge_target(session, user_id, post.job_link)
+            if (
+                post.job_link is not None
+                # Several links: maybe a digest, merged per vacancy after rating.
+                and len(post.links) <= 1
+                and (target_id := await _merge_target(session, user_id, post.job_link))
             ):
                 if not await _has_card_source(
                     session, target_id, FORWARDED_KIND, channel.handle
@@ -761,6 +783,7 @@ async def store_forwarded_post(
                     title=post.title,
                     company=post.company,
                     text=post.text,
+                    links=_links_to_json(post.links),
                     posted_at=post.posted_at,
                     found_at=now,
                     state="pending",
@@ -781,6 +804,25 @@ async def store_forwarded_post(
     except IntegrityError:
         # The same post forwarded twice at once: the other one won.
         return ForwardOutcome.ALREADY_SEEN
+
+
+def _links_to_json(links: Sequence[PostLink]) -> list[list[Any]] | None:
+    """`Vacancy.links` value: `[[line, url], ...]`, NULL when there are none."""
+    return [[link.line, link.url] for link in links] or None
+
+
+def _links_from_json(value: object) -> tuple[PostLink, ...]:
+    """`RawPost.links` from a stored `Vacancy.links` (NULL or malformed → none)."""
+    if not isinstance(value, list):
+        return ()
+    links: list[PostLink] = []
+    for item in value:
+        match item:
+            case [int(line), str(url)] if not isinstance(line, bool):
+                links.append(PostLink(line=line, url=url))
+            case _:
+                continue
+    return tuple(links)
 
 
 async def _users_with_forwarded_pending(
@@ -1108,6 +1150,7 @@ def _raw_post(row: Vacancy) -> RawPost:
         company=row.company,
         text=row.text,
         posted_at=row.posted_at,
+        links=_links_from_json(row.links),
     )
 
 
@@ -1234,7 +1277,8 @@ async def _apply_evaluation(
     """Apply verdicts in one short transaction.
 
     Match → card `new`; no match → card deleted, seen key kept (a forwarded
-    post is kept as a low-fit card instead). A post without a valid verdict
+    post is kept as a low-fit card instead). A digest becomes one card per
+    matching vacancy (`_split_digest`). A post without a valid verdict
     (left out, malformed item, or invalid single-post answer) gets one attempt
     counted; after MAX_EVAL_ATTEMPTS it is treated as rejected.
     """
@@ -1251,6 +1295,11 @@ async def _apply_evaluation(
                 cut_keys.append(row.post.external_key)
             else:
                 evaluated_keys.append(row.post.external_key)
+            if verdict.is_digest:
+                new_ids.extend(
+                    await _split_digest(session, user_id, row, verdict, report)
+                )
+                continue
             if verdict.match and verdict.fit is not None:
                 report.matches += 1
                 # A repost whose card appeared after this post was stored
@@ -1321,6 +1370,110 @@ async def _apply_evaluation(
         )
     # After the commit: only cards that really became `new` are alerted.
     report.new_card_ids.setdefault(user_id, []).extend(new_ids)
+
+
+def _item_job_link(post: RawPost, item: VacancyItem) -> str | None:
+    """The first outside link of the post on the vacancy's lines."""
+    start, end = item.lines
+    return next((link.url for link in post.links if start <= link.line <= end), None)
+
+
+async def _split_digest(
+    session: AsyncSession,
+    user_id: str,
+    row: _PendingRow,
+    verdict: PostVerdict,
+    report: RunReport,
+) -> list[str]:
+    """Turn a rated digest into one `new` card per matching vacancy, then
+    delete its pending row (the post's seen key stays). Returns the new card ids.
+
+    Each card is `<post key>#<n>` (`n` = the vacancy's 1-based position in the
+    AI answer) with the vacancy's lines as its text and the first outside link
+    on them as its job link; the rest (source, post link, dates, alert state,
+    card sources) is copied from the pending row. A vacancy whose job link is
+    already on a visible card adds the post's sources to that card instead.
+    Zero matching vacancies just delete the pending row.
+    """
+    pending = await session.get(Vacancy, row.vacancy_id)
+    if pending is None or pending.state != "pending":
+        return []  # removed meanwhile (e.g. its source was deleted)
+    card_sources = (
+        await session.scalars(
+            select(VacancyCardSource).where(
+                VacancyCardSource.vacancy_id == row.vacancy_id
+            )
+        )
+    ).all()
+    new_ids: list[str] = []
+    for n, item in enumerate(verdict.vacancies[:MAX_DIGEST_VACANCIES], start=1):
+        text = fragment(row.post.text, item.lines)
+        if not text:
+            logger.warning(
+                "Digest %s: vacancy %d points at blank lines %s; skipped",
+                row.post.external_key,
+                n,
+                item.lines,
+            )
+            continue
+        job_link = _item_job_link(row.post, item)
+        if job_link is not None and (
+            target_id := await _merge_target(session, user_id, job_link)
+        ):
+            await _copy_card_sources(session, card_sources, target_id)
+            report.posts_merged += 1
+            continue
+        card_id = str(uuid.uuid4())
+        session.add(
+            Vacancy(
+                id=card_id,
+                user_id=pending.user_id,
+                source_id=pending.source_id,
+                external_key=f"{row.post.external_key}#{n}",
+                url=pending.url,
+                job_link=job_link,
+                title=item.title,
+                company=item.company,
+                text=text,
+                posted_at=pending.posted_at,
+                found_at=pending.found_at,
+                state="new",
+                fit=item.fit.value,
+                fit_reason=item.reason[:255] or None,
+                from_initial_scan=pending.from_initial_scan,
+                alert_handled_at=pending.alert_handled_at,
+            )
+        )
+        await _copy_card_sources(session, card_sources, card_id)
+        # Flushed now, so a later vacancy of this digest with the same job
+        # link merges into this card.
+        await session.flush()
+        new_ids.append(card_id)
+        report.matches += 1
+    await _delete_pending(session, row.vacancy_id)
+    return new_ids
+
+
+async def _copy_card_sources(
+    session: AsyncSession,
+    card_sources: Sequence[VacancyCardSource],
+    vacancy_id: str,
+) -> None:
+    """List copies of `card_sources` on a card, once per source identity."""
+    for card_source in card_sources:
+        if await _has_card_source(
+            session, vacancy_id, card_source.source_kind, card_source.source_handle
+        ):
+            continue
+        session.add(
+            VacancyCardSource(
+                vacancy_id=vacancy_id,
+                source_id=card_source.source_id,
+                source_kind=card_source.source_kind,
+                source_handle=card_source.source_handle,
+                label=card_source.label,
+            )
+        )
 
 
 async def _count_failed_attempt(
