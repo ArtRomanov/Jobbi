@@ -80,6 +80,75 @@ SCENARIOS = [
             Case("Full Stack developer (React + Node), remote", False, None),
         ],
     ),
+    # Live 2026-11-23 (@frontend_jobs_vakansii): every listed technology and the
+    # city were treated as separate must-haves, so remote React jobs got Medium.
+    Scenario(
+        description=(
+            "Senior / Middle Frontend developer, Full-stack developer, React, "
+            "Nest js, Node js, Next js, Yerevan, remote/hybrid/on-site"
+        ),
+        profile={},
+        cases=[
+            Case(
+                "Вакансия Senior Frontend Developer. от $5 000 в месяц · Удалённо из "
+                "любой страны · Полная занятость. Welldin: SPA на React и TypeScript, "
+                "SSR/SSG, Redux, WebSockets. От 5 лет опыта во фронтенде.",
+                True,
+                Fit.HIGH,
+            ),
+            Case(
+                "Вакансия Senior Frontend Engineer. Удалённо · Полная занятость. "
+                "Squads (финтех, Solana): UI-компоненты, дизайн-система. От 5 лет "
+                "опыта, React, Next.js, TypeScript.",
+                True,
+                Fit.HIGH,
+            ),
+            Case(
+                "Вакансия Frontend Developer (React / Django). Удаленно · Полная "
+                "занятость. Multivision: React-приложения на TypeScript и шаблоны "
+                "Django/Jinja. Опыт уровня Mid-Level в React, TypeScript, Django.",
+                True,
+                Fit.HIGH,
+            ),
+            Case(
+                "Вакансия Middle+/Senior Frontend Developer (Vue). Удалённо · Полная "
+                "занятость. Napoleon IT: Vue 3, Composition API, TypeScript, Pinia, "
+                "Vite. Опыт от 5 лет.",
+                True,
+                Fit.MEDIUM,
+            ),
+        ],
+    ),
+    # Same description, second batch (BATCH_SIZE is 5).
+    Scenario(
+        description=(
+            "Senior / Middle Frontend developer, Full-stack developer, React, "
+            "Nest js, Node js, Next js, Yerevan, remote/hybrid/on-site"
+        ),
+        profile={},
+        cases=[
+            Case(
+                "Вакансия Frontend Vue-разработчик. Удалённо из РФ. Lamoda ищет двух "
+                "разработчиков в B2B-команду Lamoda Seller.",
+                True,
+                Fit.LOW,
+            ),
+            Case(
+                "Вакансия Frontend / Game Client разработчик. от 4000$ · Удалённо · "
+                "Полная занятость. CrownWave Tech: игровой клиент на TypeScript и "
+                "Cocos Creator, iGaming.",
+                True,
+                Fit.MEDIUM,
+            ),
+            Case(
+                "Вакансия CRO / Experimentation Developer (Dynamic Yield). от 15 до "
+                "20 € в час · Удалённо, требуется ВНЖ ЕС. A/B-тесты и персонализация "
+                "в Dynamic Yield.",
+                False,
+                None,
+            ),
+        ],
+    ),
 ]
 
 
