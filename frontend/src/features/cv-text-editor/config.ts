@@ -1,3 +1,6 @@
+import type { CSSProperties } from "react";
+import { colors } from "@/shared/ui";
+
 /** Every character counts, including spaces and line breaks (functional spec 2.1). */
 export const CV_CONTENT_MAX_LENGTH = 20_000;
 export const CV_NAME_MAX_LENGTH = 255;
@@ -9,6 +12,26 @@ export const CV_FORMATTING_HINT_DESCRIPTION =
   "Formatting: start a line with # for a heading, ## for a section, wrap text in two asterisks for bold, start a line with a dash for a list item, write links as text in square brackets followed by the address in parentheses.";
 export const CV_CONTENT_PLACEHOLDER =
   "Write your CV here, or upload a PDF/DOCX on the CVs page.";
+
+/**
+ * Fixed height of the CV text box and the preview box. Both scroll inside
+ * themselves instead of growing the page, so they stay a matching pair.
+ */
+export const CV_PANE_HEIGHT = "32rem";
+
+/**
+ * The box shared by the CV textarea and the preview: same height, border,
+ * padding and background, its own vertical scroll.
+ */
+export const CV_PANE_BOX_STYLE = {
+  height: CV_PANE_HEIGHT,
+  overflowY: "auto",
+  padding: "0.5rem 0.75rem",
+  border: `1px solid ${colors.border}`,
+  borderRadius: "0.375rem",
+  backgroundColor: colors.bgCard,
+  boxSizing: "border-box",
+} as const satisfies CSSProperties;
 
 /** Phone width: editor and preview become the "Edit" / "Preview" tabs. */
 export const PHONE_MEDIA_QUERY = "(max-width: 640px)";
