@@ -13,8 +13,12 @@ Rules (spec 011, section 2.3):
   - anything else -> ``UnsupportedFile``;
 - DOCX zip-bomb guard (before python-docx opens it): total uncompressed size,
   entry count and per-entry compression ratio are capped;
-- PDF: pdfminer.six, at most ``MAX_PDF_PAGES`` pages; password-protected ->
-  ``NoText``;
+- PDF: pdfminer.six, at most ``MAX_PDF_PAGES`` pages, text in reading order
+  (multi-column layouts column by column, see ``order_text_boxes``);
+  password-protected ->
+  ``NoText``; decompression-bomb guard: all streams of one PDF may decode to
+  at most ``MAX_PDF_DECODED_BYTES`` (see ``pdf_decode_limit``), more ->
+  ``UnsupportedFile`` (same code as a DOCX zip bomb: not a real CV file);
 - DOCX: python-docx, body walked in order, including table cells;
 - text is kept as is (no rewording, no markup); only whitespace is tidied;
   whitespace-only -> ``NoText``; longer than ``MAX_TEXT_CHARS`` -> cut.
@@ -22,31 +26,42 @@ Rules (spec 011, section 2.3):
 Any unexpected parser failure becomes ``UploadFailed`` with a generic message,
 so library internals never reach the client.
 
-Extraction is CPU-bound and synchronous; async callers use
-``extract_cv_text_async``, which runs it in Starlette's threadpool.
+Extraction is CPU-bound and synchronous; async callers (the endpoint) use
+``extract_cv_text_async``, which runs it in a short-lived worker process
+(``cv_upload_worker``) with a memory cap where the OS enforces one and a
+``EXTRACT_TIMEOUT_SECONDS`` wall-clock limit; a worker that crashes, runs out
+of memory or times out -> ``UploadFailed``.
 """
 
+import asyncio
 import io
+import json
 import re
+import sys
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import ClassVar
 
 import structlog
 from docx import Document
 from docx.table import Table, _Cell
 from docx.text.paragraph import Paragraph
-from pdfminer.high_level import extract_text as pdf_extract_text
-from pdfminer.layout import LAParams
+from pdfminer.high_level import extract_pages as pdf_extract_pages
+from pdfminer.layout import LAParams, LTPage, LTTextContainer
 from pdfminer.pdfdocument import PDFEncryptionError
-from starlette.concurrency import run_in_threadpool
+
+from app.services import pdf_decode_limit
+from app.services.pdf_decode_limit import PdfDecodeLimitExceeded
 
 logger = structlog.get_logger()
+pdf_decode_limit.install()
 
 __all__ = [
     "DEFAULT_CV_NAME",
     "MAX_CV_NAME_LENGTH",
+    "MAX_PDF_DECODED_BYTES",
     "MAX_PDF_PAGES",
     "MAX_TEXT_CHARS",
     "MAX_UPLOAD_BYTES",
@@ -54,17 +69,33 @@ __all__ = [
     "ExtractedCv",
     "FileTooLarge",
     "NoText",
+    "PdfDecodeLimitExceeded",
+    "TextBox",
     "UnsupportedFile",
     "UploadFailed",
     "cv_name_from_filename",
     "extract_cv_text",
     "extract_cv_text_async",
+    "extract_text_only",
+    "order_text_boxes",
 ]
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 MAX_TEXT_CHARS = 20_000
 MAX_PDF_PAGES = 30
 MAX_CV_NAME_LENGTH = 255
+# Every stream of one PDF together; a real CV decodes to a few MB at most.
+MAX_PDF_DECODED_BYTES = 50 * 1024 * 1024
+# A PDF text box wider than this share of the page spans the columns (a title,
+# a full-width section); narrower boxes may sit side by side in columns.
+FULL_WIDTH_BOX_RATIO = 0.6
+# Pages are separated by two blank lines, as pdfminer's own text output reads
+# after ``normalize_text`` (a box's newline, a blank line, then a form feed).
+_PAGE_BREAK = "\n\n\n"
+EXTRACT_TIMEOUT_SECONDS = 20.0
+_WORKER_MODULE = "app.services.cv_upload_worker"
+# The directory holding the `app` package: the worker runs from it.
+_BACKEND_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CV_NAME = "Uploaded CV"
 
 # DOCX zip-bomb limits. A real CV .docx unpacks to a few MB at most and its
@@ -130,6 +161,17 @@ def extract_cv_text(data: bytes, filename: str) -> ExtractedCv:
         NoText: the file holds no readable text or is password-protected.
         UploadFailed: the parser failed for any other reason.
     """
+    text, truncated = extract_text_only(data)
+    return ExtractedCv(
+        text=text, name=cv_name_from_filename(filename), truncated=truncated
+    )
+
+
+def extract_text_only(data: bytes) -> tuple[str, bool]:
+    """The text part of ``extract_cv_text``: ``(text, truncated)``.
+
+    Raises the same errors as ``extract_cv_text``.
+    """
     if len(data) > MAX_UPLOAD_BYTES:
         raise FileTooLarge("The file is larger than 5 MB.")
 
@@ -147,15 +189,61 @@ def extract_cv_text(data: bytes, filename: str) -> ExtractedCv:
     truncated = len(text) > MAX_TEXT_CHARS
     if truncated:
         text = text[:MAX_TEXT_CHARS].rstrip()
+    return text, truncated
 
+
+_ERRORS_BY_CODE: dict[str, type[CvUploadError]] = {
+    cls.code: cls for cls in (UnsupportedFile, FileTooLarge, NoText, UploadFailed)
+}
+
+
+async def extract_cv_text_async(data: bytes, filename: str) -> ExtractedCv:
+    """``extract_cv_text`` in a short-lived worker process.
+
+    The worker caps its own memory (where the OS enforces it) and is killed
+    after ``EXTRACT_TIMEOUT_SECONDS``, so a hostile file can neither exhaust
+    the server's memory nor hold a request forever. The event loop is free
+    while it runs.
+    """
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise FileTooLarge("The file is larger than 5 MB.")
+    text, truncated = await _extract_in_worker(data)
     return ExtractedCv(
         text=text, name=cv_name_from_filename(filename), truncated=truncated
     )
 
 
-async def extract_cv_text_async(data: bytes, filename: str) -> ExtractedCv:
-    """Run ``extract_cv_text`` in the threadpool so the event loop stays free."""
-    return await run_in_threadpool(extract_cv_text, data, filename)
+async def _extract_in_worker(data: bytes) -> tuple[str, bool]:
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        _WORKER_MODULE,
+        cwd=_BACKEND_ROOT,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        stdout, _ = await asyncio.wait_for(
+            proc.communicate(data), timeout=EXTRACT_TIMEOUT_SECONDS
+        )
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+        logger.warning("cv_upload_worker_timeout")
+        raise UploadFailed("Could not upload this file.") from None
+
+    try:
+        result = json.loads(stdout) if proc.returncode == 0 else None
+    except ValueError:
+        result = None
+    if not isinstance(result, dict):
+        logger.warning("cv_upload_worker_failed", returncode=proc.returncode)
+        raise UploadFailed("Could not upload this file.")
+    if "error" in result:
+        error = _ERRORS_BY_CODE.get(str(result["error"]), UploadFailed)
+        raise error("Could not upload this file.")
+    return str(result["text"]), bool(result["truncated"])
 
 
 def normalize_text(raw: str) -> str:
@@ -192,18 +280,106 @@ def cv_name_from_filename(filename: str) -> str:
 # --------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class TextBox:
+    """One PDF text box: its horizontal extent, its top edge and its text.
+
+    PDF coordinates: ``x`` grows to the right, ``y`` grows upwards.
+    """
+
+    x0: float
+    x1: float
+    y1: float
+    text: str
+
+
+@dataclass(slots=True)
+class _Column:
+    x0: float
+    x1: float
+    boxes: list[TextBox]
+
+
+def order_text_boxes(boxes: Sequence[TextBox], page_width: float) -> str:
+    """One page's text in reading order; multi-column parts column by column.
+
+    ``boxes`` come in pdfminer's top-to-bottom order. A box wider than
+    ``FULL_WIDTH_BOX_RATIO`` of the page ends the current section and is read
+    as is. Narrower boxes collect into a section; a section is split into
+    columns by horizontal overlap and read column by column, left to right,
+    each column top to bottom. Blank boxes are skipped; boxes are joined by a
+    blank line. Only the order changes: every box's text is kept.
+    """
+    out: list[str] = []
+    section: list[TextBox] = []
+    for box in boxes:
+        if not box.text.strip():
+            continue
+        if box.x1 - box.x0 > FULL_WIDTH_BOX_RATIO * page_width:
+            out.extend(_read_columns(section))
+            section = []
+            out.append(box.text.strip())
+        else:
+            section.append(box)
+    out.extend(_read_columns(section))
+    return "\n\n".join(out)
+
+
+def _read_columns(section: list[TextBox]) -> list[str]:
+    """Group boxes into columns by horizontal overlap; read them in order."""
+    columns: list[_Column] = []
+    for box in sorted(section, key=lambda b: b.x0):
+        for column in columns:
+            if box.x0 < column.x1 and box.x1 > column.x0:
+                column.boxes.append(box)
+                column.x0 = min(column.x0, box.x0)
+                column.x1 = max(column.x1, box.x1)
+                break
+        else:
+            columns.append(_Column(x0=box.x0, x1=box.x1, boxes=[box]))
+    return [
+        box.text.strip()
+        for column in sorted(columns, key=lambda c: c.x0)
+        for box in sorted(column.boxes, key=lambda b: -b.y1)
+    ]
+
+
+def _page_text(page: LTPage) -> str:
+    boxes = [
+        TextBox(x0=item.x0, x1=item.x1, y1=item.y1, text=item.get_text())
+        for item in page
+        if isinstance(item, LTTextContainer)
+    ]
+    return order_text_boxes(boxes, page.width)
+
+
 def _extract_pdf(data: bytes) -> str:
-    try:
-        return pdf_extract_text(
-            io.BytesIO(data), maxpages=MAX_PDF_PAGES, laparams=LAParams()
-        )
-    except PDFEncryptionError as exc:
-        # Wrong/missing password or extraction not allowed.
-        raise NoText("Could not read text from this file.") from exc
-    # Broad on purpose: any parser bug must map to UPLOAD_FAILED.
-    except Exception as exc:
-        logger.warning("cv_upload_pdf_parse_failed", error_type=type(exc).__name__)
-        raise UploadFailed("Could not upload this file.") from exc
+    with pdf_decode_limit.decode_budget(MAX_PDF_DECODED_BYTES) as budget:
+        try:
+            # Pages are parsed lazily: the whole loop must stay in the budget.
+            pages = pdf_extract_pages(
+                io.BytesIO(data), maxpages=MAX_PDF_PAGES, laparams=LAParams()
+            )
+            text = _PAGE_BREAK.join(_page_text(page) for page in pages)
+        except PdfDecodeLimitExceeded as exc:
+            raise _pdf_too_big() from exc
+        except PDFEncryptionError as exc:
+            # Wrong/missing password or extraction not allowed.
+            raise NoText("Could not read text from this file.") from exc
+        # Broad on purpose: any parser bug must map to UPLOAD_FAILED.
+        except Exception as exc:
+            if budget.exceeded:  # pdfminer wrapped or replaced the cap error
+                raise _pdf_too_big() from PdfDecodeLimitExceeded()
+            logger.warning("cv_upload_pdf_parse_failed", error_type=type(exc).__name__)
+            raise UploadFailed("Could not upload this file.") from exc
+    if budget.exceeded:  # pdfminer caught the cap error and carried on
+        raise _pdf_too_big() from PdfDecodeLimitExceeded()
+    return text
+
+
+def _pdf_too_big() -> UnsupportedFile:
+    logger.warning("cv_upload_pdf_decode_limit", limit=MAX_PDF_DECODED_BYTES)
+    return UnsupportedFile("Upload a PDF or DOCX file.")
 
 
 # --------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 import { useDeferredValue } from "react";
 import { CvTextPreview } from "@/entities/cv";
 import { colors } from "@/shared/ui";
+import { CV_PANE_BOX_STYLE } from "../config";
 
 interface CvPreviewPaneProps {
   content: string;
@@ -14,16 +15,9 @@ export function CvPreviewPane({ content }: CvPreviewPaneProps) {
   const deferredContent = useDeferredValue(content);
 
   return (
-    <section
-      aria-label="Preview"
-      style={{
-        padding: "1rem",
-        border: `1px solid ${colors.borderLight}`,
-        borderRadius: "0.375rem",
-        minHeight: "12rem",
-        overflow: "auto",
-      }}
-    >
+    // A scrollable region must be reachable by keyboard: tabIndex 0 lets the
+    // user focus it and scroll with the arrow keys
+    <section role="region" aria-label="CV preview" tabIndex={0} style={CV_PANE_BOX_STYLE}>
       {deferredContent.trim() ? (
         <CvTextPreview content={deferredContent} />
       ) : (

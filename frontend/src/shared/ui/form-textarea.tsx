@@ -11,7 +11,7 @@ interface FormTextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> 
  * Accepts React Hook Form register spread via forwardRef.
  */
 export const FormTextarea = forwardRef<HTMLTextAreaElement, FormTextareaProps>(
-  function FormTextarea({ label, error, id: providedId, ...rest }, ref) {
+  function FormTextarea({ label, error, id: providedId, style, ...rest }, ref) {
     const generatedId = useId();
     const id = providedId ?? generatedId;
     const errorId = `${id}-error`;
@@ -44,6 +44,8 @@ export const FormTextarea = forwardRef<HTMLTextAreaElement, FormTextareaProps>(
             resize: "vertical",
             boxSizing: "border-box",
             fontFamily: "inherit",
+            // A caller's style adds to (and may override) the defaults
+            ...style,
           }}
           {...rest}
         />

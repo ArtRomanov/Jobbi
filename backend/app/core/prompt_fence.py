@@ -4,16 +4,51 @@ Untrusted text (scraped posts, user notes, CV content) goes between an open and
 a close marker built from "<<<" and ">>>". `defang` shortens every run of three
 or more "<" or ">" to two, so the text can neither close its own block nor open
 a fake one.
+
+Look-alikes count too: a run may use any character that NFKC folds to "<" or
+">" (fullwidth "＜", small-form "﹤") and may hide invisible format characters
+(Unicode category Cf, e.g. zero-width space) between them. Only such runs are
+rewritten; every other character is left exactly as it was.
 """
 
 import re
+import sys
+import unicodedata
+from functools import cache
 
-_FENCE_CHARS_RE = re.compile(r"<{3,}|>{3,}")
+
+@cache
+def _fence_run_re() -> re.Pattern[str]:
+    """Built on first use: scanning every code point takes a few hundred ms."""
+    lt: list[str] = []
+    gt: list[str] = []
+    invisible: list[str] = []
+    for code in range(sys.maxunicode + 1):
+        ch = chr(code)
+        if unicodedata.category(ch) == "Cf":
+            invisible.append(ch)
+            continue
+        folded = unicodedata.normalize("NFKC", ch)
+        if folded == "<":
+            lt.append(ch)
+        elif folded == ">":
+            gt.append(ch)
+
+    def char_class(chars: list[str]) -> str:
+        return "[" + "".join(re.escape(c) for c in chars) + "]"
+
+    gap = char_class(invisible) + "*"
+
+    def run(brackets: list[str]) -> str:
+        bracket = char_class(brackets)
+        return f"{bracket}(?:{gap}{bracket}){{2,}}"
+
+    return re.compile(f"(?P<lt>{run(lt)})|(?P<gt>{run(gt)})")
 
 
 def defang(text: str) -> str:
     """Remove fence-like sequences so untrusted text cannot break out of its fence."""
-    return _FENCE_CHARS_RE.sub(lambda m: m.group(0)[0] * 2, text)
+    return _fence_run_re().sub(lambda m: "<<" if m.group("lt") else ">>", text)
 
 
 def fence_open(label: str) -> str:

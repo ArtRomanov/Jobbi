@@ -7,17 +7,23 @@ import io
 import zipfile
 
 import pytest
+from pdfminer.high_level import extract_text as pdfminer_extract_text
+from pdfminer.layout import LAParams
 
+from app.services import cv_upload
 from app.services.cv_upload import (
     DEFAULT_CV_NAME,
     MAX_CV_NAME_LENGTH,
     MAX_DOCX_UNCOMPRESSED_BYTES,
+    MAX_PDF_DECODED_BYTES,
     MAX_PDF_PAGES,
     MAX_TEXT_CHARS,
     MAX_UPLOAD_BYTES,
     CvUploadError,
     FileTooLarge,
     NoText,
+    PdfDecodeLimitExceeded,
+    TextBox,
     UnsupportedFile,
     UploadFailed,
     _is_safe_zip,
@@ -25,13 +31,16 @@ from app.services.cv_upload import (
     extract_cv_text,
     extract_cv_text_async,
     normalize_text,
+    order_text_boxes,
 )
 from tests.cv_upload_files import (
+    TextBlock,
     docx_with_merged_cells,
     docx_with_text,
     encrypt_pdf,
     make_docx,
     make_image_only_pdf,
+    make_layout_pdf,
     make_pdf,
     make_zip,
 )
@@ -94,13 +103,154 @@ def test_pdf_parser_crash_maps_to_upload_failed(
     def boom(*_args: object, **_kwargs: object) -> str:
         raise RuntimeError("internal parser detail /etc/passwd")
 
-    monkeypatch.setattr("app.services.cv_upload.pdf_extract_text", boom)
+    monkeypatch.setattr("app.services.cv_upload.pdf_extract_pages", boom)
 
     with pytest.raises(UploadFailed) as exc_info:
         extract_cv_text(make_pdf([["x"]]), "cv.pdf")
 
     assert "passwd" not in str(exc_info.value)
     assert exc_info.value.code == "UPLOAD_FAILED"
+
+
+# --------------------------------------------------------------------------
+# PDF reading order (multi-column layouts are read column by column)
+# --------------------------------------------------------------------------
+
+_LEFT, _RIGHT = 72, 340
+# Wider than 60% of the 612 pt page: 63 chars * 7.2 pt = 454 pt.
+_WIDE_LINE = "Senior Python Developer at Example Corp from 2019 to 2024 Remote"
+
+TWO_COLUMNS: list[TextBlock] = [
+    (_LEFT, 700, ["CERTIFICATIONS"]),
+    (_RIGHT, 700, ["LANGUAGES"]),
+    (_LEFT, 670, ["AWS Solutions Architect", "Kubernetes CKA"]),
+    (_RIGHT, 670, ["English fluent", "German basic"]),
+]
+
+SECTIONS_AROUND_FULL_WIDTH: list[TextBlock] = [
+    (_LEFT, 740, ["SKILLS"]),
+    (_RIGHT, 740, ["CONTACTS"]),
+    (_LEFT, 710, ["Python FastAPI", "SQLAlchemy"]),
+    (_RIGHT, 710, ["mail at example dot com"]),
+    (_LEFT, 650, ["EXPERIENCE", _WIDE_LINE]),
+    (_LEFT, 590, ["CERTIFICATIONS"]),
+    (_RIGHT, 590, ["LANGUAGES"]),
+    (_LEFT, 560, ["AWS Solutions Architect", "Kubernetes CKA"]),
+    (_RIGHT, 560, ["English fluent", "German basic"]),
+]
+
+
+def _plain_pdfminer_text(data: bytes) -> str:
+    return normalize_text(pdfminer_extract_text(io.BytesIO(data), laparams=LAParams()))
+
+
+def test_two_column_pdf_is_read_column_by_column() -> None:
+    text = extract_cv_text(make_layout_pdf([TWO_COLUMNS]), "cv.pdf").text
+
+    assert text == (
+        "CERTIFICATIONS\n\nAWS Solutions Architect\nKubernetes CKA\n\n"
+        "LANGUAGES\n\nEnglish fluent\nGerman basic"
+    )
+
+
+def test_single_column_pdf_text_is_unchanged() -> None:
+    data = make_pdf(
+        [
+            ["Ivan Petrov", "Python Developer", "", "", "Experience: 7 years"],
+            ["Page two", "More text"],
+        ]
+    )
+
+    assert extract_cv_text(data, "cv.pdf").text == _plain_pdfminer_text(data)
+
+
+def test_full_width_section_keeps_top_to_bottom_section_order() -> None:
+    data = make_layout_pdf([SECTIONS_AROUND_FULL_WIDTH])
+
+    text = extract_cv_text(data, "cv.pdf").text
+
+    assert text == (
+        "SKILLS\n\nPython FastAPI\nSQLAlchemy\n\n"
+        "CONTACTS\n\nmail at example dot com\n\n"
+        f"EXPERIENCE\n{_WIDE_LINE}\n\n"
+        "CERTIFICATIONS\n\nAWS Solutions Architect\nKubernetes CKA\n\n"
+        "LANGUAGES\n\nEnglish fluent\nGerman basic"
+    )
+
+
+def test_columns_on_several_pages_are_read_page_by_page() -> None:
+    data = make_layout_pdf([TWO_COLUMNS, [(_LEFT, 720, ["Page two"])]])
+
+    text = extract_cv_text(data, "cv.pdf").text
+
+    assert text.endswith("LANGUAGES\n\nEnglish fluent\nGerman basic\n\n\nPage two")
+
+
+@pytest.mark.parametrize(
+    "pages",
+    [
+        pytest.param([TWO_COLUMNS], id="two-columns"),
+        pytest.param([SECTIONS_AROUND_FULL_WIDTH], id="full-width-between"),
+        pytest.param([TWO_COLUMNS, SECTIONS_AROUND_FULL_WIDTH], id="two-pages"),
+    ],
+)
+def test_reordering_keeps_every_word(pages: list[list[TextBlock]]) -> None:
+    data = make_layout_pdf(pages)
+
+    text = extract_cv_text(data, "cv.pdf").text
+
+    assert sorted(text.split()) == sorted(_plain_pdfminer_text(data).split())
+
+
+def _box(x0: float, x1: float, y1: float, text: str) -> TextBox:
+    return TextBox(x0=x0, x1=x1, y1=y1, text=text)
+
+
+def test_order_text_boxes_reads_three_columns_left_to_right() -> None:
+    boxes = [
+        _box(400, 550, 700, "C1"),
+        _box(40, 180, 700, "A1"),
+        _box(220, 360, 700, "B1"),
+        _box(40, 180, 650, "A2"),
+        _box(400, 550, 650, "C2"),
+        _box(220, 360, 650, "B2"),
+    ]
+
+    assert order_text_boxes(boxes, page_width=600) == "A1\n\nA2\n\nB1\n\nB2\n\nC1\n\nC2"
+
+
+def test_order_text_boxes_groups_overlapping_boxes_into_one_column() -> None:
+    # "indent" overlaps "head" only partly; "tail" overlaps only the range
+    # widened by "indent", so all three end up in one column.
+    boxes = [
+        _box(300, 400, 700, "right"),
+        _box(40, 120, 700, "head"),
+        _box(100, 200, 650, "indent"),
+        _box(180, 260, 600, "tail"),
+    ]
+
+    assert order_text_boxes(boxes, page_width=600) == "head\n\nindent\n\ntail\n\nright"
+
+
+def test_order_text_boxes_full_width_box_splits_sections() -> None:
+    boxes = [
+        _box(40, 200, 700, "top left"),
+        _box(320, 500, 700, "top right"),
+        _box(40, 560, 600, "full width"),
+        _box(320, 500, 500, "bottom right"),
+        _box(40, 200, 500, "bottom left"),
+    ]
+
+    assert order_text_boxes(boxes, page_width=600) == (
+        "top left\n\ntop right\n\nfull width\n\nbottom left\n\nbottom right"
+    )
+
+
+def test_order_text_boxes_skips_blank_boxes_and_strips_text() -> None:
+    boxes = [_box(40, 200, 700, "  \n"), _box(40, 200, 650, "  body \n")]
+
+    assert order_text_boxes(boxes, page_width=600) == "body"
+    assert order_text_boxes([], page_width=600) == ""
 
 
 # --------------------------------------------------------------------------
@@ -312,3 +462,76 @@ async def test_async_wrapper_returns_same_result() -> None:
 async def test_async_wrapper_propagates_errors() -> None:
     with pytest.raises(UnsupportedFile):
         await extract_cv_text_async(b"nope", "cv.pdf")
+
+
+# --------------------------------------------------------------------------
+# PDF decompression bombs (pre-merge F5)
+# --------------------------------------------------------------------------
+
+BOMB_PADDING = MAX_PDF_DECODED_BYTES + 1024 * 1024
+
+
+@pytest.mark.parametrize("filter", ["flate", "rle"])
+def test_compressed_pdf_still_extracts(filter: str) -> None:
+    data = make_pdf([["Иван Петров", "Python Developer"]], filter=filter)
+
+    assert "Иван Петров" in extract_cv_text(data, "cv.pdf").text
+
+
+@pytest.mark.parametrize("filter", ["flate", "rle"])
+def test_pdf_decompression_bomb_is_rejected_at_the_cap(filter: str) -> None:
+    data = make_pdf([["Hello"]], padding=BOMB_PADDING, filter=filter)
+    assert len(data) < MAX_UPLOAD_BYTES
+
+    with pytest.raises(UnsupportedFile) as caught:
+        extract_cv_text(data, "bomb.pdf")
+
+    # Rejected by the decode cap, not by running out of memory or text
+    assert isinstance(caught.value.__cause__, PdfDecodeLimitExceeded)
+
+
+def test_decode_cap_is_per_document_and_off_outside_extraction() -> None:
+    import zlib
+
+    from pdfminer import pdftypes
+
+    big = zlib.compress(b" " * BOMB_PADDING)
+    # Outside an extraction pdfminer decodes as usual
+    assert len(pdftypes.zlib.decompress(big)) == BOMB_PADDING
+    # Two documents under the cap in a row both pass
+    small = make_pdf([["Hello"]], padding=MAX_PDF_DECODED_BYTES // 2, filter="flate")
+    assert extract_cv_text(small, "a.pdf").text == "Hello"
+    assert extract_cv_text(small, "b.pdf").text == "Hello"
+
+
+# --------------------------------------------------------------------------
+# Subprocess isolation (pre-merge F5)
+# --------------------------------------------------------------------------
+
+
+async def test_async_bomb_is_rejected_in_the_worker() -> None:
+    data = make_pdf([["Hello"]], padding=BOMB_PADDING, filter="flate")
+
+    with pytest.raises(UnsupportedFile):
+        await extract_cv_text_async(data, "bomb.pdf")
+
+
+async def test_async_worker_timeout_is_upload_failed(monkeypatch) -> None:
+    monkeypatch.setattr(cv_upload, "EXTRACT_TIMEOUT_SECONDS", 0.001)
+
+    with pytest.raises(UploadFailed):
+        await extract_cv_text_async(make_docx(), "cv.docx")
+
+
+async def test_async_worker_crash_is_upload_failed(monkeypatch) -> None:
+    monkeypatch.setattr(cv_upload, "_WORKER_MODULE", "app.services.no_such_worker")
+
+    with pytest.raises(UploadFailed):
+        await extract_cv_text_async(make_docx(), "cv.docx")
+
+
+async def test_async_too_large_never_starts_a_worker(monkeypatch) -> None:
+    monkeypatch.setattr(cv_upload, "_WORKER_MODULE", "app.services.no_such_worker")
+
+    with pytest.raises(FileTooLarge):
+        await extract_cv_text_async(b"%PDF-" + b"0" * MAX_UPLOAD_BYTES, "cv.pdf")

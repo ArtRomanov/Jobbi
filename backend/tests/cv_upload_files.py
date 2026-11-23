@@ -8,18 +8,47 @@
 
 import io
 import zipfile
+import zlib
 
 from docx import Document
 from pypdf import PdfReader, PdfWriter
 
+# A block of lines whose first baseline starts at (x, y), in PDF points; the
+# page is 612 x 792 (US Letter), y grows upwards, lines are 14 pt apart.
+TextBlock = tuple[float, float, list[str]]
 
-def make_pdf(pages: list[list[str]]) -> bytes:
-    """Build a minimal text PDF: one list of lines per page.
+
+def make_pdf(pages: list[list[str]], *, padding: int = 0, filter: str = "") -> bytes:
+    """Build a minimal text PDF: one list of lines per page, at the top left.
+
+    See ``make_layout_pdf`` for ``padding`` and ``filter``.
+    """
+    return make_layout_pdf(
+        [[(72, 720, lines)] for lines in pages], padding=padding, filter=filter
+    )
+
+
+def make_layout_pdf(
+    pages: list[list[TextBlock]], *, padding: int = 0, filter: str = ""
+) -> bytes:
+    """Build a minimal text PDF: one list of positioned text blocks per page.
 
     Every distinct character gets a one-byte code; a ``/ToUnicode`` CMap maps
     the codes back to Unicode, which is what text extractors read.
+
+    ``padding`` appends that many spaces to each page's content stream;
+    ``filter`` ("flate" or "rle") encodes the content streams. Together they
+    build decompression bombs: a few hundred KB that decode to many MB.
     """
-    chars = sorted({ch for page in pages for line in page for ch in line})
+    chars = sorted(
+        {
+            ch
+            for page in pages
+            for _x, _y, lines in page
+            for line in lines
+            for ch in line
+        }
+    )
     if len(chars) > 250:
         raise ValueError("too many distinct characters for a one-byte font")
     codes = {ch: i + 1 for i, ch in enumerate(chars)}
@@ -60,13 +89,23 @@ def make_pdf(pages: list[list[str]]) -> bytes:
         % (len(chars), widths, cmap_id)
     )
     page_ids: list[int] = []
-    for lines in pages:
-        ops = [b"BT /F1 12 Tf 72 720 Td 14 TL"]
-        for line in lines:
-            encoded = "".join(f"{codes[ch]:02X}" for ch in line).encode()
-            ops.append(b"<" + encoded + b"> Tj T*")
-        ops.append(b"ET")
-        content_id = add(stream(b"\n".join(ops)))
+    for blocks in pages:
+        ops: list[bytes] = []
+        for x, y, lines in blocks:
+            ops.append(b"BT /F1 12 Tf %g %g Td 14 TL" % (x, y))
+            for line in lines:
+                encoded = "".join(f"{codes[ch]:02X}" for ch in line).encode()
+                ops.append(b"<" + encoded + b"> Tj T*")
+            ops.append(b"ET")
+        content = b"\n".join(ops) + b" " * padding
+        if filter == "flate":
+            content_id = add(
+                stream(zlib.compress(content, 9), b"/Filter /FlateDecode ")
+            )
+        elif filter == "rle":
+            content_id = add(stream(_rle_encode(content), b"/Filter /RunLengthDecode "))
+        else:
+            content_id = add(stream(content))
         page_ids.append(
             add(
                 b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 612 792] "
@@ -96,6 +135,23 @@ def make_pdf(pages: list[list[str]]) -> bytes:
         % (len(objects) + 1, catalog_id, xref_at)
     )
     return out.getvalue()
+
+
+def _rle_encode(data: bytes) -> bytes:
+    """RunLengthDecode encoding: a literal run per byte, then full space runs.
+
+    Trailing spaces (the padding) are encoded as runs of 128, so a bomb is
+    built fast; it decodes back to exactly ``data``.
+    """
+    body = data.rstrip(b" ")
+    spaces = len(data) - len(body)
+    out = bytearray()
+    for byte in body:
+        out += bytes([0, byte])
+    out += bytes([129, 0x20]) * (spaces // 128)
+    if spaces % 128:
+        out += bytes([0, 0x20]) * (spaces % 128)
+    return bytes(out + b"\x80")
 
 
 def make_image_only_pdf() -> bytes:
