@@ -31,7 +31,7 @@ export type BaseCvsStatus = "loading" | "ready" | "error";
 export interface BaseCvsResult {
   cvs: readonly Cv[];
   status: BaseCvsStatus;
-  /** Most recently updated CV, or null. */
+  /** The base CV (preselected), or null when the user has none (nothing preselected). */
   defaultCvId: string | null;
 }
 

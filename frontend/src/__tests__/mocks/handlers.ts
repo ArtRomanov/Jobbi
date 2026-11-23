@@ -7,6 +7,18 @@ const BASE_URL = "http://localhost:8000";
 // CV mock data
 // ---------------------------------------------------------------------------
 
+/** Fields every CV gets unless a fixture says otherwise: an own, non-base CV. */
+const OWN_CV_FIELDS = {
+  is_base: false,
+  kind: "own",
+  tailored_for: null,
+  tailored_application_deleted: false,
+} as const satisfies Pick<Cv, "is_base" | "kind" | "tailored_for" | "tailored_application_deleted">;
+
+/**
+ * Server order (spec 011): base first, then own CVs, then tailored copies,
+ * each by `updated_at` desc.
+ */
 export const mockCvs: Cv[] = [
   {
     id: "cv-1",
@@ -17,6 +29,8 @@ export const mockCvs: Cv[] = [
     linked_applications_count: 1,
     created_at: "2026-01-10T08:00:00Z",
     updated_at: "2026-02-20T10:00:00Z",
+    ...OWN_CV_FIELDS,
+    is_base: true,
   },
   {
     id: "cv-2",
@@ -26,8 +40,34 @@ export const mockCvs: Cv[] = [
     linked_applications_count: 0,
     created_at: "2026-02-15T09:00:00Z",
     updated_at: "2026-03-01T12:00:00Z",
+    ...OWN_CV_FIELDS,
+  },
+  {
+    id: "cv-3",
+    name: "Software Engineer CV \u2014 Acme Corp Senior Engineer",
+    content: "# Test User",
+    version: 2,
+    linked_applications_count: 1,
+    created_at: "2026-03-05T09:00:00Z",
+    updated_at: "2026-03-06T12:00:00Z",
+    ...OWN_CV_FIELDS,
+    kind: "tailored",
+    tailored_for: { application_id: "app-1", company_name: "Acme Corp", role_title: "Senior Engineer" },
   },
 ];
+
+/** Builds a CV fixture: an own, non-base CV unless `overrides` say otherwise. */
+export function makeMockCv(overrides: Partial<Cv> & Pick<Cv, "id" | "name">): Cv {
+  return {
+    content: "",
+    version: 1,
+    linked_applications_count: 0,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    ...OWN_CV_FIELDS,
+    ...overrides,
+  };
+}
 
 export const mockCvDetail = { ...mockCvs[0] };
 
@@ -442,6 +482,7 @@ export const handlers = [
       linked_applications_count: 0,
       created_at: "2026-03-10T10:00:00Z",
       updated_at: "2026-03-10T10:00:00Z",
+      ...OWN_CV_FIELDS,
     };
     return HttpResponse.json(newCv, { status: 201 });
   }),
@@ -470,6 +511,15 @@ export const handlers = [
       return HttpResponse.json({ detail: "version is required" }, { status: 422 });
     }
     return HttpResponse.json({ ...cv, ...changes, version: version + 1 });
+  }),
+
+  // POST /api/v1/cvs/:id/make-base — the CV becomes the base (a tailored copy becomes own)
+  http.post(`${BASE_URL}/api/v1/cvs/:id/make-base`, ({ params }) => {
+    const cv = mockCvs.find((c) => c.id === params.id);
+    if (!cv) {
+      return HttpResponse.json({ detail: "CV not found." }, { status: 404 });
+    }
+    return HttpResponse.json({ ...cv, is_base: true, kind: "own" });
   }),
 
   // DELETE /api/v1/cvs/:id — delete CV
@@ -531,6 +581,8 @@ export const handlers = [
         ...original,
         id: "cv-duplicated",
         name: (body.name as string) ?? `${original.name} (copy)`,
+        // A duplicate is always an own, non-base CV
+        ...OWN_CV_FIELDS,
         version: 1,
         linked_applications_count: 0,
         created_at: "2026-03-10T10:00:00Z",

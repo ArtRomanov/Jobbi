@@ -1,15 +1,28 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { listCvs, deleteCv, duplicateCv, type Cv } from "@/entities/cv";
+import { listCvs, deleteCv, duplicateCv, groupCvs, type Cv } from "@/entities/cv";
 import { downloadCvTextPdf } from "@/features/cv-pdf";
 import { UploadCvButton } from "@/features/cv-upload";
-import { PageCard, PageHeader, Button, colors } from "@/shared/ui";
+import { PageCard, PageHeader, Button, colors, useToast } from "@/shared/ui";
 import { handleApiError } from "@/shared/api";
-import { useToast } from "@/shared/ui";
+import {
+  MY_CVS_TITLE,
+  NO_BASE_HINT,
+  NO_CVS_TEXT,
+  PAGE_SUBTITLE,
+  PAGE_TITLE,
+  TAILORED_TITLE,
+} from "../lib/constants";
+import { CvList } from "./cv-list";
+import { CvSection } from "./cv-section";
+
+const MUTED_TEXT_STYLE = { color: colors.textMuted, fontSize: "0.875rem" } as const;
 
 /**
- * CV list page showing all user CVs with actions for edit, duplicate,
- * download PDF, and delete. Lives in `pages/` because it is a route.
+ * CVs page (spec 011 §2.4–2.5): "My CVs" (base first, with a "Base" label)
+ * and "Tailored for applications" (hidden when empty), each CV with Make base
+ * (non-base only), Edit, Duplicate, PDF and Delete. Lives in `pages/` because
+ * it is a route; it composes the upload and make-base features.
  */
 export function CvsPage() {
   const [cvs, setCvs] = useState<Cv[]>([]);
@@ -20,16 +33,13 @@ export function CvsPage() {
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
   const { showToast } = useToast();
 
+  // Only the first load shows "Loading..."; refreshes keep the list on screen
   const fetchCvs = useCallback(async () => {
-    setIsLoading(true);
     setError(null);
     try {
-      const data = await listCvs();
-      setCvs(data);
+      setCvs(await listCvs());
     } catch (err: unknown) {
-      setError(
-        err instanceof Error ? err.message : "Failed to load CVs",
-      );
+      setError(err instanceof Error ? err.message : "Failed to load CVs");
     } finally {
       setIsLoading(false);
     }
@@ -88,13 +98,27 @@ export function CvsPage() {
     [showToast],
   );
 
-  function formatDate(iso: string): string {
-    return new Date(iso).toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-  }
+  // The previous base and the copy's section change server-side: refetch
+  const handleMadeBase = useCallback(() => {
+    void fetchCvs();
+  }, [fetchCvs]);
+
+  const onDuplicate = useCallback((cv: Cv) => void handleDuplicate(cv), [handleDuplicate]);
+  const onDownload = useCallback((cv: Cv) => void handleDownload(cv), [handleDownload]);
+  const onDelete = useCallback((cv: Cv) => void handleDelete(cv), [handleDelete]);
+
+  const { base, own, tailored } = useMemo(() => groupCvs(cvs), [cvs]);
+  const isReady = !isLoading && !error;
+
+  const listProps = {
+    duplicatingId,
+    downloadingId,
+    deletingId,
+    onDuplicate,
+    onDownload,
+    onDelete,
+    onMadeBase: handleMadeBase,
+  };
 
   return (
     <PageCard maxWidth="720px">
@@ -103,131 +127,44 @@ export function CvsPage() {
           display: "flex",
           justifyContent: "space-between",
           alignItems: "flex-start",
+          gap: "0.5rem",
+          flexWrap: "wrap",
         }}
       >
-        <PageHeader
-          title="My CVs"
-          subtitle="Manage your resumes and download as PDF."
-        />
+        <PageHeader title={PAGE_TITLE} subtitle={PAGE_SUBTITLE} />
         <div style={{ display: "flex", gap: "0.5rem", flexShrink: 0 }}>
           <UploadCvButton />
-          <Link
-            to="/cvs/new"
-            style={{ textDecoration: "none", flexShrink: 0 }}
-          >
+          <Link to="/cvs/new" style={{ textDecoration: "none", flexShrink: 0 }}>
             <Button type="button">Create New CV</Button>
           </Link>
         </div>
       </div>
 
-      {isLoading && (
-        <p style={{ color: colors.textMuted, fontSize: "0.875rem" }}>
-          Loading...
+      {isLoading ? <p style={MUTED_TEXT_STYLE}>Loading...</p> : null}
+
+      {error ? <p style={{ color: colors.error, fontSize: "0.875rem" }}>{error}</p> : null}
+
+      {isReady && cvs.length > 0 && base === null ? (
+        <p role="note" style={{ ...MUTED_TEXT_STYLE, margin: "0 0 0.5rem" }}>
+          {NO_BASE_HINT}
         </p>
-      )}
+      ) : null}
 
-      {error && (
-        <p style={{ color: colors.error, fontSize: "0.875rem" }}>
-          {error}
-        </p>
-      )}
+      {isReady ? (
+        <CvSection title={MY_CVS_TITLE}>
+          {cvs.length === 0 ? (
+            <p style={MUTED_TEXT_STYLE}>{NO_CVS_TEXT}</p>
+          ) : (
+            <CvList cvs={own} {...listProps} />
+          )}
+        </CvSection>
+      ) : null}
 
-      {!isLoading && !error && cvs.length === 0 && (
-        <p style={{ color: colors.textMuted, fontSize: "0.875rem" }}>
-          No CVs yet. Create your first one to get started.
-        </p>
-      )}
-
-      {!isLoading && !error && cvs.length > 0 && (
-        <div>
-          {cvs.map((cv) => (
-            <div
-              key={cv.id}
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                padding: "0.75rem 0",
-                borderBottom: `1px solid ${colors.borderLight}`,
-              }}
-            >
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div
-                  style={{
-                    fontWeight: 600,
-                    fontSize: "0.875rem",
-                    color: colors.textPrimary,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {cv.name}
-                </div>
-                <div
-                  style={{
-                    fontSize: "0.75rem",
-                    color: colors.textMuted,
-                    marginTop: "0.125rem",
-                  }}
-                >
-                  Updated {formatDate(cv.updated_at)}
-                  {cv.linked_applications_count > 0 && (
-                    <span>
-                      {" \u00B7 "}
-                      {cv.linked_applications_count} application
-                      {cv.linked_applications_count !== 1 ? "s" : ""}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              <div
-                style={{
-                  display: "flex",
-                  gap: "0.5rem",
-                  flexShrink: 0,
-                  marginLeft: "1rem",
-                }}
-              >
-                <Link
-                  to={`/cvs/${cv.id}/edit`}
-                  style={{ textDecoration: "none" }}
-                >
-                  <Button type="button" variant="secondary">
-                    Edit
-                  </Button>
-                </Link>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  loading={duplicatingId === cv.id}
-                  onClick={() => void handleDuplicate(cv)}
-                >
-                  Duplicate
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  loading={downloadingId === cv.id}
-                  onClick={() => void handleDownload(cv)}
-                >
-                  PDF
-                </Button>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  style={{ color: colors.error, borderColor: colors.error }}
-                  loading={deletingId === cv.id}
-                  onClick={() => void handleDelete(cv)}
-                >
-                  Delete
-                </Button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      {isReady && tailored.length > 0 ? (
+        <CvSection title={TAILORED_TITLE}>
+          <CvList cvs={tailored} {...listProps} />
+        </CvSection>
+      ) : null}
     </PageCard>
   );
 }

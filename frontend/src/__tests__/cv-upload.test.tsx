@@ -16,6 +16,10 @@ const uploadedCv = {
   linked_applications_count: 0,
   created_at: "2026-11-23T10:00:00Z",
   updated_at: "2026-11-23T10:00:00Z",
+  is_base: false,
+  kind: "own",
+  tailored_for: null,
+  tailored_application_deleted: false,
   became_base: false,
   truncated: false,
 };
@@ -98,6 +102,25 @@ describe("UploadCvButton", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/was cut/)).not.toBeInTheDocument();
     expect(screen.queryByText(/base CV/)).not.toBeInTheDocument();
+  });
+
+  it("an upload that became the base adds the base line to the notice", async () => {
+    server.use(
+      http.post(UPLOAD_URL, () =>
+        HttpResponse.json({ ...uploadedCv, is_base: true, became_base: true }, { status: 201 }),
+      ),
+    );
+    const user = userEvent.setup();
+    const { router } = renderButton();
+
+    await user.upload(fileInput(), pdfFile());
+
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe("/cvs/cv-new/edit");
+    });
+    expect(editorStates[0]).toEqual({ uploadNotice: { truncated: false, becameBase: true } });
+    expect(screen.getByRole("status")).toHaveTextContent("This CV is now your base CV.");
+    expect(screen.queryByText(/was cut/)).not.toBeInTheDocument();
   });
 
   it("passes the cut flag on, and the notice shows the cut line", async () => {

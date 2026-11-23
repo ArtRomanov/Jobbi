@@ -1,9 +1,9 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import { ApplicationPanel } from "@/features/application-panel/ui/application-panel";
 import { renderWithProviders } from "./utils";
 import { server } from "./setup";
-import { mockApplicationDetail } from "./mocks/handlers";
+import { mockApplicationDetail, mockCvs } from "./mocks/handlers";
 
 const noopClose = vi.fn();
 const noopUpdate = vi.fn();
@@ -43,6 +43,29 @@ describe("ApplicationPanel — CV section", () => {
     expect(
       screen.getByText("Linked: Software Engineer CV"),
     ).toBeInTheDocument();
+  });
+
+  it("lists own CVs first with the base labelled, then tailored copies in a group", async () => {
+    // Shuffled on purpose: the panel groups by is_base / kind itself
+    server.use(
+      http.get("http://localhost:8000/api/v1/cvs", () =>
+        HttpResponse.json([mockCvs[2], mockCvs[1], mockCvs[0]]),
+      ),
+    );
+
+    renderWithProviders(
+      <ApplicationPanel applicationId="app-1" onClose={noopClose} onUpdate={noopUpdate} />,
+    );
+
+    await screen.findByRole("option", { name: "Software Engineer CV (base)" });
+    const select = screen.getByRole("option", { name: "None" }).closest("select")!;
+    const ungrouped = Array.from(select.children)
+      .filter((el) => el.tagName === "OPTION")
+      .map((el) => el.textContent);
+    expect(ungrouped).toEqual(["None", "Software Engineer CV (base)", "Frontend Developer CV"]);
+    const group = select.querySelector("optgroup");
+    expect(group).toHaveAttribute("label", "Tailored copies");
+    expect(within(group!).getByRole("option", { name: mockCvs[2]!.name })).toHaveValue("cv-3");
   });
 
   it("shows 'No CV linked' when cv_id is null", async () => {
