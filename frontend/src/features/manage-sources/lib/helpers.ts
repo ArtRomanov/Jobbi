@@ -1,4 +1,4 @@
-import type { DiscoveryStatus, VacancySource } from "@/entities/vacancy-source";
+import type { DiscoveryStatus, VacancySource, VacancySourceKind } from "@/entities/vacancy-source";
 import { formatTimeAgo } from "@/shared/lib";
 import {
   AI_UNAVAILABLE_NOTICE,
@@ -34,7 +34,8 @@ export function pickFocusAfterRemove(
 
 /**
  * Apply polled status fields to the local list. Membership stays local, so a
- * poll that started before an add/remove can never undo it.
+ * poll that started before an add/remove can never undo it. Rows missing from
+ * `polled` keep their local copy (the caller drops rows saved mid-poll).
  */
 export function mergePolledSources(
   current: readonly VacancySource[],
@@ -51,6 +52,7 @@ export function mergePolledSources(
           unavailable: fresh.unavailable,
           last_error: fresh.last_error,
           watching_since: fresh.watching_since,
+          editable: fresh.editable,
         }
       : source;
   });
@@ -101,4 +103,25 @@ export function getCheckedLabel(source: VacancySource): string | null {
     return `${WATCHING_SINCE_PREFIX} ${formatTimeAgo(watchingSince)}`;
   }
   return lastCheckedAt ? `${LAST_CHECKED_PREFIX} ${formatTimeAgo(lastCheckedAt)}` : null;
+}
+
+/** Board link templates per kind (`{handle}` = the part of `key` after "kind:"). */
+const BOARD_LINK_TEMPLATES: Record<Exclude<VacancySourceKind, "telegram" | "web">, string> = {
+  greenhouse: "https://job-boards.greenhouse.io/{handle}",
+  lever: "https://jobs.lever.co/{handle}",
+  lever_eu: "https://jobs.eu.lever.co/{handle}",
+  teamtailor: "https://{handle}.teamtailor.com",
+};
+
+/**
+ * The link the Edit dialog starts with: the saved URL of a web page,
+ * `@handle` for Telegram, the board link for Greenhouse / Lever / Teamtailor.
+ * The handle comes from `key` ("<kind>:<handle>").
+ */
+export function getSourceLink(source: Pick<VacancySource, "kind" | "key" | "url">): string {
+  if (source.kind === "web") return source.url ?? "";
+  const separator = source.key.indexOf(":");
+  const handle = separator === -1 ? source.key : source.key.slice(separator + 1);
+  if (source.kind === "telegram") return `@${handle}`;
+  return BOARD_LINK_TEMPLATES[source.kind].replace("{handle}", handle);
 }

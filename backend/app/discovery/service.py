@@ -192,6 +192,9 @@ class _SourceRef:
     # Web only: the listing URL and the optional "Job link contains" filter.
     url: str | None = None
     job_link_contains: str | None = None
+    # `VacancySource.revision` when loaded: results fetched under an older
+    # revision (the source was edited meanwhile) are never stored.
+    revision: int = 0
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -273,15 +276,21 @@ async def run_initial_scans(
 
     async def work() -> None:
         for source in sources:
-            await _scan_source(
-                session_factory,
-                http_client,
-                source,
-                clock(),
-                report,
-                initial=True,
-                sleep=sleep,
-            )
+            now = clock()
+            if not await _take_initial_lease(session_factory, source, now):
+                continue
+            try:
+                await _scan_source(
+                    session_factory,
+                    http_client,
+                    source,
+                    now,
+                    report,
+                    initial=True,
+                    sleep=sleep,
+                )
+            finally:
+                await _release_initial_lease(session_factory, source)
         await evaluate_pending(
             session_factory,
             groq_client,
@@ -480,9 +489,61 @@ async def _load_sources(
                 display_name=s.display_name,
                 url=s.url,
                 job_link_contains=s.job_link_contains,
+                revision=s.revision,
             )
             for s in sources
         ]
+
+
+def _same_source(source: _SourceRef) -> Any:
+    """WHERE clause: the source still exists and was not edited since loaded."""
+    return and_(
+        VacancySource.id == source.id, VacancySource.revision == source.revision
+    )
+
+
+async def _revision_unchanged(session: AsyncSession, source: _SourceRef) -> bool:
+    """The source still exists and was not edited since it was loaded."""
+    current = await session.scalar(
+        select(VacancySource.revision).where(VacancySource.id == source.id)
+    )
+    return current == source.revision
+
+
+async def _take_initial_lease(
+    session_factory: SessionFactory, source: _SourceRef, now: datetime
+) -> bool:
+    """Mark a first-scan attempt as running (edits get 409 meanwhile).
+
+    False when the source was deleted or edited since it was loaded: skip it.
+    """
+    async with session_factory() as session, session.begin():
+        result = await session.execute(
+            update(VacancySource)
+            .where(_same_source(source))
+            .values(initial_attempt_started_at=now)
+        )
+    if result.rowcount == 0:
+        logger.info("Source %s changed before its first scan attempt", source.id)
+        return False
+    return True
+
+
+async def _release_initial_lease(
+    session_factory: SessionFactory, source: _SourceRef
+) -> None:
+    """End the first-scan attempt (success or failure). A deleted source
+    updates nothing; a failure here is only logged: the lease turns stale
+    after 10 min anyway, and the scan's own error must not be hidden."""
+    try:
+        async with session_factory() as session, session.begin():
+            await session.execute(
+                update(VacancySource)
+                .where(VacancySource.id == source.id)
+                .values(initial_attempt_started_at=None)
+            )
+    except Exception:
+        logger.exception("Could not release the first-scan lease of %s", source.id)
 
 
 async def _recent_keys(
@@ -609,6 +670,8 @@ async def _record_read_failure(
     now: datetime,
     initial: bool,
 ) -> None:
+    """Record a failed read. Skipped when the source was deleted or edited
+    during the read: the failure was about the old link."""
     async with session_factory() as session, session.begin():
         values: dict[str, Any] = {
             "failing_since": func.coalesce(VacancySource.failing_since, now),
@@ -621,9 +684,11 @@ async def _record_read_failure(
             values["next_initial_attempt_at"] = _next_initial_attempt(
                 now, failing_since
             )
-        await session.execute(
-            update(VacancySource).where(VacancySource.id == source.id).values(**values)
+        result = await session.execute(
+            update(VacancySource).where(_same_source(source)).values(**values)
         )
+        if result.rowcount == 0:
+            logger.info("Source %s was removed or edited during its read", source.id)
 
 
 async def _store_posts(
@@ -653,14 +718,15 @@ async def _store_posts(
         values |= {"initial_scan_completed_at": now, "next_initial_attempt_at": None}
 
     async with session_factory() as session, session.begin():
-        # Update the source first: if it was deleted during the fetch, nothing
-        # is stored (removal stops the scan). The UPDATE also takes the write
-        # lock, so a concurrent delete waits for this transaction.
+        # Update the source first: if it was deleted or edited (`revision`
+        # bumped) during the fetch, nothing is stored: the results belong to
+        # the old link/filter. The UPDATE also takes the write lock, so a
+        # concurrent delete or edit waits for this transaction.
         result = await session.execute(
-            update(VacancySource).where(VacancySource.id == source.id).values(**values)
+            update(VacancySource).where(_same_source(source)).values(**values)
         )
         if result.rowcount == 0:
-            logger.info("Source %s was removed during its scan", source.id)
+            logger.info("Source %s was removed or edited during its scan", source.id)
             return
         report.sources_read += 1
         if not posts and not seen_only_keys:
@@ -1108,7 +1174,8 @@ async def _read_job_pages(
     until the rows, `deadline` or `WEB_DETAIL_MAX_FAILURES_IN_ROW` run out.
 
     Each page is fetched with no session open, then written in its own short
-    transaction.
+    transaction. Each write first re-reads the source's `revision`: when the
+    source was edited or deleted meanwhile, the step stops for this source.
     """
     failures_in_row = 0
     for index, row in enumerate(await _detail_rows(session_factory, source)):
@@ -1123,16 +1190,19 @@ async def _read_job_pages(
             if exc.reason == "not_found":
                 # The job is gone: drop the row, keep the seen key, no AI.
                 failures_in_row = 0
-                await _drop_detail_row(session_factory, row.vacancy_id)
+                if not await _drop_detail_row(session_factory, source, row):
+                    return _stop_edited(source)
                 continue
-            await _count_detail_failure(session_factory, row)
+            if not await _count_detail_failure(session_factory, source, row):
+                return _stop_edited(source)
             failures_in_row += 1
         except UnsafeUrlError:
-            await _count_detail_failure(session_factory, row)
+            if not await _count_detail_failure(session_factory, source, row):
+                return _stop_edited(source)
             failures_in_row += 1
         else:
             failures_in_row = 0
-            await _fill_detail(
+            if not await _fill_detail(
                 session_factory,
                 source,
                 row,
@@ -1141,27 +1211,41 @@ async def _read_job_pages(
                 title=page.title,
                 company=page.company,
                 report=report,
-            )
+            ):
+                return _stop_edited(source)
             continue
         if failures_in_row >= WEB_DETAIL_MAX_FAILURES_IN_ROW:
             logger.info("Web source %s: job pages wait (failures)", source.id)
             return
 
 
-async def _drop_detail_row(session_factory: SessionFactory, vacancy_id: str) -> None:
+def _stop_edited(source: _SourceRef) -> None:
+    logger.info("Web source %s was edited or removed: job pages stop", source.id)
+
+
+async def _drop_detail_row(
+    session_factory: SessionFactory, source: _SourceRef, row: _DetailRow
+) -> bool:
+    """False (nothing written) when the source changed since it was loaded."""
     async with session_factory() as session, session.begin():
-        await _delete_pending(session, vacancy_id)
+        if not await _revision_unchanged(session, source):
+            return False
+        await _delete_pending(session, row.vacancy_id)
+    return True
 
 
 async def _count_detail_failure(
-    session_factory: SessionFactory, row: _DetailRow
-) -> None:
-    """One more failed read; at the last one the row is rated by its title."""
+    session_factory: SessionFactory, source: _SourceRef, row: _DetailRow
+) -> bool:
+    """One more failed read; at the last one the row is rated by its title.
+    False (nothing written) when the source changed since it was loaded."""
     attempts = row.detail_attempts + 1
     values: dict[str, Any] = {"detail_attempts": attempts}
     if attempts >= WEB_DETAIL_MAX_ATTEMPTS:
         values |= {"needs_detail": False, "text": row.title or ""}
     async with session_factory() as session, session.begin():
+        if not await _revision_unchanged(session, source):
+            return False
         await session.execute(
             update(Vacancy)
             .where(
@@ -1171,6 +1255,7 @@ async def _count_detail_failure(
             )
             .values(**values)
         )
+    return True
 
 
 async def _fill_detail(
@@ -1183,11 +1268,14 @@ async def _fill_detail(
     title: str | None,
     company: str | None,
     report: RunReport,
-) -> None:
-    """Store the job page; an exclude word in it drops the row (seen key kept)."""
+) -> bool:
+    """Store the job page; an exclude word in it drops the row (seen key kept).
+    False (nothing written) when the source changed since it was loaded."""
     title = title or row.title
     text = text or title or ""
     async with session_factory() as session, session.begin():
+        if not await _revision_unchanged(session, source):
+            return False
         exclude_terms: list[str] = (
             await session.scalar(
                 select(VacancySearchSettings.exclude_terms).where(
@@ -1199,7 +1287,7 @@ async def _fill_detail(
         if excluded(title, text, exclude_terms):
             await _delete_pending(session, row.vacancy_id)
             report.posts_excluded += 1
-            return
+            return True
         values: dict[str, Any] = {
             "needs_detail": False,
             "text": text,
@@ -1218,6 +1306,7 @@ async def _fill_detail(
             )
             .values(**values)
         )
+    return True
 
 
 # --------------------------------------------------------------------------

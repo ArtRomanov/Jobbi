@@ -33,8 +33,11 @@ export interface UseManageSourcesResult {
   isAddDisabled: boolean;
   /** Append a just-created source to the local list. */
   appendSource: (source: VacancySource) => void;
-  /** Replace a source with the server's copy after an edit. */
-  replaceSource: (source: VacancySource) => void;
+  /**
+   * Put the server's copy in place of `previousId` after an edit. A different
+   * id means the source was replaced: the removed list is re-fetched too.
+   */
+  replaceSource: (previousId: string, source: VacancySource) => void;
   /** Resolves true when the source was removed. */
   removeSource: (id: string) => Promise<boolean>;
   retryLoad: () => void;
@@ -85,12 +88,39 @@ export interface UseAddSourceResult {
   cancelPreview: () => void;
 }
 
-export interface UseEditSourceResult {
-  isSaving: boolean;
-  /** Inline error above the dialog buttons, or null. */
-  error: string | null;
-  save: (values: EditSourceValues) => Promise<void>;
+/** Which Edit-dialog request is running ("check": Save on the form, previewing a changed link). */
+export type EditSourceAction = "check" | "recheck" | "save";
+
+/** Edit-form field focused after a failed submit. */
+export type EditSourceField = "name" | "link";
+
+/** A web preview inside the Edit dialog, with the drafts it starts from. */
+export interface EditPreview extends WebPreview {
+  initialJobLinkContains: string;
+  initialName: string;
 }
 
-/** Called with the server's copy after a successful edit. */
+export interface UseEditSourceResult {
+  busyAction: EditSourceAction | null;
+  isBusy: boolean;
+  /** Inline error above the form buttons, or null. */
+  error: string | null;
+  /** Open web preview (a changed link / pattern that is a web page), or null. */
+  preview: EditPreview | null;
+  /** Re-check / save error shown inside the preview, or null. */
+  previewError: string | null;
+  /** Form Save: name-only → PATCH; changed link / pattern → preview first. */
+  /** Resolves with the field to focus when the request failed, else null. */
+  submit: (values: EditSourceValues) => Promise<EditSourceField | null>;
+  recheck: (jobLinkContains: string | null) => Promise<void>;
+  /** Preview Save; resolves true when saved. */
+  savePreview: (options: WebSourceOptions) => Promise<boolean>;
+  /** Back from the preview to the form (no-op while a request runs). */
+  closePreview: () => void;
+}
+
+/** Called with the server's copy after a successful edit (a replace has a new id). */
 export type SourceEditedHandler = (source: VacancySource) => void;
+
+/** Edit success inside the panel: the edited row's id and the server's copy. */
+export type SourceSavedHandler = (previousId: string, source: VacancySource) => void;

@@ -25,7 +25,8 @@ class VacancySourceUpdate(BaseModel):
     """Partial edit of a source; fields left out stay unchanged.
 
     `name`: up to 100 chars after trimming; null or blank = the default name.
-    `input` / `job_link_contains` (change the link) are not supported yet.
+    `input`: the new link (null = keep). `job_link_contains`: web pages only,
+    1-100 chars after trimming; null or blank = pick job links automatically.
     """
 
     name: str | None = None
@@ -84,6 +85,8 @@ class VacancySourceRead(BaseModel):
     job_link_contains: str | None
     # Web pages: when watching started (every job listed then counts as seen).
     watching_since: UtcDatetime | None
+    # False while a first-scan attempt runs (PATCH answers 409 then).
+    editable: bool
 
 
 class VacancySearchSettingsRead(BaseModel):

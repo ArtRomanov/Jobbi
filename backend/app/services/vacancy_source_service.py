@@ -40,6 +40,8 @@ from app.services.vacancy_source_parsing import (
 
 MAX_SOURCES = 30
 UNAVAILABLE_AFTER = timedelta(hours=24)
+# A first-scan lease older than this belongs to a crashed worker.
+ATTEMPT_LEASE_TTL = timedelta(minutes=10)
 MAX_SOURCE_NAME_LENGTH = 100
 MAX_JOB_LINK_CONTAINS_LENGTH = 100
 PREVIEW_TITLES = 5
@@ -48,6 +50,7 @@ SOURCE_LIMIT_MESSAGE = "You can watch up to 30 sources"
 DUPLICATE_SOURCE_MESSAGE = "Already in your sources"
 NAME_TOO_LONG_MESSAGE = "Name can be up to 100 characters"
 BAD_JOB_LINK_CONTAINS_MESSAGE = "'Job link contains' must be 1–100 characters"
+SOURCE_BUSY_MESSAGE = "This source is being scanned — try again in a moment"
 
 MAX_DESCRIPTION_LENGTH = 500
 MAX_EXCLUDE_TERMS = 50
@@ -77,6 +80,11 @@ class SourceNotFoundError(Exception):
     """The given source id is not one of the user's sources."""
 
 
+class SourceBusyError(Exception):
+    """A first-scan attempt is running (fresh lease), so the source cannot be
+    edited right now."""
+
+
 @dataclass(frozen=True, slots=True)
 class SourcePreview:
     """What `preview_source` found; only `kind` is set for non-web sources."""
@@ -102,6 +110,15 @@ def _now_naive() -> datetime:
 
 def is_scanning(source: VacancySource) -> bool:
     return source.initial_scan_completed_at is None
+
+
+def is_attempt_running(source: VacancySource, now: datetime | None = None) -> bool:
+    """True while the worker's first-scan lease is fresh (a crashed worker's
+    lease is ignored after ATTEMPT_LEASE_TTL)."""
+    started = source.initial_attempt_started_at
+    if started is None:
+        return False
+    return (now or _now_naive()) - started < ATTEMPT_LEASE_TTL
 
 
 def is_unavailable(source: VacancySource, now: datetime | None = None) -> bool:
@@ -451,10 +468,31 @@ async def _add_web_source(
     )
 
     await _check_can_add(db, user_id, parsed)
+    source = _build_web_source(user_id, parsed, pattern, custom_name)
+    db.add(source)
+    db.add_all(_seen_keys(user_id, source.id, listing.jobs))
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise DuplicateSourceError from exc
+    await db.refresh(source)
+    return source
+
+
+def _build_web_source(
+    user_id: str,
+    parsed: ParsedSource,
+    pattern: str | None,
+    custom_name: str | None,
+) -> VacancySource:
+    """A new web source whose first scan is already complete (the listing
+    read before saving counts as it)."""
+    assert parsed.url is not None
     now = _now_naive()
     source_id = str(uuid.uuid4())
     default_name = web_default_name(parsed.url)
-    source = VacancySource(
+    return VacancySource(
         id=source_id,
         user_id=user_id,
         kind="web",
@@ -467,15 +505,6 @@ async def _add_web_source(
         initial_scan_completed_at=now,
         last_checked_at=now,
     )
-    db.add(source)
-    db.add_all(_seen_keys(user_id, source_id, listing.jobs))
-    try:
-        await db.commit()
-    except IntegrityError as exc:
-        await db.rollback()
-        raise DuplicateSourceError from exc
-    await db.refresh(source)
-    return source
 
 
 def _seen_keys(
@@ -483,6 +512,28 @@ def _seen_keys(
 ) -> list[VacancySeenKey]:
     keys = dict.fromkeys(web_seen_key(source_id, job.url) for job in jobs)
     return [VacancySeenKey(user_id=user_id, external_key=key) for key in keys]
+
+
+async def _get_owned_source(
+    db: AsyncSession, user_id: str, source_id: str
+) -> VacancySource:
+    result = await db.execute(
+        select(VacancySource).where(
+            VacancySource.id == source_id, VacancySource.user_id == user_id
+        )
+    )
+    source = result.scalar_one_or_none()
+    if source is None:
+        await db.rollback()
+        raise SourceNotFoundError
+    return source
+
+
+def _custom_name(source: VacancySource) -> str | None:
+    """The user's own name for the source, None when it shows the default."""
+    if source.display_name == source.default_name:
+        return None
+    return source.display_name
 
 
 async def rename_source(
@@ -500,22 +551,254 @@ async def rename_source(
     Raises:
         SourceInputError: the name is longer than MAX_SOURCE_NAME_LENGTH.
         SourceNotFoundError: not one of the user's sources.
+        SourceBusyError: a first-scan attempt is running.
     """
     custom_name = None if isinstance(name, _Unset) else normalize_source_name(name)
-    result = await db.execute(
-        select(VacancySource).where(
-            VacancySource.id == source_id, VacancySource.user_id == user_id
-        )
-    )
-    source = result.scalar_one_or_none()
-    if source is None:
+    source = await _get_owned_source(db, user_id, source_id)
+    if is_attempt_running(source):
         await db.rollback()
-        raise SourceNotFoundError
+        raise SourceBusyError
     if not isinstance(name, _Unset):
         source.display_name = custom_name or source.default_name
     await db.commit()
     await db.refresh(source)
     return source
+
+
+async def edit_source(
+    db: AsyncSession,
+    user_id: str,
+    source_id: str,
+    *,
+    raw_input: str | None | _Unset = UNSET,
+    job_link_contains: str | None | _Unset = UNSET,
+    name: str | None | _Unset = UNSET,
+) -> VacancySource:
+    """Edit a source: its name, its link and (web) its "Job link contains".
+
+    Arguments left as UNSET (or a null `raw_input`) keep the stored value.
+    - Nothing fetched changes (same kind + handle; web: same normalized URL
+      and pattern): only the name is applied.
+    - Web -> web with a new URL or pattern: the listing is read (up to
+      MAX_LISTING_PAGES pages, no transaction open), then one transaction
+      updates the source in place (same id, so its seen history stays),
+      bumps `revision`, remembers every listed job as seen and deletes the
+      source's posts still waiting for the AI (they matched the old filter).
+    - Another kind, or a non-web source with a new handle: the new source is
+      checked live exactly like `add_source`, then one transaction removes the
+      old one (`_delete_source_rows`) and inserts the new one, which gets the
+      normal first scan (web: listed jobs are seen). The NEW source is
+      returned.
+    Web in-place edits keep a custom name unless `name` is given. A replace
+    gives the new source its own default name unless `name` sets one that
+    differs from the old source's current name. The edited source is left
+    out of the duplicate and MAX_SOURCES checks. `job_link_contains` is
+    ignored when the result is not a web source.
+
+    Raises:
+        SourceInputError: unrecognised input, or a bad name / pattern.
+        SourceNotFoundError: not one of the user's sources.
+        SourceBusyError: a first-scan attempt is running (fresh lease), or
+            another edit of this source was saved first.
+        DuplicateSourceError: another of the user's sources has this link.
+        SourceLimitError: MAX_SOURCES reached (only if already over it).
+        SourceCheckError: the live check of the new link failed.
+    """
+    # Validate everything before any lookup or network call.
+    new_name = UNSET if isinstance(name, _Unset) else normalize_source_name(name)
+    parsed = (
+        None
+        if isinstance(raw_input, _Unset) or raw_input is None
+        else parse_source_input(raw_input)
+    )
+    new_pattern = (
+        UNSET
+        if isinstance(job_link_contains, _Unset)
+        else normalize_job_link_contains(job_link_contains)
+    )
+
+    source = await _get_owned_source(db, user_id, source_id)
+    if is_attempt_running(source):
+        await db.rollback()
+        raise SourceBusyError
+    custom_name = _custom_name(source) if isinstance(new_name, _Unset) else new_name
+    # On a replace the old custom name is NOT carried over: the removed
+    # source's cards keep it as their "(removed)" label, so reusing it would
+    # make old and new indistinguishable. The client may echo the old name back.
+    replace_name = (
+        new_name
+        if isinstance(new_name, str) and new_name != source.display_name
+        else None
+    )
+
+    if parsed is not None and parsed.kind != source.kind:
+        return await _replace_source(db, source, parsed, new_pattern, replace_name)
+    if source.kind != "web":
+        if parsed is not None and parsed.handle != source.handle:
+            return await _replace_source(db, source, parsed, new_pattern, replace_name)
+        return await rename_source(db, user_id, source_id, name)
+
+    # Web -> web: the URL and/or the pattern may change.
+    assert source.url is not None
+    new_url = source.url if parsed is None else parsed.url
+    assert new_url is not None
+    pattern = (
+        source.job_link_contains if isinstance(new_pattern, _Unset) else new_pattern
+    )
+    if new_url == source.url and pattern == source.job_link_contains:
+        return await rename_source(db, user_id, source_id, name)
+    return await _edit_web_source(
+        db,
+        source,
+        ParsedSource(kind="web", handle="", url=new_url),
+        pattern,
+        custom_name,
+    )
+
+
+async def _edit_web_source(
+    db: AsyncSession,
+    source: VacancySource,
+    parsed: ParsedSource,
+    pattern: str | None,
+    custom_name: str | None,
+) -> VacancySource:
+    """Change a web source's URL and/or pattern in place (see `edit_source`)."""
+    assert parsed.url is not None
+    user_id = source.user_id
+    source_id = source.id
+    revision = source.revision
+    await _check_can_add(db, user_id, parsed, exclude_id=source_id)
+    await db.commit()  # no transaction open during the fetch
+
+    listing = await read_web_listing(
+        parsed.url,
+        pattern,
+        max_pages=MAX_LISTING_PAGES,
+        total_timeout_s=SAVE_TIMEOUT_SECONDS,
+    )
+
+    current = await _get_owned_source(db, user_id, source_id)
+    if is_attempt_running(current):
+        await db.rollback()
+        raise SourceBusyError
+    await _check_can_add(db, user_id, parsed, exclude_id=source_id)
+    now = _now_naive()
+    default_name = web_default_name(parsed.url)
+    result = await db.execute(
+        update(VacancySource)
+        .where(VacancySource.id == source_id, VacancySource.revision == revision)
+        .values(
+            url=parsed.url,
+            url_hash=url_hash(parsed.url),
+            job_link_contains=pattern,
+            default_name=default_name,
+            display_name=custom_name or default_name,
+            revision=VacancySource.revision + 1,
+            initial_scan_completed_at=now,
+            last_checked_at=now,
+            failing_since=None,
+            last_error=None,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount == 0:
+        # Another edit of this source was saved while we were reading.
+        await db.rollback()
+        raise SourceBusyError
+    await _delete_pending_rows(db, source_id, user_id)
+    db.add_all(await _unseen_keys(db, user_id, source_id, listing.jobs))
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise DuplicateSourceError from exc
+    await db.refresh(current)
+    return current
+
+
+async def _unseen_keys(
+    db: AsyncSession, user_id: str, source_id: str, jobs: list[ListingJob]
+) -> list[VacancySeenKey]:
+    """Seen-key rows for the listed jobs the user has not seen yet."""
+    candidates = _seen_keys(user_id, source_id, jobs)
+    if not candidates:
+        return []
+    result = await db.execute(
+        select(VacancySeenKey.external_key).where(
+            VacancySeenKey.user_id == user_id,
+            VacancySeenKey.external_key.in_([c.external_key for c in candidates]),
+        )
+    )
+    known = set(result.scalars().all())
+    return [c for c in candidates if c.external_key not in known]
+
+
+async def _replace_source(
+    db: AsyncSession,
+    old: VacancySource,
+    parsed: ParsedSource,
+    new_pattern: str | None | _Unset,
+    custom_name: str | None,
+) -> VacancySource:
+    """Remove `old` and add the source `parsed` describes, in one transaction
+    after the live check (see `edit_source`)."""
+    user_id = old.user_id
+    old_id = old.id
+    await _check_can_add(db, user_id, parsed, exclude_id=old_id)
+    await db.commit()  # no transaction open during the live check
+
+    seen: list[VacancySeenKey] = []
+    if parsed.kind == "web":
+        assert parsed.url is not None
+        pattern = None if isinstance(new_pattern, _Unset) else new_pattern
+        listing = await read_web_listing(
+            parsed.url,
+            pattern,
+            max_pages=MAX_LISTING_PAGES,
+            total_timeout_s=SAVE_TIMEOUT_SECONDS,
+        )
+        new_source = _build_web_source(user_id, parsed, pattern, custom_name)
+        seen = _seen_keys(user_id, new_source.id, listing.jobs)
+    else:
+        default_name = await _fetch_display_name(parsed)
+        new_source = VacancySource(
+            user_id=user_id,
+            kind=parsed.kind,
+            handle=parsed.handle,
+            default_name=default_name,
+            display_name=custom_name or default_name,
+        )
+
+    current = await _get_owned_source(db, user_id, old_id)
+    if is_attempt_running(current):
+        await db.rollback()
+        raise SourceBusyError
+    await _check_can_add(db, user_id, parsed, exclude_id=old_id)
+    await _delete_source_rows(db, current)
+    db.add(new_source)
+    db.add_all(seen)
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise DuplicateSourceError from exc
+    await db.refresh(new_source)
+    return new_source
+
+
+async def _delete_pending_rows(db: AsyncSession, source_id: str, user_id: str) -> None:
+    """Delete the source's posts still waiting for the AI (incl. `needs_detail`)
+    with their card sources, without committing. Their seen keys stay."""
+    pending_ids = select(Vacancy.id).where(
+        Vacancy.source_id == source_id,
+        Vacancy.user_id == user_id,
+        Vacancy.state == "pending",
+    )
+    await db.execute(
+        delete(VacancyCardSource).where(VacancyCardSource.vacancy_id.in_(pending_ids))
+    )
+    await db.execute(delete(Vacancy).where(Vacancy.id.in_(pending_ids)))
 
 
 async def _delete_source_rows(db: AsyncSession, source: VacancySource) -> None:
@@ -529,16 +812,7 @@ async def _delete_source_rows(db: AsyncSession, source: VacancySource) -> None:
     display name as their label, so "(removed)" shows the latest name.
     """
     source_id = source.id
-    user_id = source.user_id
-    pending_ids = select(Vacancy.id).where(
-        Vacancy.source_id == source_id,
-        Vacancy.user_id == user_id,
-        Vacancy.state == "pending",
-    )
-    await db.execute(
-        delete(VacancyCardSource).where(VacancyCardSource.vacancy_id.in_(pending_ids))
-    )
-    await db.execute(delete(Vacancy).where(Vacancy.id.in_(pending_ids)))
+    await _delete_pending_rows(db, source_id, source.user_id)
     await db.execute(
         update(Vacancy).where(Vacancy.source_id == source_id).values(source_id=None)
     )

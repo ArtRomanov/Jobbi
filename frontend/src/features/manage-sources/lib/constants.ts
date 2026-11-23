@@ -60,3 +60,7 @@ export const EDIT_LABEL = "Edit";
 export const SAVE_LABEL = "Save";
 export const CANCEL_LABEL = "Cancel";
 export const SOURCE_NAME_HINT = "Leave empty to use the default name";
+export const SOURCE_LINK_LABEL = "Link";
+export const LINK_REQUIRED_MESSAGE = "Enter a link";
+/** Why Edit is disabled while a first-scan attempt runs. */
+export const EDIT_UNAVAILABLE_HINT = "Scanning — try again in a moment";

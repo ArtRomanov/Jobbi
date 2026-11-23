@@ -54,6 +54,9 @@ export function useManageSources(
     onScanFinishedRef.current = onScanFinished;
     onSourcesChangeRef.current = onSourcesChange;
   });
+  // Ids saved (added / edited) since the running poll's GET started; that
+  // poll's copy of them predates the save, so it must not be merged over them
+  const editedSinceRef = useRef<Set<string>>(new Set());
   // Latest removed-list refetch wins; bumped on unmount to drop late responses
   const removedRequestRef = useRef(0);
   useEffect(
@@ -114,11 +117,16 @@ export function useManageSources(
       // A poll is a removed-list read too: newest request wins over an older refresh
       removedRequestRef.current += 1;
       const removedRequestId = removedRequestRef.current;
+      // Saves before this GET are in its answer; only later ones must be skipped
+      editedSinceRef.current.clear();
       try {
         const data = await getVacancySources();
         if (cancelled) return;
-        const isFinished = hasScanFinished(sourcesRef.current, data.sources);
-        setSources((current) => mergePolledSources(current, data.sources));
+        const skipIds = new Set(editedSinceRef.current);
+        for (const id of skipIds) editedSinceRef.current.delete(id);
+        const fresh = data.sources.filter((source) => !skipIds.has(source.id));
+        const isFinished = hasScanFinished(sourcesRef.current, fresh);
+        setSources((current) => mergePolledSources(current, fresh));
         if (removedRequestId === removedRequestRef.current) {
           setRemovedSources(data.removed_sources);
           setStatus(data.status);
@@ -152,12 +160,8 @@ export function useManageSources(
   }, [isAnyScanning, isReady]);
 
   const appendSource = useCallback((source: VacancySource): void => {
+    editedSinceRef.current.add(source.id);
     setSources((prev) => [...prev, source]);
-  }, []);
-
-  // Edit: the server's copy replaces the row in place (order kept)
-  const replaceSource = useCallback((source: VacancySource): void => {
-    setSources((prev) => prev.map((item) => (item.id === source.id ? source : item)));
   }, []);
 
   const refreshRemovedSources = useCallback(async (): Promise<void> => {
@@ -173,6 +177,17 @@ export function useManageSources(
       // The removed list only feeds the Inbox filter; the next load fixes it
     }
   }, []);
+
+  // Edit: the server's copy takes the edited row's place (order kept). A new id
+  // means the old source was replaced; its cards now show as "(removed)"
+  const replaceSource = useCallback(
+    (previousId: string, source: VacancySource): void => {
+      editedSinceRef.current.add(previousId).add(source.id);
+      setSources((prev) => prev.map((item) => (item.id === previousId ? source : item)));
+      if (source.id !== previousId) void refreshRemovedSources();
+    },
+    [refreshRemovedSources],
+  );
 
   const removeSource = useCallback(
     async (id: string): Promise<boolean> => {

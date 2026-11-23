@@ -3,6 +3,7 @@ import type { components } from "@/shared/api";
 /**
  * One watched source (Telegram channel, company job board or web page).
  * `name_is_custom`: the user renamed it (false → `display_name` is the default name).
+ * `editable`: false while a first-scan attempt runs (Edit is disabled then).
  */
 export type VacancySource = components["schemas"]["VacancySourceRead"];
 
@@ -41,6 +42,8 @@ export type VacancySourcePreview = components["schemas"]["VacancySourcePreview"]
 
 /**
  * Body of PATCH /api/v1/vacancy-sources/{id}: a field left out stays unchanged.
- * `name`: null or "" → back to the default name. `input` / `job_link_contains`: Slice 6.
+ * `name`: null or "" → back to the default name. `input`: a new link — a web
+ * source keeps its id; any other kind (or a kind change) is replaced by a NEW
+ * source with a different id. `job_link_contains`: web pages only.
  */
 export type VacancySourceUpdate = components["schemas"]["VacancySourceUpdate"];

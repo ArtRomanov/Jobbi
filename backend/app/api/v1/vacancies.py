@@ -53,20 +53,23 @@ from app.services.vacancy_source_check import SourceCheckError
 from app.services.vacancy_source_parsing import SourceInputError
 from app.services.vacancy_source_service import (
     DUPLICATE_SOURCE_MESSAGE,
+    SOURCE_BUSY_MESSAGE,
     SOURCE_LIMIT_MESSAGE,
     UNSET,
     DuplicateSourceError,
     SearchSettingsError,
+    SourceBusyError,
     SourceLimitError,
     SourceNotFoundError,
     add_source,
     delete_source,
+    edit_source,
     get_search_settings,
+    is_attempt_running,
     is_scanning,
     is_unavailable,
     list_sources,
     preview_source,
-    rename_source,
     update_search_settings,
 )
 
@@ -76,7 +79,6 @@ NOT_IN_INBOX_MESSAGE = "Vacancy is not in the Inbox."
 VACANCY_NOT_FOUND_MESSAGE = "Vacancy not found."
 ALREADY_ADDED_MESSAGE = "Already added"
 ALREADY_TRACKED_MESSAGE = "You already track this"
-LINK_CHANGE_UNSUPPORTED_MESSAGE = "Changing the link is not supported yet"
 
 CardAction = Callable[[AsyncSession, str, str], Awaitable[None]]
 
@@ -97,6 +99,7 @@ def _source_to_read(source: VacancySource) -> VacancySourceRead:
         watching_since=(
             source.initial_scan_completed_at if source.kind == "web" else None
         ),
+        editable=not is_attempt_running(source),
     )
 
 
@@ -246,12 +249,22 @@ async def create_vacancy_source(
 @router.patch(
     "/vacancy-sources/{source_id}",
     response_model=VacancySourceRead,
-    summary="Edit a source (rename)",
+    summary="Edit a source: name, link and (web pages) 'Job link contains'",
     description=(
-        "Partial update. `name`: trimmed; null or blank restores the default "
-        "name; 400 over 100 characters. Card labels follow the new name. "
-        "`input` / `job_link_contains` are not supported yet (400). 404 for "
-        "an unknown or another user's source."
+        "Partial update; fields left out (or a null `input`) stay unchanged. "
+        "`name`: trimmed; null or blank restores the default name; 400 over "
+        "100 characters; a custom name is kept across link changes. Web page "
+        "with a new link or `job_link_contains`: the listing is read (up to 5 "
+        "pages), what it lists now is remembered as seen and the source's "
+        "vacancies still waiting for the AI are dropped; same id. Any other "
+        "link change (another channel/board, or another kind): the old source "
+        "is removed (its cards stay, shown \"(removed)\") and the new one is "
+        "added with a normal first scan; the response is the NEW source (new "
+        "`id`). Errors as when adding (400, 409 \"Already in your sources\"); "
+        "the edited source is not counted against the duplicate and 30-source "
+        "checks. 409 \"This source is being scanned — try again in a moment\" "
+        "while a first-scan attempt runs (`editable` false). 404 for an "
+        "unknown or another user's source."
     ),
 )
 async def patch_vacancy_source(
@@ -261,19 +274,31 @@ async def patch_vacancy_source(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> VacancySourceRead:
     fields = body.model_fields_set
-    if fields & {"input", "job_link_contains"}:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST, detail=LINK_CHANGE_UNSUPPORTED_MESSAGE
-        )
     try:
-        source = await rename_source(
+        source = await edit_source(
             db,
             current_user.id,
             source_id,
-            body.name if "name" in fields else UNSET,
+            raw_input=body.input if "input" in fields else UNSET,
+            job_link_contains=(
+                body.job_link_contains if "job_link_contains" in fields else UNSET
+            ),
+            name=body.name if "name" in fields else UNSET,
         )
-    except SourceInputError as exc:
+    except (SourceInputError, SourceCheckError) as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=exc.message) from exc
+    except SourceLimitError as exc:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail=SOURCE_LIMIT_MESSAGE
+        ) from exc
+    except DuplicateSourceError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail=DUPLICATE_SOURCE_MESSAGE
+        ) from exc
+    except SourceBusyError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail=SOURCE_BUSY_MESSAGE
+        ) from exc
     except SourceNotFoundError as exc:
         raise not_found("Source") from exc
     return _source_to_read(source)

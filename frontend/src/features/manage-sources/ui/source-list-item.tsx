@@ -1,31 +1,38 @@
-import { useCallback, useState } from "react";
+import { useCallback, useId, useState } from "react";
 import type { VacancySource } from "@/entities/vacancy-source";
-import { Button, colors } from "@/shared/ui";
+import { Button, VISUALLY_HIDDEN_STYLE, colors } from "@/shared/ui";
 import {
   EDIT_LABEL,
+  EDIT_UNAVAILABLE_HINT,
   SCANNING_LABEL,
   SOURCE_KIND_LABELS,
   UNAVAILABLE_FALLBACK_REASON,
   UNAVAILABLE_LABEL,
 } from "../lib/constants";
 import { getCheckedLabel } from "../lib/helpers";
-import type { SourceEditedHandler } from "../model/types";
+import type { SourceSavedHandler } from "../model/types";
 import { EditSourceDialog } from "./edit-source-dialog";
+
+/** Looks like the Button's disabled state; the button itself stays focusable. */
+const BLOCKED_BUTTON_STYLE = { opacity: 0.6, cursor: "not-allowed" } as const;
 
 interface SourceListItemProps {
   source: VacancySource;
   isRemoving: boolean;
   onRemove: (id: string) => void;
-  /** Called with the server's copy after a successful edit. */
-  onEdited: SourceEditedHandler;
+  /** Called with this row's id and the server's copy (a new id after a replace). */
+  onEdited: SourceSavedHandler;
   /** Called with the Remove button element (null on unmount) for focus management. */
   onRegisterRemoveButton: (id: string, element: HTMLButtonElement | null) => void;
+  /** Called with the Edit button element (null on unmount) for focus management. */
+  onRegisterEditButton: (id: string, element: HTMLButtonElement | null) => void;
 }
 
 /**
  * One watched source: name, kind, scan/last-checked/availability status, an
- * Edit button (opens `EditSourceDialog`; the Modal returns focus to it on close)
- * and a Remove button.
+ * Edit button (opens `EditSourceDialog`; the Modal returns focus to it on close;
+ * `aria-disabled` with a described reason while a first-scan attempt runs,
+ * `editable: false`) and a Remove button.
  */
 export function SourceListItem({
   source,
@@ -33,21 +40,31 @@ export function SourceListItem({
   onRemove,
   onEdited,
   onRegisterRemoveButton,
+  onRegisterEditButton,
 }: SourceListItemProps) {
   const [isEditing, setIsEditing] = useState(false);
+  const editHintId = useId();
   const { id, unavailable } = source;
   const checkedLabel = source.scanning ? null : getCheckedLabel(source);
   const removeButtonRef = useCallback(
     (element: HTMLButtonElement | null) => onRegisterRemoveButton(id, element),
     [id, onRegisterRemoveButton],
   );
+  const editButtonRef = useCallback(
+    (element: HTMLButtonElement | null) => onRegisterEditButton(id, element),
+    [id, onRegisterEditButton],
+  );
+  const isEditBlocked = !source.editable;
+  const handleEditClick = useCallback((): void => {
+    if (!isEditBlocked) setIsEditing(true);
+  }, [isEditBlocked]);
   const closeEdit = useCallback(() => setIsEditing(false), []);
   const handleSaved = useCallback(
     (updated: VacancySource): void => {
       setIsEditing(false);
-      onEdited(updated);
+      onEdited(id, updated);
     },
-    [onEdited],
+    [id, onEdited],
   );
 
   return (
@@ -87,14 +104,25 @@ export function SourceListItem({
         ) : null}
       </div>
       <Button
+        ref={editButtonRef}
         type="button"
         variant="secondary"
         aria-label={`${EDIT_LABEL} ${source.display_name}`}
-        onClick={() => setIsEditing(true)}
-        style={{ flexShrink: 0 }}
+        // aria-disabled (not disabled) keeps it focusable so the reason is
+        // announced; re-enabled by a poll once the scan attempt ends
+        aria-disabled={isEditBlocked || undefined}
+        title={isEditBlocked ? EDIT_UNAVAILABLE_HINT : undefined}
+        aria-describedby={isEditBlocked ? editHintId : undefined}
+        onClick={handleEditClick}
+        style={{ flexShrink: 0, ...(isEditBlocked ? BLOCKED_BUTTON_STYLE : null) }}
       >
         {EDIT_LABEL}
       </Button>
+      {isEditBlocked ? (
+        <span id={editHintId} style={VISUALLY_HIDDEN_STYLE}>
+          {EDIT_UNAVAILABLE_HINT}
+        </span>
+      ) : null}
       <Button
         ref={removeButtonRef}
         type="button"

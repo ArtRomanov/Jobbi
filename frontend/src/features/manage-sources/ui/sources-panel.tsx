@@ -1,4 +1,4 @@
-import { useCallback, useId, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { VacancySource } from "@/entities/vacancy-source";
 import { Button, SectionHeader, colors } from "@/shared/ui";
 import { LOAD_ERROR_MESSAGE, NO_DESCRIPTION_HINT } from "../lib/constants";
@@ -31,6 +31,9 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
   const headingId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const removeButtonsRef = useRef(new Map<string, HTMLButtonElement>());
+  const editButtonsRef = useRef(new Map<string, HTMLButtonElement>());
+  // A replaced source gets a new row, so the Modal can't return focus to its Edit
+  const [focusEditId, setFocusEditId] = useState<string | null>(null);
   const {
     sources,
     settings,
@@ -67,6 +70,23 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
     [],
   );
 
+  const registerEditButton = useCallback(
+    (id: string, element: HTMLButtonElement | null): void => {
+      if (element) editButtonsRef.current.set(id, element);
+      else editButtonsRef.current.delete(id);
+    },
+    [],
+  );
+
+  // Passive effect: runs after the dialog's unmount cleanup, so nothing steals focus after it
+  useEffect(() => {
+    if (focusEditId === null) return;
+    // Edit stays focusable while a first scan blocks it (aria-disabled + reason)
+    const target = editButtonsRef.current.get(focusEditId) ?? removeButtonsRef.current.get(focusEditId);
+    target?.focus();
+    setFocusEditId(null);
+  }, [focusEditId]);
+
   // Created or failed: back to the input. A web preview focuses its own heading.
   const handleAdd = useCallback(async (): Promise<void> => {
     const outcome = await submit();
@@ -97,8 +117,9 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
   }, [cancelPreview]);
 
   const handleEdited = useCallback(
-    (source: VacancySource): void => {
-      replaceSource(source);
+    (previousId: string, source: VacancySource): void => {
+      replaceSource(previousId, source);
+      if (source.id !== previousId) setFocusEditId(source.id);
       onSourceEdited?.(source);
     },
     [replaceSource, onSourceEdited],
@@ -147,6 +168,7 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
           onRemove={(id) => void handleRemove(id)}
           onEdited={handleEdited}
           onRegisterRemoveButton={registerRemoveButton}
+          onRegisterEditButton={registerEditButton}
         />
       );
       break;

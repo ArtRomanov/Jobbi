@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   FIELD_TOO_LONG_MESSAGE,
   JOB_LINK_CONTAINS_MAX_LENGTH,
+  LINK_REQUIRED_MESSAGE,
   SOURCE_NAME_MAX_LENGTH,
 } from "../lib/constants";
 import type { WebSourceFieldErrors } from "./types";
@@ -36,11 +37,13 @@ export function toFieldErrors(
 }
 
 /**
- * Edit dialog. Name only for now (Slice 5); Slice 6 adds the link and the
- * "Job link contains" pattern. Blank name → null (the server puts the default back).
+ * Edit dialog: name (blank → null, the server puts the default back), link
+ * (required, trimmed) and "Job link contains" (web pages; blank → null).
  */
 export const editSourceSchema = z.object({
   name: optionalText(SOURCE_NAME_MAX_LENGTH),
+  link: z.string().trim().min(1, LINK_REQUIRED_MESSAGE),
+  jobLinkContains: optionalText(JOB_LINK_CONTAINS_MAX_LENGTH),
 });
 
 export type EditSourceFormInput = z.input<typeof editSourceSchema>;

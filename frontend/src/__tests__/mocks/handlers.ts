@@ -227,6 +227,7 @@ export const mockVacancySource = {
   job_link_contains: null as string | null,
   watching_since: null as string | null,
   name_is_custom: false,
+  editable: true,
 };
 
 /** A saved web page source (watching, not checked since). */
@@ -666,11 +667,40 @@ export const handlers = [
   }),
 
   // Rename: a trimmed name becomes custom; null / "" puts the default back
-  // (the mock's default is "@<id>"; no 404 or length checks)
+  // (the mock's default is "@<id>"; no 404 or length checks). With `input`: a
+  // web link keeps the id (url + pattern updated); any other link REPLACES the
+  // source — a new Telegram source with id "src-<handle>", scanning
   http.patch(`${BASE_URL}/api/v1/vacancy-sources/:id`, async ({ params, request }) => {
-    const body = (await request.json()) as { name?: string | null };
+    const body = (await request.json()) as {
+      name?: string | null;
+      input?: string | null;
+      job_link_contains?: string | null;
+    };
     const name = body.name?.trim() || null;
     const id = String(params.id);
+    if (body.input && mockPreviewKind(body.input) === "web") {
+      return HttpResponse.json({
+        ...mockWebSource,
+        id,
+        key: `web:${id}`,
+        url: body.input.trim(),
+        job_link_contains: body.job_link_contains ?? null,
+        display_name: name ?? mockWebPreview.default_name,
+        name_is_custom: name !== null,
+      });
+    }
+    if (body.input) {
+      const handle = body.input.trim().replace(/^(https?:\/\/)?t\.me\/(s\/)?/, "").replace(/^@/, "");
+      return HttpResponse.json({
+        ...mockVacancySource,
+        id: `src-${handle}`,
+        key: `telegram:${handle.toLowerCase()}`,
+        display_name: name ?? `@${handle}`,
+        name_is_custom: name !== null,
+        scanning: true,
+        editable: false,
+      });
+    }
     return HttpResponse.json({
       ...mockVacancySource,
       id,

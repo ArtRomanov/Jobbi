@@ -200,6 +200,7 @@ async def test_add_public_channel(
         "url",
         "job_link_contains",
         "watching_since",
+        "editable",
     }
     assert data["url"] is None
     assert data["job_link_contains"] is None

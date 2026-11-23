@@ -5,6 +5,7 @@ no test touches real DNS, and respx answers the pinned-IP requests.
 """
 
 import hashlib
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -16,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.discovery import web_scan
 from app.discovery.fetchers import safe_http
 from app.discovery.fetchers.web_listing import parse_listing
-from app.models.vacancy import Vacancy
+from app.models.vacancy import Vacancy, VacancyCardSource
 from app.models.vacancy_seen_key import VacancySeenKey
 from app.models.vacancy_source import VacancySource
 from app.services import vacancy_source_service
@@ -945,3 +946,476 @@ async def test_non_web_save_ignores_web_only_fields(
         None,
     )
     assert data["scanning"] is True
+
+
+# --- edit (PATCH) -------------------------------------------------------------------
+
+EXAMPLE_JOBS = "https://example.com/jobs"
+BUSY = "This source is being scanned — try again in a moment"
+
+REACT_LISTING = """<html><body>
+<a href="/vacancy/r1"><h2>React Developer</h2></a>
+<a href="/vacancy/r2"><h2>Senior React Engineer</h2></a>
+</body></html>"""
+
+VUE_LISTING = """<html><body>
+<a href="/vacancy/v1"><h2>Vue Developer</h2></a>
+<a href="/vacancy/r2"><h2>Senior React Engineer</h2></a>
+</body></html>"""
+
+
+async def _patch(
+    client: httpx.AsyncClient, token: str, source_id: str, body: dict
+) -> httpx.Response:
+    return await client.patch(f"{URL}/{source_id}", json=body, headers=_auth(token))
+
+
+async def _add_pending(
+    db: AsyncSession,
+    user_id: str,
+    source_id: str,
+    key: str,
+    *,
+    state: str = "pending",
+    needs_detail: bool = True,
+) -> str:
+    card = Vacancy(
+        user_id=user_id,
+        source_id=source_id,
+        external_key=f"web:{source_id}/{key}",
+        url=f"https://example.com/vacancy/{key}",
+        job_link=f"https://example.com/vacancy/{key}",
+        title=f"Job {key}",
+        text=f"Job {key}",
+        posted_at=datetime(2026, 11, 20, 12, 0),
+        state=state,
+        fit=None if state == "pending" else "medium",
+        needs_detail=needs_detail,
+    )
+    db.add(card)
+    await db.flush()
+    db.add(
+        VacancyCardSource(
+            vacancy_id=card.id,
+            source_id=source_id,
+            source_kind="web",
+            source_handle=source_id,
+            label="example.com",
+        )
+    )
+    await db.commit()
+    return card.id
+
+
+async def _seen(db: AsyncSession, user_id: str) -> set[str]:
+    rows = await db.execute(
+        select(VacancySeenKey.external_key).where(VacancySeenKey.user_id == user_id)
+    )
+    return set(rows.scalars().all())
+
+
+async def _source_row(db: AsyncSession, source_id: str) -> VacancySource | None:
+    db.expire_all()
+    return await db.get(VacancySource, source_id)
+
+
+def _job_key(source_id: str, path: str) -> str:
+    return f"web:{source_id}/{_sha(f'https://example.com{path}')}"
+
+
+async def test_edit_pattern_keeps_history_and_drops_pending_rows(
+    client: httpx.AsyncClient,
+    token: str,
+    user_id: str,
+    respx_mock: respx.MockRouter,
+    db_session: AsyncSession,
+) -> None:
+    page = _page(respx_mock, "/jobs", SMALL_LISTING)
+    added = await client.post(URL, json={"input": EXAMPLE_JOBS}, headers=_auth(token))
+    source_id = added.json()["id"]
+    history = await _seen(db_session, user_id)
+    assert history
+    pending_id = await _add_pending(db_session, user_id, source_id, "p1")
+    waiting_id = await _add_pending(
+        db_session, user_id, source_id, "p2", needs_detail=False
+    )
+    card_id = await _add_pending(db_session, user_id, source_id, "c1", state="new")
+
+    resp = await _patch(client, token, source_id, {"job_link_contains": " /about/ "})
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert (data["id"], data["key"]) == (source_id, f"web:{source_id}")
+    assert (data["url"], data["job_link_contains"]) == (EXAMPLE_JOBS, "/about/")
+    assert data["editable"] is True
+    source = await _source_row(db_session, source_id)
+    assert source is not None and source.revision == 1
+    # Old history stays; what the new filter lists now is remembered too.
+    assert await _seen(db_session, user_id) == history | {
+        _job_key(source_id, "/about/team")
+    }
+    assert await db_session.get(Vacancy, pending_id) is None
+    assert await db_session.get(Vacancy, waiting_id) is None
+    card = await db_session.get(Vacancy, card_id)
+    assert card is not None and card.source_id == source_id
+    links = await db_session.execute(
+        select(VacancyCardSource.vacancy_id).where(
+            VacancyCardSource.source_id == source_id
+        )
+    )
+    assert list(links.scalars().all()) == [card_id]
+
+    # The same pattern again (after trimming) changes nothing and reads nothing.
+    calls = page.call_count
+    again = await _patch(client, token, source_id, {"job_link_contains": "/about/"})
+    assert again.status_code == 200
+    assert page.call_count == calls
+    source = await _source_row(db_session, source_id)
+    assert source is not None and source.revision == 1
+
+
+async def test_edit_url_react_to_vue_leaves_no_old_filter_pending_rows(
+    client: httpx.AsyncClient,
+    token: str,
+    user_id: str,
+    respx_mock: respx.MockRouter,
+    db_session: AsyncSession,
+) -> None:
+    jobs = f"https://{PUBLIC_IP}/jobs"
+    react = respx_mock.get(jobs, params={"q": "react"}).respond(
+        200, headers=HTML, text=REACT_LISTING
+    )
+    vue = respx_mock.get(jobs, params={"q": "vue"}).respond(
+        200, headers=HTML, text=VUE_LISTING
+    )
+    added = await client.post(
+        URL,
+        json={"input": f"{EXAMPLE_JOBS}?q=react", "name": "My search"},
+        headers=_auth(token),
+    )
+    assert added.status_code == 201, added.text
+    source_id = added.json()["id"]
+    await _add_pending(db_session, user_id, source_id, "r3")
+
+    resp = await _patch(client, token, source_id, {"input": f"{EXAMPLE_JOBS}?q=vue"})
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["id"] == source_id
+    assert data["url"] == f"{EXAMPLE_JOBS}?q=vue"
+    assert data["display_name"] == "My search"  # the custom name is kept
+    assert (react.call_count, vue.call_count) == (1, 1)
+    pending = await db_session.execute(
+        select(func.count())
+        .select_from(Vacancy)
+        .where(Vacancy.source_id == source_id, Vacancy.state == "pending")
+    )
+    assert pending.scalar_one() == 0
+    assert await _seen(db_session, user_id) == {
+        _job_key(source_id, f"/vacancy/{key}") for key in ("r1", "r2", "v1")
+    }
+    source = await _source_row(db_session, source_id)
+    assert source is not None
+    assert (source.url_hash, source.revision) == (_sha(f"{EXAMPLE_JOBS}?q=vue"), 1)
+
+
+async def test_edit_url_with_blank_name_uses_the_new_default_name(
+    client: httpx.AsyncClient,
+    token: str,
+    user_id: str,
+    respx_mock: respx.MockRouter,
+    db_session: AsyncSession,
+) -> None:
+    _page(respx_mock, "/jobs", SMALL_LISTING)
+    _page(respx_mock, "/careers", CAREERS_PAGE)
+    added = await client.post(
+        URL, json={"input": EXAMPLE_JOBS, "name": "Old"}, headers=_auth(token)
+    )
+    source_id = added.json()["id"]
+
+    resp = await _patch(
+        client, token, source_id, {"input": "clever.com/careers", "name": " "}
+    )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert (data["display_name"], data["name_is_custom"]) == ("clever.com", False)
+    assert data["id"] == source_id
+
+
+async def test_edit_lever_to_web_replaces_the_source(
+    client: httpx.AsyncClient,
+    token: str,
+    user_id: str,
+    respx_mock: respx.MockRouter,
+    db_session: AsyncSession,
+) -> None:
+    _page(respx_mock, "/jobs", SMALL_LISTING)
+    lever = VacancySource(
+        user_id=user_id,
+        kind="lever",
+        handle="acme-labs",
+        default_name="Acme Labs",
+        display_name="Acme Labs",
+    )
+    db_session.add(lever)
+    await db_session.commit()
+    old_id = lever.id
+    card = Vacancy(
+        user_id=user_id,
+        source_id=old_id,
+        external_key="lever:acme-labs/1",
+        url="https://jobs.lever.co/acme-labs/1",
+        job_link="https://jobs.lever.co/acme-labs/1",
+        text="Dev",
+        posted_at=datetime(2026, 11, 20, 12, 0),
+        state="new",
+        fit="high",
+    )
+    db_session.add(card)
+    await db_session.flush()
+    db_session.add(
+        VacancyCardSource(
+            vacancy_id=card.id,
+            source_id=old_id,
+            source_kind="lever",
+            source_handle="acme-labs",
+            label="Acme Labs",
+        )
+    )
+    await db_session.commit()
+
+    resp = await _patch(
+        client,
+        token,
+        old_id,
+        {"input": EXAMPLE_JOBS, "job_link_contains": "/vacancy/", "name": "Acme web"},
+    )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    new_id = data["id"]
+    assert new_id != old_id
+    assert (data["kind"], data["key"]) == ("web", f"web:{new_id}")
+    assert (data["display_name"], data["job_link_contains"]) == (
+        "Acme web",
+        "/vacancy/",
+    )
+    assert data["scanning"] is False
+    assert await _source_row(db_session, old_id) is None
+    seen = await _seen(db_session, user_id)
+    assert {_job_key(new_id, "/vacancy/1"), _job_key(new_id, "/vacancy/2")} <= seen
+    assert all(key.startswith(f"web:{new_id}/") for key in seen)
+    body = (await client.get(URL, headers=_auth(token))).json()
+    assert [s["id"] for s in body["sources"]] == [new_id]
+    assert body["removed_sources"] == [
+        {"key": "lever:acme-labs", "label": "Acme Labs"}
+    ]
+
+
+async def test_edit_web_to_board_gets_a_normal_first_scan(
+    client: httpx.AsyncClient,
+    token: str,
+    user_id: str,
+    respx_mock: respx.MockRouter,
+    db_session: AsyncSession,
+) -> None:
+    respx_mock.get("https://boards-api.greenhouse.io/v1/boards/acme").respond(
+        200, json={"name": "Acme Corp", "content": ""}
+    )
+    source_id = await _insert_web(db_session, user_id, GEEKJOB)
+
+    resp = await _patch(
+        client, token, source_id, {"input": "https://boards.greenhouse.io/acme"}
+    )
+
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["id"] != source_id
+    assert (data["kind"], data["display_name"]) == ("greenhouse", "Acme Corp")
+    assert data["scanning"] is True
+    assert (data["url"], data["job_link_contains"]) == (None, None)
+    assert await _count(db_session, VacancySource) == 1
+
+
+async def test_edit_and_replace_at_exactly_30_sources(
+    client: httpx.AsyncClient,
+    token: str,
+    user_id: str,
+    respx_mock: respx.MockRouter,
+    db_session: AsyncSession,
+) -> None:
+    _page(respx_mock, "/jobs", SMALL_LISTING)
+    _page(respx_mock, "/careers", CAREERS_PAGE)
+    tg_ids = [
+        await _insert_telegram(db_session, user_id, f"chan_{i:02d}") for i in range(29)
+    ]
+    web_id = await _insert_web(db_session, user_id, EXAMPLE_JOBS)
+
+    edited = await _patch(client, token, web_id, {"job_link_contains": "/vacancy/"})
+    replaced = await _patch(client, token, tg_ids[0], {"input": "clever.com/careers"})
+    preview = await client.post(
+        PREVIEW_URL,
+        json={"input": "https://example.com/careers", "source_id": web_id},
+        headers=_auth(token),
+    )
+
+    assert edited.status_code == 200, edited.text
+    assert replaced.status_code == 200, replaced.text
+    assert preview.status_code == 200, preview.text
+    assert await _count(db_session, VacancySource) == 30
+
+
+async def test_edit_to_another_sources_link_is_409(
+    client: httpx.AsyncClient,
+    token: str,
+    user_id: str,
+    respx_mock: respx.MockRouter,
+    db_session: AsyncSession,
+) -> None:
+    react_id = await _insert_web(db_session, user_id, f"{EXAMPLE_JOBS}?q=react")
+    await _insert_web(db_session, user_id, f"{EXAMPLE_JOBS}?q=vue")
+    tg_id = await _insert_telegram(db_session, user_id, "durov_jobs")
+
+    web = await _patch(
+        client, token, react_id, {"input": "example.com/jobs/?q=vue&utm_source=x"}
+    )
+    kind_change = await _patch(client, token, tg_id, {"input": f"{EXAMPLE_JOBS}?q=vue"})
+
+    assert (web.status_code, kind_change.status_code) == (409, 409)
+    assert web.json() == kind_change.json() == {"detail": DUPLICATE}
+    assert not respx_mock.calls
+    source = await _source_row(db_session, react_id)
+    assert source is not None and source.url == f"{EXAMPLE_JOBS}?q=react"
+    assert await _count(db_session, VacancySource) == 3
+
+
+async def test_edit_refused_while_a_first_scan_attempt_runs(
+    client: httpx.AsyncClient,
+    token: str,
+    user_id: str,
+    respx_mock: respx.MockRouter,
+    db_session: AsyncSession,
+) -> None:
+    _page(respx_mock, "/jobs", SMALL_LISTING)
+    tg_id = await _insert_telegram(db_session, user_id, "durov_jobs")
+    source = await _source_row(db_session, tg_id)
+    assert source is not None
+    now = datetime.now(UTC).replace(tzinfo=None)
+    source.initial_attempt_started_at = now - timedelta(minutes=1)
+    await db_session.commit()
+
+    listed = (await client.get(URL, headers=_auth(token))).json()["sources"]
+    busy_link = await _patch(client, token, tg_id, {"input": EXAMPLE_JOBS})
+    busy_name = await _patch(client, token, tg_id, {"name": "Mine"})
+
+    assert listed[0]["editable"] is False
+    assert (busy_link.status_code, busy_name.status_code) == (409, 409)
+    assert busy_link.json() == busy_name.json() == {"detail": BUSY}
+    assert not respx_mock.calls
+
+    # A lease older than 10 minutes belongs to a crashed worker: ignored.
+    source = await _source_row(db_session, tg_id)
+    assert source is not None
+    source.initial_attempt_started_at = now - timedelta(minutes=11)
+    await db_session.commit()
+
+    listed = (await client.get(URL, headers=_auth(token))).json()["sources"]
+    ok = await _patch(client, token, tg_id, {"input": EXAMPLE_JOBS})
+
+    assert listed[0]["editable"] is True
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["kind"] == "web"
+    assert ok.json()["editable"] is True
+
+
+@pytest.mark.parametrize(
+    ("body", "route_text", "detail"),
+    [
+        ({"input": "http://localhost/jobs"}, None, UNSAFE_LINK_MESSAGE),
+        ({"input": "file:///etc/passwd"}, None, UNSAFE_LINK_MESSAGE),
+        (
+            {"input": "https://example.com/"},
+            "<html><body>Hi</body></html>",
+            NO_VACANCIES,
+        ),
+        (
+            {"input": "https://example.com/", "job_link_contains": "y" * 101},
+            None,
+            "'Job link contains' must be 1–100 characters",
+        ),
+        (
+            {"input": "https://example.com/", "name": "x" * 101},
+            None,
+            "Name can be up to 100 characters",
+        ),
+        (
+            {"input": "t.me/joinchat/xyz"},
+            None,
+            "Enter a Telegram channel as @name or a t.me/name link",
+        ),
+    ],
+)
+async def test_edit_errors_match_add_and_change_nothing(
+    client: httpx.AsyncClient,
+    token: str,
+    user_id: str,
+    respx_mock: respx.MockRouter,
+    db_session: AsyncSession,
+    body: dict,
+    route_text: str | None,
+    detail: str,
+) -> None:
+    if route_text is not None:
+        _page(respx_mock, "/", route_text)
+    source_id = await _insert_web(db_session, user_id, GEEKJOB)
+    added = await client.post(URL, json=body, headers=_auth(token))
+
+    resp = await _patch(client, token, source_id, body)
+
+    assert resp.status_code == added.status_code == 400
+    assert resp.json() == added.json() == {"detail": detail}
+    source = await _source_row(db_session, source_id)
+    assert source is not None
+    assert (source.url, source.revision) == (GEEKJOB, 0)
+    assert await _count(db_session, VacancySource) == 1
+
+
+async def test_edit_unreadable_page_is_400_like_add(
+    client: httpx.AsyncClient,
+    token: str,
+    user_id: str,
+    respx_mock: respx.MockRouter,
+    db_session: AsyncSession,
+) -> None:
+    respx_mock.get(f"https://{PUBLIC_IP}/jobs").mock(
+        side_effect=httpx.ConnectError("down")
+    )
+    source_id = await _insert_web(db_session, user_id, GEEKJOB)
+
+    resp = await _patch(client, token, source_id, {"input": EXAMPLE_JOBS})
+
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": CANNOT_OPEN}
+    source = await _source_row(db_session, source_id)
+    assert source is not None and source.url == GEEKJOB
+
+
+async def test_edit_another_users_source_is_404(
+    client: httpx.AsyncClient,
+    token: str,
+    other_registered_user: dict,
+    respx_mock: respx.MockRouter,
+    db_session: AsyncSession,
+) -> None:
+    other_id = other_registered_user["user"]["id"]
+    foreign = await _insert_web(db_session, other_id, GEEKJOB)
+
+    resp = await _patch(
+        client, token, foreign, {"input": EXAMPLE_JOBS, "job_link_contains": "/v/"}
+    )
+
+    assert resp.status_code == 404
+    assert not respx_mock.calls
+    source = await _source_row(db_session, foreign)
+    assert source is not None and source.url == GEEKJOB
