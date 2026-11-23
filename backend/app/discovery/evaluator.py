@@ -52,7 +52,9 @@ MAX_DESCRIPTION_CHARS = 500
 MAX_PROFILE_VALUE_CHARS = 100
 MAX_NAME_CHARS = 200
 REQUEST_TIMEOUT_S = 60.0
-MAX_COMPLETION_TOKENS = 2_000
+# Reasoning models count their thinking in completion tokens: gpt-oss-20b at
+# reasoning_effort "low" used ~780 completion tokens on 5 long posts (2026-11-23).
+MAX_COMPLETION_TOKENS = 3_000
 
 # Fence markers. Post text can never contain "<<<" or ">>>" (see `_defang`), so a
 # post cannot close its own fence or open a fake one.
@@ -385,6 +387,18 @@ def _map_status_error(exc: groq.APIStatusError) -> EvaluationError:
     return EvaluationTransportError(f"HTTP {status} {code or ''}".strip())
 
 
+def _model_options(model: str) -> dict[str, Any]:
+    """Extra request options per model family.
+
+    gpt-oss reasons before answering; at the default effort it spent ~2 300
+    completion tokens on 5 long posts (over the cap, so the JSON was cut).
+    "low" keeps the same verdicts on the smoke cases at a third of the tokens.
+    """
+    if model.startswith("openai/gpt-oss"):
+        return {"reasoning_effort": "low"}
+    return {}
+
+
 async def evaluate_batch(
     client: groq.AsyncGroq,
     model: str,
@@ -410,6 +424,7 @@ async def evaluate_batch(
             response_format={"type": "json_object"},
             temperature=0,
             max_completion_tokens=MAX_COMPLETION_TOKENS,
+            **_model_options(model),
             timeout=REQUEST_TIMEOUT_S,
         )
     except groq.APIStatusError as exc:

@@ -21,7 +21,7 @@ from app.discovery.evaluator import (
 )
 from app.discovery.types import RawPost
 
-MODEL = "qwen/qwen3.8-27b"
+MODEL = "openai/gpt-oss-20b"
 DESCRIPTION = "Senior frontend, React, remote, from 4000 €"
 GROQ_REQUEST = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
 
@@ -318,6 +318,24 @@ async def test_evaluate_batch_maps_keys_and_uses_json_mode() -> None:
     call = client.completions.calls[0]
     assert call["model"] == MODEL
     assert call["response_format"] == {"type": "json_object"}
+
+
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("openai/gpt-oss-20b", "low"),
+        ("openai/gpt-oss-120b", "low"),
+        ("qwen/qwen3.8-27b", None),
+    ],
+)
+async def test_evaluate_batch_reasoning_effort_per_model(
+    model: str, expected: str | None
+) -> None:
+    client = FakeGroq(response_json(verdict("p1")))
+
+    await evaluate_batch(client, model, DESCRIPTION, {}, [make_post(1)])  # type: ignore[arg-type]
+
+    assert client.completions.calls[0].get("reasoning_effort") == expected
 
 
 async def test_evaluate_batch_reports_invalid_items_as_missing() -> None:

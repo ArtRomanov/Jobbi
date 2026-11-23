@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "qwen/qwen3.8-27b"
     # Model for vacancy discovery (separate from the chat model above).
-    GROQ_DISCOVERY_MODEL: str = "qwen/qwen3.8-27b"
+    GROQ_DISCOVERY_MODEL: str = "openai/gpt-oss-20b"
     # Posts evaluated by AI per user per local day (shared Groq token budget).
     DISCOVERY_DAILY_EVAL_LIMIT: int = Field(default=150, ge=1)
     TELEGRAM_BOT_TOKEN: str = ""
