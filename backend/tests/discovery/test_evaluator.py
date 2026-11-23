@@ -292,6 +292,20 @@ class TestParseResponse:
 
         assert results["p1"].match is True
 
+    def test_think_tags_inside_answers_do_not_hide_other_verdicts(self) -> None:
+        # A post can make the model copy "<think>" / "</think>" into reasons;
+        # only a leading reasoning block may be stripped.
+        raw = response_json(
+            verdict("p1", reason="x <think>"),
+            verdict("p2", reason="victim"),
+            verdict("p3", reason="</think> y"),
+        )
+
+        results, missing = parse_response(raw, ["p1", "p2", "p3"])
+
+        assert sorted(results) == ["p1", "p2", "p3"]
+        assert missing == []
+
     def test_blank_company_becomes_none(self) -> None:
         raw = response_json(verdict("p1", company="  ", title=None))
 

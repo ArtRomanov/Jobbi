@@ -61,7 +61,10 @@ MAX_COMPLETION_TOKENS = 4_000
 # post cannot close its own fence or open a fake one.
 _FENCE_OPEN = "<<<POST {key}>>>"
 _FENCE_CLOSE = "<<<END {key}>>>"
-_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+# Only a reasoning block that opens the answer is stripped (qwen puts one there).
+# Tags elsewhere can be text a post made the model copy into a reason; removing
+# from one such tag to the next would silently delete other posts' verdicts.
+_THINK_RE = re.compile(r"\A\s*<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
 SYSTEM_PROMPT = """\
 You screen posts from job channels and career pages for one job seeker.
