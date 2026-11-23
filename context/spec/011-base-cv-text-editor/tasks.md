@@ -68,8 +68,8 @@ Conventions for every slice:
 
 ---
 
-- [ ] **Slice 4: Upload a PDF or DOCX as a new CV**
-  - [ ] Backend:
+- [x] **Slice 4: Upload a PDF or DOCX as a new CV**
+  - [x] Backend:
     - deps `python-multipart`, `pdfminer.six`, `python-docx`;
     - `services/cv_upload.py` checks the file:
       - content sniffing;
@@ -83,8 +83,8 @@ Conventions for every slice:
     - `POST /cvs/upload` returns `{…CvRead, became_base:false, truncated}` (base comes in Slice 5).
 
     Tests with fixture files: PDF, DOCX with a table, scanned PDF, encrypted PDF, renamed non-PDF, > 5 MB, zip bomb, > 20 000 characters, other user. **[Agent: python-backend]**
-  - [ ] Frontend: `features/cv-upload` — the "Upload CV" button on the CVs page (`.pdf,.docx`), "Uploading…", error code → spec text, then navigate to the editor with the notice "Text extracted from your file. Check the line breaks and save." (plus the cut notice). Tests. **[Agent: typescript-frontend]**
-  - [ ] Verify: upload a real PDF and a DOCX CV (Russian and English) and get a new CV whose text is in reading order. Upload a scan → error, no CV. A file over 5 MB → error. Nothing is written to disk (check the backend data folder). **[Agent: qa-tester]**
+  - [x] Frontend: `features/cv-upload` — the "Upload CV" button on the CVs page (`.pdf,.docx`), "Uploading…", error code → spec text, then navigate to the editor with the notice "Text extracted from your file. Check the line breaks and save." (plus the cut notice). Tests. **[Agent: typescript-frontend]**
+  - [x] Verify: upload a real PDF and a DOCX CV (Russian and English) and get a new CV whose text is in reading order. Upload a scan → error, no CV. A file over 5 MB → error. Nothing is written to disk (check the backend data folder). **[Agent: qa-tester]** _(2026-11-23: PRs #22 (extraction core) + #25 (endpoint + button). Endpoint tests with real PDF/DOCX/Cyrillic/scan/encrypted/renamed/oversized fixtures; backend 1118 on 3.11/3.14, Vitest 393; code review no P0/P1; security review no findings. Real-file upload in the browser pending the live check)_
 
 ---
 
