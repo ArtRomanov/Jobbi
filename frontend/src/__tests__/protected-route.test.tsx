@@ -1,16 +1,13 @@
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter, Routes, Route, Navigate } from "react-router-dom";
+import { createMemoryRouter, RouterProvider } from "react-router-dom";
 import { useAuthStore } from "@/features/auth";
-import { ToastProvider } from "@/shared/ui";
-import type { ReactNode } from "react";
+import { appRoutes } from "@/app/router";
 
-/** Inline ProtectedRoute since it is not exported from the router module. */
-function ProtectedRoute({ children }: { children: ReactNode }) {
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
-  }
-  return <>{children}</>;
+/** Renders the real app route table in a data router, starting at `path`. */
+function renderAppAt(path: string) {
+  const router = createMemoryRouter(appRoutes, { initialEntries: [path] });
+  render(<RouterProvider router={router} />);
+  return router;
 }
 
 beforeEach(() => {
@@ -18,52 +15,42 @@ beforeEach(() => {
   useAuthStore.setState({ token: null, isAuthenticated: false });
 });
 
-describe("ProtectedRoute", () => {
-  it("unauthenticated user is redirected to login", () => {
-    render(
-      <MemoryRouter initialEntries={["/dashboard"]}>
-        <ToastProvider>
-          <Routes>
-            <Route path="/login" element={<p>Login Page</p>} />
-            <Route
-              path="/dashboard"
-              element={
-                <ProtectedRoute>
-                  <p>Dashboard</p>
-                </ProtectedRoute>
-              }
-            />
-          </Routes>
-        </ToastProvider>
-      </MemoryRouter>,
-    );
+describe("App routes and ProtectedRoute", () => {
+  it.each(["/dashboard", "/cvs/new", "/cvs/cv-1/edit", "/applications/app-1/chat"])(
+    "redirects a guest from %s to /login",
+    async (path) => {
+      const router = renderAppAt(path);
 
-    expect(screen.getByText("Login Page")).toBeInTheDocument();
-    expect(screen.queryByText("Dashboard")).not.toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: /welcome back/i })).toBeInTheDocument();
+      expect(router.state.location.pathname).toBe("/login");
+    },
+  );
+
+  it("sends an unknown URL to /dashboard, which sends a guest to /login", async () => {
+    const router = renderAppAt("/no-such-page");
+
+    expect(await screen.findByRole("heading", { name: /welcome back/i })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/login");
   });
 
-  it("authenticated user can access dashboard", () => {
+  it("renders the app shell for an authenticated user", async () => {
+    localStorage.setItem("jobbi_token", "valid-token");
     useAuthStore.setState({ token: "valid-token", isAuthenticated: true });
 
-    render(
-      <MemoryRouter initialEntries={["/dashboard"]}>
-        <ToastProvider>
-          <Routes>
-            <Route path="/login" element={<p>Login Page</p>} />
-            <Route
-              path="/dashboard"
-              element={
-                <ProtectedRoute>
-                  <p>Dashboard</p>
-                </ProtectedRoute>
-              }
-            />
-          </Routes>
-        </ToastProvider>
-      </MemoryRouter>,
-    );
+    const router = renderAppAt("/dashboard");
 
-    expect(screen.getByText("Dashboard")).toBeInTheDocument();
-    expect(screen.queryByText("Login Page")).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Log Out" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /welcome back/i })).not.toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/dashboard");
+  });
+
+  it("sends an authenticated user from an unknown URL to /dashboard", async () => {
+    localStorage.setItem("jobbi_token", "valid-token");
+    useAuthStore.setState({ token: "valid-token", isAuthenticated: true });
+
+    const router = renderAppAt("/no-such-page");
+
+    expect(await screen.findByRole("button", { name: "Log Out" })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/dashboard");
   });
 });
