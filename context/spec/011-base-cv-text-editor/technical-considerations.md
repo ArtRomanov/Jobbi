@@ -21,7 +21,7 @@ It is NOT a copy-paste implementation guide.
 - **Frontend:**
   - the form editor is replaced by a text editor with a Markdown preview;
   - preview and PDF share one Markdown lexer (`marked`) walked into React and react-pdf elements;
-  - the PDF bundles Unicode fonts (Noto Sans and Noto Sans Armenian);
+  - the PDF bundles a Unicode font with Cyrillic (Noto Sans);
   - the app moves to a data router, so `useBlocker` can guard unsaved changes.
 
 Affected: `backend/app/{models,schemas,services,api/v1}` (CV, chat, vacancy, application), Alembic, and on the frontend `entities/cv`, `features/{cv-editor→cv-text-editor, cv-pdf, cv-upload, cv-make-base, chat-interface, vacancy-actions, application-panel}`, `pages/{cvs, cv-editor, chat}`, `app/` (router), `shared/{ui,lib}` and the test utils.
@@ -107,7 +107,7 @@ Every CV and card query is scoped to the owner (the same rule as the spec 009 fi
 | `features/cv-text-editor` (replaces `features/cv-editor`) | Name field, textarea (`maxLength` 20 000, paste cut), counter above 18 000, hint, preview with `useDeferredValue`, Edit/Preview `SegmentedControl` on phone width, dirty tracking, Save, 409 `CV_CHANGED` → the "changed elsewhere" message, `useUnsavedChangesGuard` (`useBlocker` plus `beforeunload`) |
 | `features/cv-upload` | "Upload CV" button with a hidden file input (`.pdf,.docx`), the "Uploading…" state, error code → text, then navigate to the editor with the notice in router state |
 | `features/cv-make-base` | The "Make base" action and the "Base CV updated" toast |
-| `features/cv-pdf` | Rewrite `cv-document.tsx` on top of the shared lexer. `Font.register` loads Noto Sans (Regular, Bold, Italic, BoldItalic) and Noto Sans Armenian (Regular, Bold) as local TTFs (Vite `?url`) inside the lazy PDF chunk only. The hyphenation callback is turned off. File name: characters not allowed in file names become "_" (Cyrillic is kept) |
+| `features/cv-pdf` | Rewrite `cv-document.tsx` on top of the shared lexer. `Font.register` loads Noto Sans (Regular, Bold, Italic, BoldItalic; Latin + Cyrillic) as local TTFs (Vite `?url`) inside the lazy PDF chunk only. The hyphenation callback is turned off. File name: characters not allowed in file names become "_" (Cyrillic is kept) |
 | `features/chat-interface` | `ui/cv-change-card.tsx` (before/after, line diff via `diff`'s `diffLines`, position label, Accept/Reject, inline error, Stale styling); the stream reader handles `event: cards` |
 | `features/vacancy-actions` | The dialog preselects `is_base`, or nothing. `pickMostRecentCvId` is removed. Grouped options and the hint |
 | `features/application-panel` | The CV select lists own CVs first and labels the base |
@@ -143,7 +143,7 @@ New npm packages: `marked`, `diff`, and Noto font files committed under `fronten
 | Prompt injection through CV text or a pasted post | CV text inside `fence`; tool calls validated server-side; nothing is saved without Accept; cards are scoped to the application's own CV |
 | Qwen tool-calling reliability on long CVs | Smoke script with fixed prompts ("shorten my summary", "add skill X"), run live before merge; malformed calls become inline errors |
 | Prompt size (20k CV + notes + history) vs Groq limits | History is trimmed as today; the CV is sent once per turn; the risk is accepted at current volumes |
-| Bundle size: fonts (~2–3 MB) and `marked`/`diff` | Fonts load only in the lazy PDF chunk; `marked` and `diff` are small (~60 KB together) |
+| Bundle size: fonts (~1–2 MB) and `marked`/`diff` | Fonts load only in the lazy PDF chunk; `marked` and `diff` are small (~60 KB together) |
 | Link XSS (`javascript:`, `data:`) in the preview or PDF | `isSafeCvLinkUrl` on every href; HTML tokens shown as text; tests with hostile links |
 | The router migration breaks pages or tests | Same route table, moved as is; full Vitest run; manual click-through of every route |
 | SQLite does not enforce FKs | Nulling by hand in `delete_cv` and `delete_application`, with tests |

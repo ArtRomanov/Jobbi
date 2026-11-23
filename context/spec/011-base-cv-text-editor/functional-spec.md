@@ -17,7 +17,7 @@ The user already has a CV — usually a PDF or Word file — and wants Jobbi to 
 **Success criteria:**
 - A user with a PDF or DOCX CV gets an editable Jobbi CV from it in one upload, without retyping.
 - "Add & tailor CV" always starts from the base CV; a copy is never made from another application's copy unless the user picks it on purpose.
-- Every CV can be edited freely as text, and its exported PDF contains the whole CV, including Russian and other non-Latin text.
+- Every CV can be edited freely as text, and its exported PDF contains the whole CV, including Russian text.
 - The AI chat can still propose CV edits that the user accepts or rejects one by one, and an accepted edit is never silently lost.
 
 **Terms used below:**
@@ -142,7 +142,7 @@ The user already has a CV — usually a PDF or Word file — and wants Jobbi to 
 - **As a** user, **I want** the exported PDF to contain my whole CV, **so that** I can send it to employers.
   - **Acceptance Criteria:**
     - [ ] "Export PDF" produces a file named "<CV name>.pdf" (characters not allowed in file names are replaced with "_") that contains the whole CV text, formatted like the preview (headings, bold, italic, lists, clickable web and email links), on A4 pages with page breaks as needed. The CV name itself is not printed; the document starts with the CV text.
-    - [ ] Russian and other non-Latin text (for example Armenian) appears correctly in the PDF, in the preview and in the editor.
+    - [ ] Russian (Cyrillic) text appears correctly in the PDF, in the preview and in the editor.
     - [ ] The PDF of a CV with empty text has only the CV name as its title.
 
 ---
@@ -158,7 +158,7 @@ The user already has a CV — usually a PDF or Word file — and wants Jobbi to 
 - CVs page split into "My CVs" and "Tailored for applications", including copies made before this change; delete with confirmation.
 - "Add & tailor CV" preselecting the base CV, or nothing when there is none.
 - AI chat change cards for CV text passages, built for the first time here (spec 008's CV field edits are replaced by text edits).
-- PDF export of the whole formatted text, including non-Latin text.
+- PDF export of the whole formatted text, including Cyrillic.
 
 ### Out-of-Scope
 
