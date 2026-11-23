@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from app.discovery.fetchers.telegram import MAX_TEXT_CHARS, parse_channel_page
+from app.discovery.types import PostLink
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -179,3 +180,83 @@ def test_non_ascii_digit_post_id_is_skipped_and_page_still_parsed(raw_id: str) -
 
     assert [p.external_key for p in posts] == ["tg:jobbi_test/5"]
     assert oldest_id == 5
+
+
+class TestLinksPerLine:
+    @pytest.fixture
+    def posts(self) -> dict[str, object]:
+        posts, _ = parse_channel_page(_fixture("tg_links_per_line.html"), "jobbi_test")
+        return {p.external_key: p for p in posts}
+
+    def test_links_carry_the_line_of_the_stored_text(self, posts: dict) -> None:
+        post = posts["tg:jobbi_test/201"]
+
+        assert post.text.split("\n") == [
+            "Three roles at Acme",
+            "🚀 Frontend: apply",
+            "Chat: join x",
+            "",
+            "Backend: apply or mirror",
+            "Design:",
+            "  Designer",
+            "Again: apply",
+        ]
+        # Telegram and javascript links are skipped; blank lines collapsed
+        # before "Backend"; an anchor starting with a line break counts on the
+        # line of its first visible character; anchors without visible text
+        # are dropped; the same link on another line is kept.
+        assert post.links == (
+            PostLink(line=2, url="https://jobs.example.com/fe"),
+            PostLink(line=5, url="https://jobs.example.com/be"),
+            PostLink(line=5, url="https://mirror.example.org/be"),
+            PostLink(line=7, url="https://jobs.example.com/design"),
+            PostLink(line=8, url="https://jobs.example.com/fe"),
+        )
+        assert post.job_link == "https://jobs.example.com/fe"
+
+    def test_leading_blank_lines_and_spaces_are_not_counted(self, posts: dict) -> None:
+        post = posts["tg:jobbi_test/202"]
+
+        assert post.text == "Lead QA wanted\n\nDetails: post"
+        assert post.links == (PostLink(line=1, url="https://jobs.example.com/lead"),)
+
+
+def _single_post(body: str) -> str:
+    return (
+        '<div class="tgme_widget_message" data-post="jobbi_test/1">'
+        f'<div class="tgme_widget_message_text js-message_text">{body}</div>'
+        '<time datetime="2026-11-22T00:00:00+00:00"></time></div>'
+    )
+
+
+def test_links_beyond_the_text_cap_are_dropped() -> None:
+    body = (
+        '<a href="https://jobs.example.com/kept">kept</a><br/>'
+        + "x" * MAX_TEXT_CHARS
+        + '<br/><a href="https://jobs.example.com/cut">cut</a>'
+    )
+    posts, _ = parse_channel_page(_single_post(body), "jobbi_test")
+
+    assert len(posts[0].text) == MAX_TEXT_CHARS
+    assert posts[0].links == (PostLink(line=1, url="https://jobs.example.com/kept"),)
+
+
+def test_overlong_links_are_not_post_links() -> None:
+    url = "https://jobs.example.com/" + "a" * 2100
+    posts, _ = parse_channel_page(_single_post(f'<a href="{url}">x</a>'), "jobbi_test")
+
+    assert posts[0].links == ()
+
+
+def test_private_use_characters_in_text_do_not_confuse_lines() -> None:
+    body = '\ue000\ue001 first<br/>\ue000 <a href="https://jobs.example.com/1">a</a>'
+    posts, _ = parse_channel_page(_single_post(body), "jobbi_test")
+
+    assert posts[0].text == "\ue000\ue001 first\n\ue000 a"
+    assert posts[0].links == (PostLink(line=2, url="https://jobs.example.com/1"),)
+
+
+def test_media_only_post_has_no_links() -> None:
+    posts, _ = parse_channel_page(_fixture("tg_crafted_jobs.html"), "jobbi_test")
+
+    assert all(p.links == () for p in posts if p.text == "")

@@ -30,6 +30,8 @@ from app.bot.handlers.inbox_forward import (
     NO_TEXT_MESSAGE,
     build_forwarded_post,
 )
+from app.discovery.fetchers.telegram import MAX_TEXT_CHARS
+from app.discovery.types import PostLink
 from app.models.telegram_conversation import TelegramConversation
 from app.models.telegram_link import TelegramLink
 from app.models.user import User
@@ -312,3 +314,129 @@ def test_overlong_job_link_is_dropped() -> None:
     _, post = build_forwarded_post(message, _channel_origin())
 
     assert post.job_link is None
+
+
+# --- links per line ----------------------------------------------------------------
+
+
+def _utf16_len(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _url_entity(text: str, url: str) -> MessageEntity:
+    """A URL entity over `url` in `text`, with Telegram's UTF-16 offsets."""
+    start = text.index(url)
+    return MessageEntity(MessageEntity.URL, _utf16_len(text[:start]), _utf16_len(url))
+
+
+def _text_link(text: str, label: str, url: str) -> MessageEntity:
+    start = text.index(label)
+    return MessageEntity(
+        MessageEntity.TEXT_LINK,
+        _utf16_len(text[:start]),
+        _utf16_len(label),
+        url=url,
+    )
+
+
+LINKS_TEXT = (
+    "\n  🔥🔥 Two roles\n"
+    "🚀 Frontend: https://jobs.example.com/fe?utm_source=tg\n"
+    "Chat t.me/acme_chat\n"
+    "👩‍💻 Backend: apply here"
+)
+LINKS_ENTITIES = [
+    _url_entity(LINKS_TEXT, "https://jobs.example.com/fe?utm_source=tg"),
+    _url_entity(LINKS_TEXT, "t.me/acme_chat"),
+    _text_link(LINKS_TEXT, "apply here", "https://jobs.example.com/be/"),
+]
+LINKS_EXPECTED = (
+    PostLink(line=2, url="https://jobs.example.com/fe"),
+    PostLink(line=4, url="https://jobs.example.com/be"),
+)
+
+
+def test_links_carry_lines_of_the_stored_text() -> None:
+    message = _message(text=LINKS_TEXT, entities=LINKS_ENTITIES)
+
+    _, post = build_forwarded_post(message, _channel_origin())
+
+    # The stored text is stripped, so the leading blank line is not counted.
+    assert post.text.split("\n")[0] == "🔥🔥 Two roles"
+    assert post.links == LINKS_EXPECTED
+    assert post.job_link == "https://jobs.example.com/fe"
+
+
+def test_caption_links_carry_lines() -> None:
+    message = _message(text=None, caption=LINKS_TEXT, caption_entities=LINKS_ENTITIES)
+
+    _, post = build_forwarded_post(message, _channel_origin())
+
+    assert post.links == LINKS_EXPECTED
+
+
+def test_text_link_starting_with_a_line_break_counts_on_its_visible_line() -> None:
+    text = "Roles:\n\nDesigner\nEnd"
+    entity = MessageEntity(
+        MessageEntity.TEXT_LINK,
+        text.index("\n"),
+        len("\n\nDesigner"),
+        url="https://jobs.example.com/design",
+    )
+
+    _, post = build_forwarded_post(
+        _message(text=text, entities=[entity]), _channel_origin()
+    )
+
+    assert post.links == (PostLink(line=3, url="https://jobs.example.com/design"),)
+
+
+def test_links_beyond_the_text_cap_are_dropped() -> None:
+    text = (
+        "https://jobs.example.com/kept\n"
+        + "x" * MAX_TEXT_CHARS
+        + " jobs.example.com/cut"
+    )
+    message = _message(
+        text=text,
+        entities=[
+            _url_entity(text, "https://jobs.example.com/kept"),
+            _url_entity(text, "jobs.example.com/cut"),
+        ],
+    )
+
+    _, post = build_forwarded_post(message, _channel_origin())
+
+    assert len(post.text) == MAX_TEXT_CHARS
+    assert post.links == (PostLink(line=1, url="https://jobs.example.com/kept"),)
+
+
+def test_overlong_links_are_not_post_links() -> None:
+    url = "https://jobs.example.com/" + "a" * 2100
+    message = _message(
+        text=f"Apply {url}\nor https://ok.example.com",
+        entities=[
+            MessageEntity(MessageEntity.URL, 6, len(url)),
+            MessageEntity(MessageEntity.URL, 6 + len(url) + 4, 22),
+        ],
+    )
+
+    _, post = build_forwarded_post(message, _channel_origin())
+
+    assert post.links == (PostLink(line=2, url="https://ok.example.com"),)
+
+
+@pytest.mark.parametrize("field", ["text", "caption"])
+def test_emoji_before_a_link_at_line_end_keeps_its_line(field: str) -> None:
+    """Emoji take two UTF-16 units: a naive offset would land on the next line."""
+    text = "🔥🔥🔥🔥🔥🔥 a.io\nNext line"
+    entities = [_url_entity(text, "a.io")]
+    message = (
+        _message(text=text, entities=entities)
+        if field == "text"
+        else _message(text=None, caption=text, caption_entities=entities)
+    )
+
+    _, post = build_forwarded_post(message, _channel_origin())
+
+    assert post.links == (PostLink(line=1, url="https://a.io"),)

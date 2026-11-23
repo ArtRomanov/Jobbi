@@ -22,7 +22,7 @@ from app.discovery.service import (
     ForwardOutcome,
     store_forwarded_post,
 )
-from app.discovery.types import RawPost
+from app.discovery.types import MAX_LINK_CHARS, PostLink, RawPost
 from app.models.vacancy_search_settings import VacancySearchSettings
 
 __all__ = [
@@ -50,7 +50,6 @@ NO_TEXT_MESSAGE = "This post has no text, so there is nothing to add to the Inbo
 # Bot API ids of channels are -100<internal id>; t.me/c/ links use the internal id.
 _CHANNEL_ID_OFFSET = 1_000_000_000_000
 _LABEL_MAX = 255
-_JOB_LINK_MAX = 2048
 
 
 class _ChannelForwardFilter(MessageFilter):
@@ -70,43 +69,86 @@ def _internal_id(chat_id: int) -> int:
     )
 
 
-def _first_job_link(message: Message) -> str | None:
-    """The first http(s) link outside Telegram, from link entities in order."""
-    types = [MessageEntity.URL, MessageEntity.TEXT_LINK]
+_LINK_TYPES = [MessageEntity.URL, MessageEntity.TEXT_LINK]
+
+
+def _link_entities(message: Message) -> list[tuple[MessageEntity, str]]:
+    """URL and TEXT_LINK entities of the text (or caption) with their text, in
+    order."""
     # parse_entities raises on a message without text (a captioned photo).
     entities = (
-        message.parse_entities(types)
+        message.parse_entities(_LINK_TYPES)
         if message.text is not None
-        else message.parse_caption_entities(types)
+        else message.parse_caption_entities(_LINK_TYPES)
     )
-    for entity, text in sorted(entities.items(), key=lambda item: item[0].offset):
-        href = (entity.url if entity.type == MessageEntity.TEXT_LINK else text) or ""
-        href = href.strip()
-        if entity.type == MessageEntity.URL and "://" not in href:
-            href = f"https://{href}"
-        try:
-            parts = urlsplit(href)
-        except ValueError:
-            continue
-        host = (parts.hostname or "").lower()
-        if (
-            parts.scheme.lower() in ("http", "https")
-            and host
-            and not is_telegram_host(host)
-        ):
-            link = normalize_url(href)
-            # Same bound as the column (and the board fetcher).
-            return link if len(link) <= _JOB_LINK_MAX else None
+    return sorted(entities.items(), key=lambda item: item[0].offset)
+
+
+def _entity_url(entity: MessageEntity, text: str) -> str | None:
+    """The entity's link normalized if it is http(s) outside Telegram, else None."""
+    href = (entity.url if entity.type == MessageEntity.TEXT_LINK else text) or ""
+    href = href.strip()
+    if entity.type == MessageEntity.URL and "://" not in href:
+        href = f"https://{href}"
+    try:
+        parts = urlsplit(href)
+    except ValueError:
+        return None
+    host = (parts.hostname or "").lower()
+    if (
+        parts.scheme.lower() in ("http", "https")
+        and host
+        and not is_telegram_host(host)
+    ):
+        return normalize_url(href)
     return None
+
+
+def _first_job_link(entities: list[tuple[MessageEntity, str]]) -> str | None:
+    """The first http(s) link outside Telegram, from link entities in order."""
+    for entity, text in entities:
+        if (link := _entity_url(entity, text)) is not None:
+            # Same bound as the column (and the board fetcher).
+            return link if len(link) <= MAX_LINK_CHARS else None
+    return None
+
+
+def _post_links(
+    entities: list[tuple[MessageEntity, str]], raw: str, stored: str
+) -> tuple[PostLink, ...]:
+    """Outside links with the line of `stored` (`raw.strip()`, capped) on which
+    their visible text starts; links without visible text or beyond the cap are
+    dropped."""
+    utf16 = raw.encode("utf-16-le")
+    lead = len(raw) - len(raw.lstrip())
+    links: list[PostLink] = []
+    for entity, text in entities:
+        url = _entity_url(entity, text)
+        if url is None or len(url) > MAX_LINK_CHARS:
+            continue
+        # Entity offsets count UTF-16 code units; turn them into a str index.
+        start = len(utf16[: entity.offset * 2].decode("utf-16-le", errors="replace"))
+        visible = next(
+            (i for i, char in enumerate(text, start) if not char.isspace()), None
+        )
+        if visible is None or not 0 <= visible - lead < len(stored):
+            continue
+        offset = visible - lead
+        link = PostLink(line=stored.count("\n", 0, offset) + 1, url=url)
+        if link not in links:
+            links.append(link)
+    return tuple(links)
 
 
 def build_forwarded_post(
     message: Message, origin: MessageOriginChannel
 ) -> tuple[ForwardedChannel, RawPost] | None:
     """Card source and post for a forwarded channel post; None without text."""
-    text = (message.text or message.caption or "").strip()
+    raw = message.text or message.caption or ""
+    text = raw.strip()[:MAX_TEXT_CHARS]
     if not text:
         return None
+    entities = _link_entities(message)
     chat = origin.chat
     username = (chat.username or "").lower()
     post_id = origin.message_id
@@ -128,11 +170,12 @@ def build_forwarded_post(
         RawPost(
             external_key=external_key,
             url=url,
-            job_link=_first_job_link(message),
+            job_link=_first_job_link(entities),
             title=None,
             company=None,
-            text=text[:MAX_TEXT_CHARS],
+            text=text,
             posted_at=posted_at,
+            links=_post_links(entities, raw, text),
         ),
     )
 
