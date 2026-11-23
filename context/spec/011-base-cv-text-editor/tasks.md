@@ -5,6 +5,7 @@ Conventions for every slice:
 - Backend tests run on Python 3.11 (`/private/tmp/claude-501/-Users-god-Documents-else-work-hunting-jobbi/f27b7fe0-da10-4575-9087-98d451dec496/scratchpad/venv311`) and 3.14 (`backend/.venv`). Frontend tools run from `frontend/node_modules/.bin` (pnpm is broken; never npm). `schema.d.ts` is regenerated from `create_app().openapi()` after every API change.
 - Library APIs (react-router data router, marked, @react-pdf/renderer `Font.register`, pdfminer.six, python-docx, Groq tool calls) are checked against current docs (context7 or the official docs) at implementation time, not from memory.
 - Standard SQLAlchemy only. SQLite does not enforce foreign keys, so every new FK is nulled by hand on delete, with a test.
+- **Parallel work:** before starting each slice, check which of its sub-tasks (or parts of later slices) do not depend on unmerged work and do not touch the same files or the migration chain; run those with extra agents in separate worktrees, then integrate in order. Only one branch at a time adds an Alembic migration.
 
 ---
 
