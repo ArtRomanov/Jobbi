@@ -1,5 +1,6 @@
 """safe_http follow-up (spec 010 §2.6): bot-challenge detection and ``fetch_json``."""
 
+import time
 from collections.abc import AsyncGenerator
 
 import httpx
@@ -249,6 +250,26 @@ async def test_fetch_json_refuses_a_misconfigured_client() -> None:
     async with httpx.AsyncClient(follow_redirects=True) as bad:
         with pytest.raises(ValueError):
             await fetch_json(URL, client=bad)
+
+
+@respx.mock
+async def test_fetch_json_parsing_counts_toward_the_total_time(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    respx.get(f"https://{PUBLIC_IP}/").respond(200, headers=JSON, json={"a": 1})
+
+    def slow_parse(body: bytes) -> object:
+        time.sleep(1.0)
+        return {}
+
+    monkeypatch.setattr(safe_http, "_parse_json", slow_parse)
+    started = time.monotonic()
+
+    with pytest.raises(PageFetchError) as exc_info:
+        await fetch_json(URL, client=client, resolver=PUBLIC, timeout_s=0.3)
+
+    assert exc_info.value.reason == "unreachable"
+    assert time.monotonic() - started < 0.9
 
 
 @respx.mock

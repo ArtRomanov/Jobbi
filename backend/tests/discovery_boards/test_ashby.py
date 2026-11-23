@@ -247,11 +247,28 @@ def test_wrong_shape_is_unreachable(data: Any) -> None:
             "unreachable",
         ),
         (httpx.Response(200, content=b"<html>no</html>"), "unreachable"),
-        (httpx.Response(200, content=b"x" * (MAX_RESPONSE_BYTES + 1)), "unreachable"),
+        (
+            httpx.Response(200, content=b"x" * (ashby.MAX_RESPONSE_BYTES + 1)),
+            "unreachable",
+        ),
+        (
+            httpx.Response(200, content=b"[" * 100_000 + b"]" * 100_000),
+            "unreachable",
+        ),
         (httpx.ConnectError("boom"), "unreachable"),
         (httpx.ReadTimeout("slow"), "unreachable"),
     ],
-    ids=["404", "500", "429", "redirect", "not-json", "too-big", "connect", "timeout"],
+    ids=[
+        "404",
+        "500",
+        "429",
+        "redirect",
+        "not-json",
+        "too-big",
+        "deep-nesting",
+        "connect",
+        "timeout",
+    ],
 )
 @respx.mock
 async def test_http_failures(
@@ -264,6 +281,47 @@ async def test_http_failures(
 
     assert exc_info.value.reason == reason
     assert route.call_count == 1  # redirects are not followed
+
+
+def test_ashby_cap_is_its_own_and_larger_than_the_board_cap() -> None:
+    # openai's board measured 14.3 MB on 2026-11-23; other boards keep 5 MB.
+    assert ashby.MAX_RESPONSE_BYTES == 32 * 1024 * 1024
+    assert MAX_RESPONSE_BYTES == 5 * 1024 * 1024
+
+
+@respx.mock
+async def test_board_between_5_and_32_mb_is_read(client: httpx.AsyncClient) -> None:
+    padding = "x" * (MAX_RESPONSE_BYTES + 1024)
+    body = json.dumps(_board(_job("big", descriptionPlain=padding))).encode()
+    assert MAX_RESPONSE_BYTES < len(body) < ashby.MAX_RESPONSE_BYTES
+    respx.get("https://api.ashbyhq.com/posting-api/job-board/acme").respond(
+        200, content=body
+    )
+
+    jobs = await ashby.list_jobs(client, "acme")
+
+    assert [job["id"] for job in jobs] == ["big"]
+
+
+@respx.mock
+async def test_board_json_is_parsed_off_the_event_loop(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    threads: list[bool] = []
+    real = ashby.parse_json_body
+
+    def _recording(body: bytes) -> Any:
+        threads.append(threading.current_thread() is threading.main_thread())
+        return real(body)
+
+    monkeypatch.setattr(ashby, "parse_json_body", _recording)
+    respx.get(API_URL).respond(200, json=REAL)
+
+    await ashby.list_jobs(client, "manychat")
+
+    assert threads == [False]
 
 
 @pytest.mark.parametrize(

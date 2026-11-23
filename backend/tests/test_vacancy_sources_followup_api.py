@@ -105,8 +105,18 @@ async def test_add_ashby_board(
         httpx.Response(200, json=[]),
         httpx.Response(200, json={"jobs": "x"}),
         httpx.ConnectError("boom"),
+        httpx.Response(200, content=b"[" * 100_000 + b"]" * 100_000),
     ],
-    ids=["404", "500", "redirect", "html", "list", "bad-jobs", "connect-error"],
+    ids=[
+        "404",
+        "500",
+        "redirect",
+        "html",
+        "list",
+        "bad-jobs",
+        "connect-error",
+        "deep-nesting",
+    ],
 )
 async def test_unreadable_ashby_board(
     client: httpx.AsyncClient,

@@ -8,8 +8,14 @@ detail requests). An unknown organization answers 404.
 
 The API does not expose the organization's name, so the display name is the
 title-cased slug (as for Lever): ``acme-labs`` -> "Acme Labs".
+
+Size: the answer carries every description twice (plain and HTML), so big
+boards exceed the 5 MB board cap (measured 2026-11-23: openai 14.3 MB,
+notion 3.1 MB, manychat 0.37 MB). This fixed-host request gets its own
+``MAX_RESPONSE_BYTES`` (32 MB); the JSON is parsed in a worker thread.
 """
 
+import asyncio
 import re
 from datetime import UTC, datetime
 from typing import Any
@@ -21,9 +27,10 @@ from app.discovery.fetchers.board_http import (
     cap_name,
     cap_text,
     fits_columns,
-    get_json,
+    get_bytes,
     html_to_text,
     loggable_id,
+    parse_json_body,
 )
 from app.discovery.fetchers.errors import UNKNOWN_POSTED_AT, BoardReadError
 from app.discovery.fetchers.lever import display_name_from_slug
@@ -32,6 +39,7 @@ from app.discovery.types import RawPost
 
 __all__ = [
     "MAX_JOBS",
+    "MAX_RESPONSE_BYTES",
     "api_url",
     "check_board",
     "display_name",
@@ -47,6 +55,8 @@ logger = structlog.get_logger()
 API_BASE = "https://api.ashbyhq.com/posting-api/job-board"
 # A real board lists tens of jobs; more than this is not a job board.
 MAX_JOBS = 2_000
+# Decompressed body cap for this host only (see the module docstring).
+MAX_RESPONSE_BYTES = 32 * 1024 * 1024
 
 # The slug as stored (lowercased): 1-64 letters, digits, `.`, `_` or `-`,
 # starting and ending with a letter or digit (`kraken.com` is a real board).
@@ -144,19 +154,28 @@ def parse_board(org: str, data: Any) -> list[dict[str, Any]]:
     return usable
 
 
-async def _get_board(client: httpx.AsyncClient, org: str) -> Any:
-    return await get_json(client, api_url(org), params={"includeCompensation": "false"})
+def _decode_board(org: str, body: bytes) -> list[dict[str, Any]]:
+    return parse_board(org, parse_json_body(body))
 
 
 async def list_jobs(client: httpx.AsyncClient, org: str) -> list[dict[str, Any]]:
     """Return the board's usable jobs (see ``parse_board``).
 
+    The body (up to ``MAX_RESPONSE_BYTES``) is parsed in a worker thread.
+
     Raises:
         BoardReadError: ``not_found`` on 404 or an invalid slug;
-            ``unreachable`` otherwise (see ``board_http.get_json`` and
-            ``parse_board``).
+            ``unreachable`` otherwise (see ``board_http.get_bytes``,
+            ``board_http.parse_json_body`` and ``parse_board``).
     """
-    return parse_board(org, await _get_board(client, org))
+    body = await get_bytes(
+        client,
+        api_url(org),
+        params={"includeCompensation": "false"},
+        headers={"Accept": "application/json"},
+        max_bytes=MAX_RESPONSE_BYTES,
+    )
+    return await asyncio.to_thread(_decode_board, org, body)
 
 
 async def check_board(client: httpx.AsyncClient, org: str) -> None:

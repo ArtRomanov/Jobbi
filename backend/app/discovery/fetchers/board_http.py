@@ -66,10 +66,13 @@ async def get_bytes(
     *,
     params: dict[str, str | int] | None = None,
     headers: dict[str, str] | None = None,
+    max_bytes: int = MAX_RESPONSE_BYTES,
 ) -> bytes:
-    """GET ``url`` and return the raw body (decompressed, at most 5 MB).
+    """GET ``url`` and return the raw body (decompressed, at most ``max_bytes``).
 
     Redirects are not followed, so the request never leaves the fixed host.
+    ``max_bytes`` defaults to 5 MB; only a fixed-host adapter with measured
+    larger answers (Ashby) passes more.
 
     Raises:
         BoardReadError: ``not_found`` on 404; ``unreachable`` on any other
@@ -95,7 +98,7 @@ async def get_bytes(
             body = bytearray()
             async for chunk in response.aiter_bytes():
                 body.extend(chunk)
-                if len(body) > MAX_RESPONSE_BYTES:
+                if len(body) > max_bytes:
                     raise BoardReadError("unreachable")
     except httpx.HTTPError as exc:
         raise BoardReadError("unreachable") from exc
@@ -118,9 +121,19 @@ async def get_json(
     if headers:
         request_headers.update(headers)
     body = await get_bytes(client, url, params=params, headers=request_headers)
+    return parse_json_body(body)
+
+
+def parse_json_body(body: bytes) -> Any:
+    """Parse a JSON body from a board API.
+
+    Raises:
+        BoardReadError: ``unreachable`` for invalid JSON, undecodable bytes
+            or nesting deeper than the parser allows (``RecursionError``).
+    """
     try:
         return json.loads(body)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         raise BoardReadError("unreachable") from exc
 
 

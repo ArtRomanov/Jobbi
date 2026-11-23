@@ -112,6 +112,32 @@ async def test_gzip_body_under_cap_is_decoded(client: httpx.AsyncClient) -> None
     assert await get_json(client, URL) == {"name": "Acme"}
 
 
+@pytest.mark.parametrize(
+    "body",
+    [b"[" * 100_000 + b"]" * 100_000, b"\xff\xfe\x00", b"{bad"],
+    ids=["deep-nesting", "bad-bytes", "broken"],
+)
+@respx.mock
+async def test_unparsable_json_is_unreachable(
+    client: httpx.AsyncClient, body: bytes
+) -> None:
+    respx.get(URL).mock(return_value=httpx.Response(200, content=body))
+
+    with pytest.raises(BoardReadError) as exc_info:
+        await get_json(client, URL)
+
+    assert exc_info.value.reason == "unreachable"
+
+
+@respx.mock
+async def test_get_bytes_takes_its_own_cap(client: httpx.AsyncClient) -> None:
+    respx.get(URL).mock(return_value=httpx.Response(200, content=b"a" * 2_000))
+
+    assert len(await board_http.get_bytes(client, URL, max_bytes=2_000)) == 2_000
+    with pytest.raises(BoardReadError):
+        await board_http.get_bytes(client, URL, max_bytes=1_999)
+
+
 def test_html_to_text_keeps_blocks_and_drops_tags() -> None:
     markup = (
         "<div><h2>About</h2><p>We&nbsp;build <strong>things</strong>.</p>"

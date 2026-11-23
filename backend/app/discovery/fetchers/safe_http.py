@@ -480,6 +480,8 @@ async def fetch_json(
                 max_bytes=max_bytes,
                 max_redirects=max_redirects,
             )
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
     raw = await _guarded_fetch(
         url,
         client,
@@ -491,7 +493,13 @@ async def fetch_json(
         media_types=_JSON_TYPES,
         wrong_type="not_json",
     )
-    data = await asyncio.to_thread(_parse_json, raw.body)
+    # Parsing counts toward the same total time: the caller stops waiting at
+    # the deadline (the worker thread finishes on its own; the body is capped).
+    try:
+        async with asyncio.timeout_at(deadline):
+            data = await asyncio.to_thread(_parse_json, raw.body)
+    except TimeoutError as exc:
+        raise PageFetchError("unreachable") from exc
     return FetchedJson(final_url=raw.final_url, status=raw.status, data=data)
 
 
