@@ -45,7 +45,7 @@ export const CV_CHANGED_ELSEWHERE_MESSAGE =
 /** `detail` of the PATCH 409 when the sent `version` is stale. */
 export const CV_CHANGED_ERROR_CODE = "CV_CHANGED";
 
-export const BASE_CV_SWITCH_LABEL = "Base CV";
+export const BASE_CV_SWITCH_LABEL = "Set as base CV for every application";
 /** Straight quotes, like the CVs page's no-base hint. */
 export const BASE_CV_SWITCH_HELP = 'Tailoring with "Add & tailor CV" starts from your base CV.';
 
