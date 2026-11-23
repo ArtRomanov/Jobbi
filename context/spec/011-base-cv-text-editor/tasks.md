@@ -197,11 +197,11 @@ Conventions for every slice:
 
 ---
 
-- [ ] **Slice 8: Final regression and gates**
+- [x] **Slice 8: Final regression and gates**
   - [x] Full backend suite on 3.11 and 3.14, frontend suite, `tsc`, ruff and lint on changed files. **[Agent: qa-tester]** _(2026-11-23: backend 1295 on 3.11/3.14, Vitest 493, tsc clean, vite build OK, ruff clean on changed lines; migrations up/down on an empty DB and a live-DB copy; API smoke via curl)_
   - [x] Accessibility pass: editor (labels, tab order, the Edit/Preview tabs), the upload button states, the change card buttons. **[Agent: react-code-reviewer]** _(no P0/P1; P2/P3 fixed in PR #29)_
   - [x] `/pre-merge` and `/security-review` on the branch. Focus: upload hardening, link XSS, prompt injection via CV text and tool calls, owner scoping, migration safety. **[Agent: general-purpose]** _(cold round: 8 findings incl. 1 HIGH [observed] card race and a PDF decompression bomb — all fixed with failing-first tests in PR #31; security review of every slice and of the fixes: no findings; report 011_premerge_2026-11-23.md, local)_
-  - [ ] Live check with the user:
+  - [x] Live check with the user:
     - upload their real CV;
     - make it the base;
     - Inbox → "Add & tailor CV";
@@ -209,21 +209,21 @@ Conventions for every slice:
     - PDF with Cyrillic;
     - conflict message.
 
-    **[Agent: qa-tester]**
+    **[Agent: qa-tester]** _(2026-11-23: passed with the user after the follow-ups below; user: "всё работает")_
 
 ---
 
-- [ ] **Slice 9 (live-test follow-up): upload as a draft, explicit base switch, save toasts**
-  - [ ] Backend:
+- [x] **Slice 9 (live-test follow-up): upload as a draft, explicit base switch, save toasts**
+  - [x] Backend:
     - `POST /cvs/upload` becomes extract-only: returns `{name, content, truncated}` and creates nothing (rename the route to `POST /cvs/extract` or keep the path with a new response — pick one and update the contract);
     - `POST /cvs` and `PATCH /cvs/{id}` accept an optional `is_base: bool` that sets or clears `users.base_cv_id` atomically with the save (clearing only if this CV is the current base);
     - remove all automatic base assignment (upload `became_base`).
 
     Tests. **[Agent: python-backend]**
-  - [ ] Frontend:
+  - [x] Frontend:
     - Upload → `/cvs/new` with the extracted draft (name, content, truncated) in memory/router state, notice "Text extracted from your file. Review it and save to add it to your CVs.", Save active, unsaved guard on; "Leave" discards; reload loses the draft after the browser prompt;
     - "Base CV" switch in the editor, part of dirty state, sent with Save; toasts "CV saved" / "CV saved and set as your base CV" / "CV saved. You have no base CV now.";
     - toasts "CV duplicated", "CV deleted", "Change applied to your CV".
 
     Tests. **[Agent: typescript-frontend]**
-  - [ ] Verify with the user: upload → draft → Leave adds nothing; upload → Save creates the CV, no base set; switch on + Save makes it base; toasts appear for every save/remove action. **[Agent: qa-tester]**
+  - [x] Verify with the user: upload → draft → Leave adds nothing; upload → Save creates the CV, no base set; switch on + Save makes it base; toasts appear for every save/remove action. **[Agent: qa-tester]** _(2026-11-23: PRs #36, #37 (switch label "Set as base CV for every application"), #38 (Save returns to the CVs page); also #32 preview scroll and #34 column-by-column PDF reading. Verified live by the user)_

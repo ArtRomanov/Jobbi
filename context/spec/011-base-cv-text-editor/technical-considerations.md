@@ -6,7 +6,7 @@ It is NOT a copy-paste implementation guide.
 # Technical Specification: Base CV, File Upload and Text CV Editor
 
 - **Functional Specification:** [functional-spec.md](functional-spec.md)
-- **Status:** Approved
+- **Status:** Completed
 - **Author(s):** Poe (AI Technical Architect), with codebase analysis by the python-backend and typescript-frontend agents (2026-11-23)
 
 ---
