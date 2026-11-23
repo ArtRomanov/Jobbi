@@ -24,14 +24,25 @@ describe("CvTextPreview", () => {
   it("renders safe links that open in a new tab without opener", () => {
     render(<CvTextPreview content={"[Site](https://jane.dev) jane@example.com"} />);
 
-    const site = screen.getByRole("link", { name: "Site" });
+    const site = screen.getByRole("link", { name: "Site (opens in new tab)" });
     expect(site).toHaveAttribute("href", "https://jane.dev");
     expect(site).toHaveAttribute("target", "_blank");
     expect(site).toHaveAttribute("rel", "noopener noreferrer");
-    expect(screen.getByRole("link", { name: "jane@example.com" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "jane@example.com (opens in new tab)" })).toHaveAttribute(
       "href",
       "mailto:jane@example.com",
     );
+  });
+
+  it("tells screen readers a link opens a new tab, without changing the visible text", () => {
+    render(<CvTextPreview content={"[Site](https://jane.dev)"} />);
+
+    const site = screen.getByRole("link", { name: "Site (opens in new tab)" });
+    expect(screen.getByText("(opens in new tab)", { exact: false })).toHaveStyle({
+      position: "absolute",
+      width: "1px",
+    });
+    expect(site.firstChild?.textContent).toBe("Site");
   });
 
   it.each([

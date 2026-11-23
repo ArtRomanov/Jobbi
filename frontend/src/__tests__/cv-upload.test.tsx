@@ -66,7 +66,7 @@ describe("UploadCvButton", () => {
   it("renders a button and a hidden one-file input for PDF and DOCX", () => {
     renderButton();
 
-    expect(screen.getByRole("button", { name: "Upload CV" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Upload CV" })).not.toHaveAttribute("aria-disabled");
     const input = fileInput();
     expect(input).toHaveAttribute("accept", ".pdf,.docx");
     expect(input).not.toHaveAttribute("multiple");
@@ -160,8 +160,14 @@ describe("UploadCvButton", () => {
     await user.upload(fileInput(), pdfFile());
 
     const busy = await screen.findByRole("button", { name: "Uploading…" });
-    expect(busy).toBeDisabled();
+    expect(busy).toHaveAttribute("aria-disabled", "true");
+    // Still focusable (no `disabled`), so keyboard focus is not lost
+    expect(busy).not.toBeDisabled();
+    busy.focus();
+    expect(busy).toHaveFocus();
+    const pickerOpened = vi.spyOn(fileInput(), "click");
     await user.click(busy);
+    expect(pickerOpened).not.toHaveBeenCalled();
     expect(calls).toBe(1);
 
     release();
@@ -192,7 +198,7 @@ describe("UploadCvButton", () => {
 
     expect(await screen.findByText(text)).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/cvs");
-    expect(screen.getByRole("button", { name: "Upload CV" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Upload CV" })).not.toHaveAttribute("aria-disabled");
   });
 
   it("shows the generic message on a network error", async () => {

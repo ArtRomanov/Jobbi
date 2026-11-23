@@ -1,10 +1,11 @@
 import { useId, useLayoutEffect, useRef, type ClipboardEvent } from "react";
-import { FormTextarea, colors } from "@/shared/ui";
+import { FormTextarea, VisuallyHidden, colors } from "@/shared/ui";
 import {
   CV_CONTENT_COUNTER_THRESHOLD,
   CV_CONTENT_MAX_LENGTH,
   CV_CONTENT_PLACEHOLDER,
   CV_FORMATTING_HINT,
+  CV_FORMATTING_HINT_DESCRIPTION,
 } from "../config";
 import { formatThousands } from "../lib/format-thousands";
 import { insertTextWithinLimit } from "../lib/insert-text-within-limit";
@@ -78,8 +79,12 @@ export function CvContentField({ value, onChange }: CvContentFieldProps) {
           color: colors.textMuted,
         }}
       >
-        <p id={hintId} style={{ margin: 0 }}>
-          {CV_FORMATTING_HINT}
+        <p style={{ margin: 0 }}>
+          {/* Symbols for the eye; plain words for screen readers */}
+          <span aria-hidden="true">{CV_FORMATTING_HINT}</span>
+          <span id={hintId}>
+            <VisuallyHidden>{CV_FORMATTING_HINT_DESCRIPTION}</VisuallyHidden>
+          </span>
         </p>
         {showCounter ? (
           <p id={counterId} style={{ margin: 0, whiteSpace: "nowrap" }}>

@@ -15,6 +15,8 @@ const CVS_URL = "*/api/v1/cvs";
 const CV_URL = "*/api/v1/cvs/:id";
 const PLACEHOLDER = "Write your CV here, or upload a PDF/DOCX on the CVs page.";
 const HINT = "# Heading · ## Section · **bold** · - list · [link](https://…)";
+const HINT_DESCRIPTION =
+  "Formatting: start a line with # for a heading, ## for a section, wrap text in two asterisks for bold, start a line with a dash for a list item, write links as text in square brackets followed by the address in parentheses.";
 const PHONE_QUERY = "(max-width: 640px)";
 
 function renderEditor(url: string) {
@@ -66,7 +68,11 @@ describe("CvEditorPage — create", () => {
     expect(textArea()).toHaveValue("");
     expect(textArea()).toHaveAttribute("placeholder", PLACEHOLDER);
     expect(textArea()).toHaveAttribute("maxLength", String(CV_CONTENT_MAX_LENGTH));
-    expect(textArea()).toHaveAccessibleDescription(HINT);
+    // The symbols stay on screen but are hidden from screen readers, which
+    // read the plain-words description instead
+    expect(screen.getByText(HINT)).toBeVisible();
+    expect(screen.getByText(HINT)).toHaveAttribute("aria-hidden", "true");
+    expect(textArea()).toHaveAccessibleDescription(HINT_DESCRIPTION);
     expect(screen.queryByRole("button", { name: "Export PDF" })).not.toBeInTheDocument();
   });
 
@@ -145,6 +151,14 @@ describe("CvEditorPage — create", () => {
 });
 
 describe("CvEditorPage — edit", () => {
+  it("announces a load error as an alert", async () => {
+    server.use(http.get(CV_URL, () => HttpResponse.json({ detail: "Not found" }, { status: 404 })));
+    renderEditor("/cvs/cv-1/edit");
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "CV text" })).not.toBeInTheDocument();
+  });
+
   it("loads the CV name and text and shows them formatted in the preview", async () => {
     renderEditor("/cvs/cv-1/edit");
 

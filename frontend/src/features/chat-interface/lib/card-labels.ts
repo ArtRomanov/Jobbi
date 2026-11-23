@@ -33,3 +33,16 @@ export function getInsertLabel(
       return "Added";
   }
 }
+
+/** The card's title, numbered within its message: "CV text — change 2". */
+export function getCardTitle(number: number): string {
+  return `CV text — change ${number}`;
+}
+
+/** Accessible name of a card action, e.g. "Accept change 2". */
+export function getCardActionLabel(
+  action: "Accept" | "Reject",
+  number: number,
+): string {
+  return `${action} change ${number}`;
+}
