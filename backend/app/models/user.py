@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import String, func
+from sqlalchemy import ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -31,6 +31,15 @@ class User(Base):
     timezone: Mapped[str | None] = mapped_column(String(64))
     summary_time: Mapped[str] = mapped_column(
         String(5), nullable=False, default="10:00", server_default="10:00"
+    )
+
+    # The user's base CV: "Add & tailor CV" starts from it. At most one per
+    # user by construction. SQLite does not enforce FKs, so `delete_cv` nulls
+    # it by hand. `use_alter` breaks the users <-> cvs FK cycle.
+    base_cv_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("cvs.id", ondelete="SET NULL", use_alter=True),
+        nullable=True,
     )
 
     created_at: Mapped[datetime] = mapped_column(
