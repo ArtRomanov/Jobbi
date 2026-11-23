@@ -11,6 +11,7 @@ import { downloadCvTextPdf } from "@/features/cv-pdf";
 import { UploadNotice, useUploadDraft, type UploadDraft } from "@/features/cv-upload";
 import { Badge, PageCard, PageHeader, colors, useToast } from "@/shared/ui";
 import { handleApiError } from "@/shared/api";
+import { ROUTES } from "@/shared/config";
 import {
   BASE_LABEL,
   CV_SAVED_AS_BASE_MESSAGE,
@@ -54,9 +55,10 @@ function getSavedMessage(wasBase: boolean, saved: Cv): string {
 /**
  * Composes `CvTextEditor` for both routes.
  * /cvs/new — empty editor, or the upload draft from router state (unsaved
- * until Save; "Leave" drops it); Save creates the CV and moves to its edit URL.
- * /cvs/:id/edit — loads the CV; Save PATCHes with the loaded `version` and
- * keeps the returned one for the next save.
+ * until Save; "Leave" drops it); Save creates the CV.
+ * /cvs/:id/edit — loads the CV; Save PATCHes with the loaded `version`.
+ * A successful save shows the toast and returns to the CVs list; a failed one
+ * stays here with the error next to Save and the draft untouched.
  */
 export function CvEditorPage() {
   const { id } = useParams<{ id: string }>();
@@ -66,9 +68,9 @@ export function CvEditorPage() {
   const isEditMode = Boolean(id);
   // Only on /cvs/new right after an upload; a reload opens an empty new CV
   const uploadDraft = useUploadDraft();
-  // The last saved (or loaded) CV; its `version` goes with the next PATCH.
-  // State drives rendering; the ref is what the effect and the handlers read,
-  // so neither re-runs on save. Both change only through `setSavedCv`.
+  // The loaded CV; its `version` goes with the PATCH. State drives rendering;
+  // the ref is what the effect and the save handler read. Both change only
+  // through `setSavedCv`.
   const [cv, setCv] = useState<Cv | null>(null);
   const cvRef = useRef<Cv | null>(null);
   const setSavedCv = useCallback((next: Cv | null) => {
@@ -76,8 +78,7 @@ export function CvEditorPage() {
     setCv(next);
   }, []);
   // What the editor is mounted with. Changes only when a different CV loads
-  // (or a fresh /cvs/new starts), never on save, so saving keeps the editor
-  // and the user's draft as they are.
+  // (or a fresh /cvs/new starts in the same page instance).
   const [editorSeed, setEditorSeed] = useState(() =>
     toEditorSeed(null, FIRST_NEW_KEY, isEditMode ? null : uploadDraft),
   );
@@ -87,7 +88,8 @@ export function CvEditorPage() {
   const [isSaving, setIsSaving] = useState(false);
   // Shown next to Save until the next attempt; the draft stays in the editor
   const [saveError, setSaveError] = useState<string | null>(null);
-  // Blocks a second save until the first settles (`isSaving` lags a render)
+  // Blocks a second save while one is in flight (`isSaving` lags a render),
+  // and after a successful one until the page has left
   const isSavingRef = useRef(false);
 
   useEffect(() => {
@@ -103,8 +105,6 @@ export function CvEditorPage() {
       }
       return;
     }
-    if (cvRef.current?.id === id) return;
-
     let cancelled = false;
     setIsLoading(true);
     setError(null);
@@ -135,6 +135,7 @@ export function CvEditorPage() {
       setSaveError(null);
       try {
         const current = cvRef.current;
+        let message: string;
         if (current) {
           const isBaseChanged = values.isBase !== current.is_base;
           const saved = await updateCv(current.id, {
@@ -144,35 +145,32 @@ export function CvEditorPage() {
             // Only when the switch changed: never clear a base set elsewhere
             ...(isBaseChanged ? { is_base: values.isBase } : {}),
           });
-          setSavedCv(saved);
           // A base change made elsewhere is not this save's doing: plain toast
-          showToast(
-            isBaseChanged ? getSavedMessage(current.is_base, saved) : CV_SAVED_MESSAGE,
-            "success",
-          );
+          message = isBaseChanged ? getSavedMessage(current.is_base, saved) : CV_SAVED_MESSAGE;
         } else {
           const created = await createCv({
             name: values.name,
             content: values.content,
             is_base: values.isBase,
           });
-          // Set before navigating so the load effect for the new id is skipped
-          setSavedCv(created);
           // The switch starts off, so only "on" is a change made by this save
-          showToast(values.isBase ? getSavedMessage(false, created) : CV_SAVED_MESSAGE, "success");
-          // The router keeps this page (and the editor) mounted across the
-          // /cvs/new → /cvs/:id/edit move, so the draft and focus stay put
-          navigate(`/cvs/${created.id}/edit`, { replace: true });
+          message = values.isBase ? getSavedMessage(false, created) : CV_SAVED_MESSAGE;
         }
+        // ToastProvider sits above the routes (app root), so the toast outlives this page
+        showToast(message, "success");
+        // Replace, not push: Back from the list does not reopen a form that is
+        // already saved, and the unsaved-changes guard lets REPLACE through (the
+        // draft still differs from the loaded values at this moment). Saving
+        // state stays on until the page unmounts, so Save cannot fire twice.
+        void navigate(ROUTES.cvs, { replace: true });
       } catch (err: unknown) {
         // A 409 (changed elsewhere) must not overwrite: the draft stays as typed
         setSaveError(getCvSaveErrorMessage(err));
-      } finally {
         isSavingRef.current = false;
         setIsSaving(false);
       }
     },
-    [navigate, setSavedCv, showToast],
+    [navigate, showToast],
   );
 
   // What "Save" and the unsaved-changes guard compare the draft with
@@ -196,7 +194,7 @@ export function CvEditorPage() {
   return (
     <PageCard maxWidth="1120px">
       <Link
-        to="/cvs"
+        to={ROUTES.cvs}
         style={{
           fontSize: "0.875rem",
           color: colors.primary,
@@ -235,7 +233,7 @@ export function CvEditorPage() {
       ) : null}
 
       {/* An uploaded draft not saved yet (spec 2.3) */}
-      {uploadDraft && !cv && editorSeed.key === FIRST_NEW_KEY ? (
+      {uploadDraft && !isEditMode && editorSeed.key === FIRST_NEW_KEY ? (
         <UploadNotice truncated={uploadDraft.truncated} />
       ) : null}
 

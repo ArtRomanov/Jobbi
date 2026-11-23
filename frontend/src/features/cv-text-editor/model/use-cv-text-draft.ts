@@ -21,8 +21,8 @@ export interface CvTextDraft {
 
 /**
  * The editor's unsaved name, text and "Base CV" switch, and whether they
- * differ from the last saved version. `initial` is read once; `saved`
- * follows every save.
+ * differ from the last saved version. `initial` is read once; the draft is
+ * never re-seeded from `saved` (the page leaves the editor after a save).
  */
 export function useCvTextDraft(
   initial: CvTextEditorValues,
@@ -32,17 +32,6 @@ export function useCvTextDraft(
   const [content, setContent] = useState(initial.content);
   const [isBase, setIsBase] = useState(initial.isBase);
   const [nameError, setNameError] = useState<string | null>(null);
-
-  // After every save the switch follows the server's answer: the base may have
-  // changed elsewhere, and a stale switch would leave Save and the guard dirty.
-  // Name and text are not re-seeded, so typing is never overwritten. Adjusted
-  // during render (React's "store previous prop" pattern), not in an effect,
-  // so no frame shows a dirty Save.
-  const [syncedSaved, setSyncedSaved] = useState(saved);
-  if (saved !== syncedSaved) {
-    setSyncedSaved(saved);
-    setIsBase(saved.isBase);
-  }
 
   const setName = useCallback((next: string) => {
     setNameState(next);

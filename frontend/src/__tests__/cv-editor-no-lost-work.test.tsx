@@ -96,33 +96,18 @@ describe("Save is active only with changes", () => {
     expect(saveButton()).toHaveAttribute("aria-disabled", "true");
   });
 
-  it("is disabled again after a successful save, until the next change", async () => {
+  it("a keyboard save returns to the CVs list too", async () => {
     const user = userEvent.setup();
     server.use(echoPatch());
-    await renderLoadedEditor();
-
-    await user.type(textArea(), "\nGo");
-    await user.click(saveButton());
-    expect(await screen.findByText("CV saved")).toBeInTheDocument();
-
-    expect(saveButton()).toHaveAttribute("aria-disabled", "true");
-    await user.type(textArea(), "!");
-    expect(saveButton()).not.toHaveAttribute("aria-disabled");
-  });
-
-  it("keeps focus on Save after a keyboard save (aria-disabled, not disabled)", async () => {
-    const user = userEvent.setup();
-    server.use(echoPatch());
-    await renderLoadedEditor();
+    const { router } = await renderLoadedEditor();
 
     await user.type(textArea(), "\nGo");
     saveButton().focus();
     await user.keyboard("{Enter}");
-    expect(await screen.findByText("CV saved")).toBeInTheDocument();
 
-    expect(saveButton()).not.toBeDisabled();
-    expect(saveButton()).toHaveAttribute("aria-disabled", "true");
-    expect(saveButton()).toHaveFocus();
+    expect(await screen.findByText("CVs list")).toBeInTheDocument();
+    expect(screen.getByText("CV saved")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/cvs");
   });
 
   it("sends nothing when the aria-disabled Save is pressed", async () => {
@@ -219,7 +204,7 @@ describe("Save failures keep the draft", () => {
         return HttpResponse.json({ detail: "CV_CHANGED" }, { status: 409 });
       }),
     );
-    await renderLoadedEditor();
+    const { router } = await renderLoadedEditor();
 
     await user.clear(nameInput());
     await user.type(nameInput(), "Mine");
@@ -229,6 +214,9 @@ describe("Save failures keep the draft", () => {
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toBe(CHANGED_ELSEWHERE);
     expect(screen.queryByText("CV saved")).not.toBeInTheDocument();
+    // No navigation on a failed save: still on the editor
+    expect(router.state.location.pathname).toBe("/cvs/cv-1/edit");
+    expect(screen.queryByText("CVs list")).not.toBeInTheDocument();
     expect(nameInput()).toHaveValue("Mine");
     expect(textArea()).toHaveValue(`${savedCv.content}\nMy edit`);
     expect(patches).toBe(1);
@@ -250,7 +238,7 @@ describe("Save failures keep the draft", () => {
     expect((await screen.findByRole("alert")).textContent).toBe(SAVE_FAILED);
   });
 
-  it("clears the error once a later save succeeds", async () => {
+  it("stays after a failure; a retry that succeeds returns to the CVs list", async () => {
     const user = userEvent.setup();
     server.use(
       http.patch(CV_URL, () => HttpResponse.json({ detail: "Boom" }, { status: 500 }), {
@@ -258,15 +246,18 @@ describe("Save failures keep the draft", () => {
       }),
       echoPatch(),
     );
-    await renderLoadedEditor();
+    const { router } = await renderLoadedEditor();
 
     await user.type(textArea(), "!");
     await user.click(saveButton());
     expect(await screen.findByText(SAVE_FAILED)).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/cvs/cv-1/edit");
 
     await user.click(saveButton());
-    expect(await screen.findByText("CV saved")).toBeInTheDocument();
+    expect(await screen.findByText("CVs list")).toBeInTheDocument();
+    expect(screen.getByText("CV saved")).toBeInTheDocument();
     expect(screen.queryByText(SAVE_FAILED)).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });
 
@@ -343,14 +334,10 @@ describe("Leaving with unsaved changes", () => {
     expect(router.state.location.pathname).toBe("/cvs/cv-1/edit");
   });
 
-  it("does not ask without changes, or after the changes were saved", async () => {
+  it("does not ask without changes", async () => {
     const user = userEvent.setup();
-    server.use(echoPatch());
     const { router } = await renderLoadedEditor();
 
-    await user.type(textArea(), "!");
-    await user.click(saveButton());
-    expect(await screen.findByText("CV saved")).toBeInTheDocument();
     await user.click(screen.getByRole("link", { name: /back to cvs/i }));
 
     expect(await screen.findByText("CVs list")).toBeInTheDocument();
@@ -358,7 +345,22 @@ describe("Leaving with unsaved changes", () => {
     expect(router.state.location.pathname).toBe("/cvs");
   });
 
-  it("does not ask when the first save moves /cvs/new to the CV's edit URL", async () => {
+  it("does not ask on the move to the CVs list after saving an edit", async () => {
+    const user = userEvent.setup();
+    server.use(echoPatch());
+    const { router } = await renderLoadedEditor(["/cvs", "/cvs/cv-1/edit"]);
+
+    await user.type(textArea(), "!");
+    await user.click(saveButton());
+
+    expect(await screen.findByText("CVs list")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/cvs");
+    // Replaced, not pushed: Back does not reopen the saved form
+    expect(router.state.historyAction).toBe("REPLACE");
+  });
+
+  it("does not ask on the move to the CVs list after creating a CV", async () => {
     const user = userEvent.setup();
     server.use(
       http.post(CVS_URL, async ({ request }) => {
@@ -366,15 +368,16 @@ describe("Leaving with unsaved changes", () => {
         return HttpResponse.json({ ...savedCv, ...body, id: "cv-new", version: 1 }, { status: 201 });
       }),
     );
-    const { router } = renderEditor("/cvs/new");
+    const { router } = renderEditor("/cvs/new", ["/cvs", "/cvs/new"]);
 
     await user.type(nameInput(), "New");
     await user.type(textArea(), "# Me");
     await user.click(saveButton());
 
-    await waitFor(() => expect(router.state.location.pathname).toBe("/cvs/cv-new/edit"));
+    expect(await screen.findByText("CVs list")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(saveButton()).toHaveAttribute("aria-disabled", "true");
+    expect(router.state.location.pathname).toBe("/cvs");
+    expect(screen.getByText("CV saved")).toBeInTheDocument();
   });
 
   it("an upload draft counts as unsaved: clearing its router state does not ask, leaving does", async () => {
@@ -416,7 +419,8 @@ describe("Leaving with unsaved changes", () => {
 
     await user.type(textArea(), "?");
     await user.click(saveButton());
-    expect(await screen.findByText("CV saved")).toBeInTheDocument();
+    // Saved and left: the editor's listener is gone with it
+    expect(await screen.findByText("CVs list")).toBeInTheDocument();
     expect(firesLeavePrompt()).toBe(false);
   });
 });
