@@ -30,7 +30,8 @@ export function isChangeCard(value: unknown): value is ChangeCard {
     POSITIONS.has(card.position ?? null) &&
     isNullableString(card.anchor_text ?? null) &&
     STATES.has(card.state) &&
-    typeof card.cv_id === "string"
+    typeof card.cv_id === "string" &&
+    typeof card.message_id === "string"
   );
 }
 

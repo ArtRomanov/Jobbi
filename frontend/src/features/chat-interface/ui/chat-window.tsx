@@ -8,8 +8,6 @@ interface ChatWindowProps {
   applicationId: string;
   messages: ChatMessage[];
   streamingContent: string | null;
-  /** Cards of the reply being streamed (the `cards` event arrives before `done`). */
-  streamingCards?: ChangeCard[];
   isLoading: boolean;
   onCardUpdated: (card: ChangeCard) => void;
 }
@@ -18,7 +16,6 @@ export function ChatWindow({
   applicationId,
   messages,
   streamingContent,
-  streamingCards = [],
   isLoading,
   onCardUpdated,
 }: ChatWindowProps) {
@@ -75,11 +72,14 @@ export function ChatWindow({
 
       {messages.map((msg) => (
         <Fragment key={msg.id}>
-          <MessageBubble
-            role={msg.role as "user" | "assistant"}
-            content={msg.content}
-            createdAt={msg.created_at}
-          />
+          {/* A reply can be only a tool call: cards without text, so no empty bubble */}
+          {msg.content.trim() !== "" || !msg.cards?.length ? (
+            <MessageBubble
+              role={msg.role as "user" | "assistant"}
+              content={msg.content}
+              createdAt={msg.created_at}
+            />
+          ) : null}
           <CardList
             applicationId={applicationId}
             cards={msg.cards}
@@ -89,18 +89,7 @@ export function ChatWindow({
       ))}
 
       {streamingContent !== null && (
-        <>
-          <MessageBubble
-            role="assistant"
-            content={streamingContent}
-            isStreaming
-          />
-          <CardList
-            applicationId={applicationId}
-            cards={streamingCards}
-            onCardUpdated={onCardUpdated}
-          />
-        </>
+        <MessageBubble role="assistant" content={streamingContent} isStreaming />
       )}
 
       <div ref={bottomRef} />

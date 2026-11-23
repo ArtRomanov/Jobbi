@@ -261,6 +261,16 @@ describe("CvChangeCard decisions", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("rejects a stale card (Accept stays disabled)", async () => {
+    const user = userEvent.setup();
+    renderCards(card({ state: "stale", decided_at: null }));
+
+    await user.click(screen.getByRole("button", { name: "Reject" }));
+
+    expect(await screen.findByText("Rejected")).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
   it("decides each card on its own", async () => {
     const user = userEvent.setup();
     renderCards(card(), card(mockChangeCards.insert));
@@ -295,7 +305,13 @@ describe("card helpers", () => {
   });
 
   it("parseCardsEvent keeps valid cards and drops junk", () => {
-    const data = JSON.stringify([mockChangeCards.replace, { id: 1 }, null]);
+    const { message_id: _dropped, ...withoutMessageId } = mockChangeCards.replace;
+    const data = JSON.stringify([
+      mockChangeCards.replace,
+      { id: 1 },
+      null,
+      withoutMessageId,
+    ]);
     expect(parseCardsEvent(data)).toEqual([mockChangeCards.replace]);
     expect(parseCardsEvent("not json")).toEqual([]);
     expect(parseCardsEvent("{}")).toEqual([]);

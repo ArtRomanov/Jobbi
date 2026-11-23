@@ -24,7 +24,10 @@ export interface ChangeCard {
   anchor_text: string | null;
   state: ChangeCardState;
   cv_id: string;
+  /** The assistant message the card belongs to. */
+  message_id: string;
   created_at: string;
+  /** Set when accepted or rejected; null while pending or stale. */
   decided_at: string | null;
 }
 

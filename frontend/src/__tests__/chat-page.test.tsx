@@ -212,50 +212,100 @@ describe("ChatPage change cards", () => {
     expect(within(cards[1]!).getByRole("button", { name: "Accept" })).toBeEnabled();
   });
 
-  it("attaches cards from the SSE stream to the streamed reply", async () => {
-    const user = userEvent.setup();
+  /**
+   * GET /chat answers `[]` until the message is sent, then `afterSend`;
+   * POST /chat streams `frames`. Returns the number of GET calls so far.
+   */
+  function mockStream(frames: string[], afterSend: unknown[]): () => number {
     let posted = false;
+    let getCalls = 0;
     server.use(
-      // Before the send: empty. After `done`: the persisted reply with its card.
-      http.get(`${BASE_URL}/api/v1/applications/:id/chat`, () =>
-        HttpResponse.json(
-          posted
-            ? [
-                { ...userMessage, content: "Add GraphQL" },
-                { ...assistantMessage, content: "Added it.", cards: [mockChangeCards.insert] },
-              ]
-            : [],
-        ),
-      ),
+      http.get(`${BASE_URL}/api/v1/applications/:id/chat`, () => {
+        getCalls += 1;
+        return HttpResponse.json(posted ? afterSend : []);
+      }),
       http.post(`${BASE_URL}/api/v1/applications/:id/chat`, () => {
         posted = true;
-        return new HttpResponse(
-          sseBody([
-            "event: token\ndata: Added \n\n",
-            "event: token\ndata: it.\n\n",
-            `event: cards\ndata: ${JSON.stringify([mockChangeCards.insert])}\n\n`,
-            "event: done\ndata: \n\n",
-          ]),
-          { headers: { "Content-Type": "text/event-stream" } },
-        );
+        return new HttpResponse(sseBody(frames), {
+          headers: { "Content-Type": "text/event-stream" },
+        });
       }),
     );
-    renderChatPage("app-1");
-    await screen.findByText(/No messages yet/);
+    return () => getCalls;
+  }
 
-    await user.type(screen.getByRole("textbox", { name: "Chat message" }), "Add GraphQL");
+  async function send(text: string): Promise<void> {
+    const user = userEvent.setup();
+    await screen.findByText(/No messages yet/);
+    await user.type(screen.getByRole("textbox", { name: "Chat message" }), text);
     await user.keyboard("{Enter}");
+  }
+
+  const cardsFrame = (cards: unknown[]): string =>
+    `event: cards\ndata: ${JSON.stringify(cards)}\n\n`;
+  const DONE = "event: done\ndata: \n\n";
+
+  it("attaches cards from the SSE stream to the streamed reply", async () => {
+    const getCalls = mockStream(
+      [
+        "event: token\ndata: Added \n\n",
+        "event: token\ndata: it.\n\n",
+        cardsFrame([mockChangeCards.insert]),
+        DONE,
+      ],
+      [
+        { ...userMessage, content: "Add GraphQL" },
+        { ...assistantMessage, content: "Added it.", cards: [mockChangeCards.insert] },
+      ],
+    );
+    renderChatPage("app-1");
+    await send("Add GraphQL");
 
     const card = await screen.findByRole("article", { name: "CV text" });
     expect(within(card).getByText("Added after: ## Skills")).toBeInTheDocument();
-    await screen.findByText("Added it.");
+    expect(screen.getByText("Added it.")).toBeInTheDocument();
 
-    await user.click(
-      within(screen.getByRole("article", { name: "CV text" })).getByRole("button", {
-        name: "Reject",
-      }),
-    );
+    // The history reload after `done` keeps the same card element (same message id)
+    await waitFor(() => expect(getCalls()).toBe(2));
+    expect(screen.getByRole("article", { name: "CV text" })).toBe(card);
+
+    await userEvent.setup().click(within(card).getByRole("button", { name: "Reject" }));
     expect(await screen.findByText("Rejected")).toBeInTheDocument();
     expect(screen.getAllByRole("article", { name: "CV text" })).toHaveLength(1);
+  });
+
+  it("shows a cards-only reply without an empty assistant bubble", async () => {
+    const getCalls = mockStream(
+      [cardsFrame([mockChangeCards.remove]), DONE],
+      [
+        { ...userMessage, content: "Drop my contacts" },
+        { ...assistantMessage, content: "", cards: [mockChangeCards.remove] },
+      ],
+    );
+    const { container } = renderChatPage("app-1");
+    await send("Drop my contacts");
+
+    const card = await screen.findByRole("article", { name: "CV text" });
+    expect(within(card).getByText("Removed")).toBeInTheDocument();
+    await waitFor(() => expect(getCalls()).toBe(2));
+    expect(screen.getByRole("article", { name: "CV text" })).toBe(card);
+    expect(container.querySelectorAll('[data-message-role="assistant"]')).toHaveLength(0);
+  });
+
+  it("ignores an empty cards event", async () => {
+    const getCalls = mockStream(
+      ["event: token\ndata: No edits needed.\n\n", cardsFrame([]), DONE],
+      [
+        { ...userMessage, content: "Is my CV fine?" },
+        { ...assistantMessage, content: "No edits needed.", cards: [] },
+      ],
+    );
+    const { container } = renderChatPage("app-1");
+    await send("Is my CV fine?");
+
+    await waitFor(() => expect(getCalls()).toBe(2));
+    expect(await screen.findByText("No edits needed.")).toBeInTheDocument();
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    expect(container.querySelectorAll('[data-message-role="assistant"]')).toHaveLength(1);
   });
 });

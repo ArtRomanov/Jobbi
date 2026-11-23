@@ -40,15 +40,14 @@ export function ChatPage() {
   const [isLoadingApp, setIsLoadingApp] = useState(true);
   const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
-  const [streamingCards, setStreamingCards] = useState<ChangeCard[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   // Keep a ref to the abort controller so we can cancel on unmount
   const abortRef = useRef<AbortController | null>(null);
-  // The reply being streamed, read in onDone to keep it on screen until history reloads
+  // Text of the reply being streamed, and whether it already moved into `messages`
   const streamedTextRef = useRef("");
-  const streamedCardsRef = useRef<ChangeCard[]>([]);
+  const replyCommittedRef = useRef(false);
 
   // Fetch application detail and chat history in parallel on mount
   useEffect(() => {
@@ -110,9 +109,8 @@ export function ChatPage() {
 
       setIsSending(true);
       setStreamingContent("");
-      setStreamingCards([]);
       streamedTextRef.current = "";
-      streamedCardsRef.current = [];
+      replyCommittedRef.current = false;
 
       // Optimistically add user message to the list
       const optimisticUserMsg: ChatMessage = {
@@ -130,22 +128,42 @@ export function ChatPage() {
           setStreamingContent((prev) => (prev ?? "") + token);
         },
         onCards: (cards) => {
-          streamedCardsRef.current = cards;
-          setStreamingCards(cards);
+          // The backend always sends `cards` before `done`, often as []
+          const messageId = cards[0]?.message_id;
+          if (!messageId) return;
+          // The text is complete by now: move the reply into `messages` under its
+          // persisted id, so the history reload keeps the same React keys and an
+          // Accept/Reject started before `done` keeps its state.
+          replyCommittedRef.current = true;
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: messageId,
+              application_id: applicationId,
+              role: "assistant",
+              content: streamedTextRef.current,
+              created_at: new Date().toISOString(),
+              cards,
+            },
+          ]);
+          setStreamingContent(null);
         },
         onDone: () => {
-          // Keep the finished reply (and its cards) until the history reload replaces it
-          const reply: ChatMessage = {
-            id: `temp-reply-${Date.now()}`,
-            application_id: applicationId,
-            role: "assistant",
-            content: streamedTextRef.current,
-            created_at: new Date().toISOString(),
-            cards: streamedCardsRef.current,
-          };
-          setMessages((prev) => [...prev, reply]);
+          // Keep the finished reply on screen until the history reload replaces it
+          const text = streamedTextRef.current;
+          if (!replyCommittedRef.current && text !== "") {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `temp-reply-${Date.now()}`,
+                application_id: applicationId,
+                role: "assistant",
+                content: text,
+                created_at: new Date().toISOString(),
+              },
+            ]);
+          }
           setStreamingContent(null);
-          setStreamingCards([]);
           setIsSending(false);
           // Re-fetch history to get persisted messages from the server
           getChatHistory(applicationId)
@@ -156,7 +174,6 @@ export function ChatPage() {
         },
         onError: (detail) => {
           setStreamingContent(null);
-          setStreamingCards([]);
           setIsSending(false);
           showToast(detail, "error");
         },
@@ -165,12 +182,8 @@ export function ChatPage() {
     [applicationId, isSending, showToast],
   );
 
-  // A card was decided (or found stale): swap it in wherever it is shown
+  // A card was decided (or found stale): swap it into its message
   const handleCardUpdated = useCallback((card: ChangeCard) => {
-    const swap = (cards: ChangeCard[]): ChangeCard[] =>
-      cards.map((c) => (c.id === card.id ? card : c));
-    streamedCardsRef.current = swap(streamedCardsRef.current);
-    setStreamingCards(swap);
     setMessages((prev) => replaceCardInMessages(prev, card));
   }, []);
 
@@ -325,7 +338,6 @@ export function ChatPage() {
         applicationId={applicationId}
         messages={messages}
         streamingContent={streamingContent}
-        streamingCards={streamingCards}
         isLoading={isLoadingHistory}
         onCardUpdated={handleCardUpdated}
       />
