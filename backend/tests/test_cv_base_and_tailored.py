@@ -316,6 +316,34 @@ class TestMakeBase:
         if whose == "other":
             assert await _base_cv_id(db_session, other_id) is None
 
+    @pytest.mark.parametrize("kind", ["own", "tailored"])
+    async def test_cv_deleted_between_read_and_write_is_404(
+        self, client, token, user_id, db_session, kind
+    ) -> None:
+        """Pre-merge F4: a concurrent delete after the ownership read."""
+        from app.services import cv_service
+
+        mine = await _make_cv(db_session, user_id, "Mine")
+        await _make_base(client, token, mine.id)
+        target = await _make_cv(db_session, user_id, "Doomed", kind=kind)
+        real_get_cv = cv_service.get_cv
+        deleted: list[str] = []
+
+        async def _get_then_deleted(db, owner_id, cv_id):
+            found = await real_get_cv(db, owner_id, cv_id)
+            if not deleted:  # once: the delete request reads the CV too
+                deleted.append(cv_id)
+                resp = await client.delete(f"{CVS_URL}/{cv_id}", headers=_auth(token))
+                assert resp.status_code == 200
+            return found
+
+        with patch.object(cv_service, "get_cv", _get_then_deleted):
+            resp = await _make_base(client, token, target.id)
+
+        assert resp.status_code == 404
+        assert await _base_cv_id(db_session, user_id) == mine.id
+        assert await _fresh_cv(db_session, target.id) is None
+
     async def test_requires_auth(self, client, user_id, db_session) -> None:
         cv = await _make_cv(db_session, user_id, "Main")
 

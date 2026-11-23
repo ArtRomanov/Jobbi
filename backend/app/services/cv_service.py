@@ -176,22 +176,35 @@ async def make_base(db: AsyncSession, user_id: str, cv_id: str) -> Cv | None:
     cv = await get_cv(db, user_id, cv_id)
     if cv is None:
         return None
-    await db.execute(
+    # Both writes are conditional on the CV still being the user's: a delete
+    # that lands after the read above must not leave a dangling base.
+    still_mine = select(Cv.id).where(Cv.id == cv_id, Cv.user_id == user_id).exists()
+    result = await db.execute(
         update(User)
-        .where(User.id == user_id)
-        .values(base_cv_id=cv.id)
+        .where(User.id == user_id, still_mine)
+        .values(base_cv_id=cv_id)
         .execution_options(synchronize_session=False)
     )
-    if cv.kind != CV_KIND_OWN:
-        await db.execute(
-            update(Cv)
-            .where(Cv.id == cv.id)
-            # Explicit so the `onupdate` does not move the CV in the list.
-            .values(kind=CV_KIND_OWN, updated_at=Cv.updated_at)
-            .execution_options(synchronize_session=False)
-        )
+    if result.rowcount == 0:
+        await db.rollback()
+        return None
+    await db.execute(
+        update(Cv)
+        .where(Cv.id == cv_id, Cv.user_id == user_id, Cv.kind != CV_KIND_OWN)
+        # Explicit so the `onupdate` does not move the CV in the list.
+        .values(kind=CV_KIND_OWN, updated_at=Cv.updated_at)
+        .execution_options(synchronize_session=False)
+    )
+    fresh = await db.execute(
+        select(Cv)
+        .where(Cv.id == cv_id, Cv.user_id == user_id)
+        .execution_options(populate_existing=True)
+    )
+    cv = fresh.scalar_one_or_none()
+    if cv is None:
+        await db.rollback()
+        return None
     await db.commit()
-    await db.refresh(cv)
     return cv
 
 
