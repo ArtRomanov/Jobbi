@@ -2,9 +2,6 @@ export type {
   Cv,
   CvCreate,
   CvUpdate,
-  PersonalInfo,
-  WorkExperienceEntry,
-  EducationEntry,
   CvDuplicateRequest,
   CvUploadResult,
 } from "./model/types";

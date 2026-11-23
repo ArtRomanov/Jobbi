@@ -1,7 +1,11 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CvsPage } from "@/pages/cvs/ui/cvs-page";
+import { downloadCvTextPdf } from "@/features/cv-pdf";
+import { mockCvs } from "./mocks/handlers";
 import { renderWithProviders } from "./utils";
+
+vi.mock("@/features/cv-pdf", () => ({ downloadCvTextPdf: vi.fn().mockResolvedValue(undefined) }));
 
 beforeEach(() => {
   localStorage.setItem("jobbi_token", "test-token");
@@ -50,5 +54,21 @@ describe("CvsPage", () => {
     expect(confirmMock).toHaveBeenCalledWith(
       expect.stringContaining("Software Engineer CV"),
     );
+  });
+
+  it("exports a CV to PDF from its name and text", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CvsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Software Engineer CV")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getAllByRole("button", { name: "PDF" })[0]!);
+
+    expect(downloadCvTextPdf).toHaveBeenCalledWith({
+      name: "Software Engineer CV",
+      content: mockCvs[0]!.content,
+    });
   });
 });
