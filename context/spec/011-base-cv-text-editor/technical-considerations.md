@@ -47,12 +47,7 @@ The `chat_change_cards` columns are written as a list in the table above because
 **Migration** (one revision on top of `031b22b73174`, `render_as_batch` is already on):
 1. Add the columns and the table.
 2. Data conversion runs as Python over `op.get_bind()`, with a **frozen copy** of the converter inside the migration (it does not import app code). The layout is the one in functional spec 2.2.
-3. Old tailored copies get `kind='tailored'` and `tailored_for_application_id` when **all** of these hold:
-   - `vacancies.application_id = applications.id` (the application came from the Inbox);
-   - `applications.cv_id = cvs.id`;
-   - `abs(cvs.created_at − applications.created_at) ≤ 5 s` (the two are created in one transaction).
-
-   CVs linked by hand existed before their application, so they fail the third check. A copy whose application was re-linked or deleted cannot be detected and stays `own`, which is an accepted limitation. Before the migration runs, a dry-run SELECT on the live DB must show the Kleos, Codery and Welldin copies.
+3. Old tailored copies get `kind='tailored'` and `tailored_for_application_id` when the CV is linked to an application (`applications.cv_id = cvs.id`) **and** `abs(cvs.created_at − applications.created_at) ≤ 5 s` (they are created in one transaction by "Add & tailor CV"). CVs linked by hand existed before their application, so they never match. The Inbox link (`vacancies.application_id`) is deliberately not required: on the live DB the Welldin copy had lost that link during testing (decided with the user on 2026-11-23 after the dry run: Kleos, Codery and Welldin all match; no other CV does). A copy whose application was re-linked or deleted cannot be detected and stays `own` — accepted.
 4. `users.base_cv_id` stays NULL for everyone (functional spec 2.2).
 5. Downgrade drops the new columns and the table. The old fields are untouched, so the form data comes back as it was.
 
