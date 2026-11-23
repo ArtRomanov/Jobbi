@@ -6,7 +6,7 @@ It is NOT a copy-paste implementation guide.
 # Technical Specification: Base CV, File Upload and Text CV Editor
 
 - **Functional Specification:** [functional-spec.md](functional-spec.md)
-- **Status:** Draft
+- **Status:** Approved
 - **Author(s):** Poe (AI Technical Architect), with codebase analysis by the python-backend and typescript-frontend agents (2026-11-23)
 
 ---
@@ -37,7 +37,7 @@ Affected: `backend/app/{models,schemas,services,api/v1}` (CV, chat, vacancy, app
 | `cvs` | `content` | Text NOT NULL, default `''` | The whole CV text (≤ 20 000 characters, enforced by the API) |
 | `cvs` | `kind` | String(10) NOT NULL, default `'own'` | `own` / `tailored`. Kept as its own column so a tailored copy still shows "Application deleted" once its application is gone |
 | `cvs` | `tailored_for_application_id` | String(36) NULL, FK → `applications.id` | Set only by "Add & tailor CV". Nulled by hand in `delete_application`, because SQLite does not enforce FKs |
-| `cvs` | `version` | Integer NOT NULL, default 1 | Optimistic-concurrency token, incremented on every content or name write. `updated_at` is not used because SQLite `CURRENT_TIMESTAMP` only has 1-second resolution |
+| `cvs` | `version` | Integer NOT NULL, default 1 | Optimistic-concurrency token, incremented on every content or name write (editor save, card Accept); "Make base", linking and kind changes do not touch it. `updated_at` is not used because SQLite `CURRENT_TIMESTAMP` only has 1-second resolution |
 | `users` | `base_cv_id` | String(36) NULL, FK → `cvs.id` (named, `use_alter`) | The user's base CV. Nulled by hand in `delete_cv` |
 | `cvs` | `personal_info`, `summary`, `work_experience`, `education`, `skills`, `languages` | unchanged | Not read or written by app code after this spec. Dropped in a follow-up migration one release later |
 | `chat_change_cards` (new) | `id`, `application_id` (FK), `message_id` (FK → `chat_messages`, the assistant message), `cv_id` (String(36), no FK: a deleted CV makes the card Stale), `op` (`replace` / `insert` / `remove`), `before_text` Text, `after_text` Text, `position` (`start` / `end` / `after_line`, insert only), `anchor_text` Text NULL (insert after a line), `state` (`pending` / `accepted` / `rejected` / `stale`), `created_at`, `decided_at` NULL | | Index on `application_id`. Rows are removed by hand when the chat is cleared or the application is deleted |
@@ -87,11 +87,11 @@ Every CV and card query is scoped to the owner (the same rule as the spec 009 fi
 | `app/models/cv.py`, `app/models/user.py`, `app/models/chat_change_card.py` | New columns and table |
 | `app/schemas/cv.py` | `CvCreate` / `CvUpdate` (with `version`) / `CvRead` as above. The structured-field schemas are removed |
 | `app/services/cv_service.py` | Create, update (version check via `UPDATE … WHERE id=? AND version=?`; rowcount 0 → `CvVersionConflict`), `make_base`, delete (nulls `base_cv_id`, unlinks applications, makes cards stale), `build_cv_copy` (copies content, takes `kind` and `tailored_for`) |
-| `app/services/cv_upload.py` (new) | Sniffing:<br>• `%PDF-` → PDF;<br>• `PK\x03\x04` plus `[Content_Types].xml` and `word/document.xml` → DOCX.<br>Size check: `Content-Length`, then read at most 5 MB + 1.<br>DOCX zip-bomb check: sum of `ZipInfo.file_size` ≤ 50 MB.<br>Extraction runs in `run_in_threadpool`:<br>• PDF: pdfminer.six `extract_text` with `LAParams`, at most 30 pages; encrypted → `NO_TEXT`;<br>• DOCX: python-docx, walking the body in order including table cells.<br>Whitespace-only text → `NO_TEXT`. Truncate to 20 000 characters. Never write the file to disk |
+| `app/services/cv_upload.py` (new) | Sniffing:<br>• `%PDF-` → PDF;<br>• `PK\x03\x04` plus `[Content_Types].xml` and `word/document.xml` → DOCX.<br>Size check: `Content-Length`, then read at most 5 MB + 1.<br>DOCX zip-bomb check: sum of `ZipInfo.file_size` ≤ 50 MB.<br>Extraction runs in `run_in_threadpool`:<br>• PDF: pdfminer.six `extract_text` with `LAParams`, at most 30 pages; encrypted → `NO_TEXT`;<br>• DOCX: python-docx, walking the body in order including table cells.<br>Whitespace-only text → `NO_TEXT`. Truncate to 20 000 characters. Name = file stem cut to 255, or "Uploaded CV" if empty. Never write the file to disk |
 | `app/api/v1/cvs.py` | The endpoints above |
-| `app/services/chat_service.py`, `app/services/groq_client.py` | Feed the CV `content` to the system prompt inside `fence("CV", …)`. The prompt tells the model to quote passages exactly and to use only `propose_cv_edit` for edits. Pass `tools=[propose_cv_edit]` when a CV is linked. Stream text tokens, accumulate tool-call deltas and, after the stream ends, validate each call, store the cards and emit the `cards` event. The chat history sent to the model includes a one-line note per card decision ("Card accepted: …") |
+| `app/services/chat_service.py`, `app/services/groq_client.py` | Feed the CV `content` to the system prompt inside `fence("CV", …)`. The prompt tells the model to quote passages exactly and to use only `propose_cv_edit` for edits. Pass `tools=[propose_cv_edit]` when a CV is linked. Stream text tokens, accumulate tool-call deltas and, after the stream ends: save the assistant message, then validate each call and store the cards with that `message_id`, then emit `cards`, then `done`. The chat history sent to the model includes a one-line note per card decision ("Card accepted: …") |
 | `app/services/chat_tools.py` (new) | The `propose_cv_edit` schema: `{op: replace\|insert\|remove, before?, after?, position?, anchor?}`. A Pydantic validator rejects malformed calls, which become an inline error message instead of a card |
-| `app/services/chat_card_service.py` (new) | Accept: load the card (owner-scoped) and the CV; count occurrences of `before`/`anchor` in the **raw** CV text (0 → stale, more than 1 → not unique); build the new text; check its length; versioned update and card state change in one transaction. Reject: state only |
+| `app/services/chat_card_service.py` (new) | Accept: load the card (owner-scoped) and the CV; the card is Stale if the CV is gone or is no longer the one linked to the application; count occurrences of `before`/`anchor` in the **raw** CV text (0 → stale, more than 1 → not unique); build the new text; check its length; versioned update and card state change in one transaction. Reject: state only |
 | `app/services/application_service.py` | `delete_application` nulls `cvs.tailored_for_application_id` and deletes the application's cards (next to the existing Vacancy nulling) |
 | `app/services/vacancy_service.py` | Name the tailored copy after the chosen CV; pass `kind` and `tailored_for` |
 | `pyproject.toml` | Add `python-multipart`, `pdfminer.six`, `python-docx` (pinned major versions, checked via context7 or PyPI at implementation time) |
@@ -109,8 +109,8 @@ Every CV and card query is scoped to the owner (the same rule as the spec 009 fi
 | `features/cv-make-base` | The "Make base" action and the "Base CV updated" toast |
 | `features/cv-pdf` | Rewrite `cv-document.tsx` on top of the shared lexer. `Font.register` loads Noto Sans (Regular, Bold, Italic, BoldItalic; Latin + Cyrillic) as local TTFs (Vite `?url`) inside the lazy PDF chunk only. The hyphenation callback is turned off. File name: characters not allowed in file names become "_" (Cyrillic is kept) |
 | `features/chat-interface` | `ui/cv-change-card.tsx` (before/after, line diff via `diff`'s `diffLines`, position label, Accept/Reject, inline error, Stale styling); the stream reader handles `event: cards` |
-| `features/vacancy-actions` | The dialog preselects `is_base`, or nothing. `pickMostRecentCvId` is removed. Grouped options and the hint |
-| `features/application-panel` | The CV select lists own CVs first and labels the base |
+| `features/vacancy-actions` | The dialog preselects `is_base`, or nothing. `pickMostRecentCvId` is removed. Grouped options and the hint. Update `features/vacancy-actions/CLAUDE.md` (it documents the old "most recently updated" rule) |
+| `features/application-panel` | The CV select lists own CVs first and labels the base. "Duplicate & link" (spec 003 manual tailoring) keeps creating an **own** CV, per functional spec 2.5 |
 | `pages/cvs` | The "My CVs" and "Tailored for applications" sections, the no-base hint, the "Company — Role" link to `/?application=<id>` or "Application deleted", and the Upload button |
 | `pages/cv-editor` | Composes the text editor; shows the upload notice from router state |
 
