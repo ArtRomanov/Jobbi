@@ -1,18 +1,28 @@
+import { parseCardsEvent } from "../lib/is-change-card";
+import type { ChangeCard } from "../model/types";
+
 const baseUrl =
   import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+
+export interface ChatStreamHandlers {
+  onToken: (text: string) => void;
+  /** CV change cards of the reply, sent after the text and before `done`. */
+  onCards: (cards: ChangeCard[]) => void;
+  onDone: () => void;
+  onError: (detail: string) => void;
+}
 
 /**
  * Send a chat message and consume the SSE streaming response.
  *
  * Uses raw fetch() instead of apiClient because the response is an SSE stream,
  * not JSON. Each SSE frame has an `event:` line and a `data:` line.
+ * Events: `token` (text), `cards` (JSON `ChangeCard[]`), `done`, `error`.
  */
 export function sendChatMessage(
   applicationId: string,
   content: string,
-  onToken: (text: string) => void,
-  onDone: () => void,
-  onError: (detail: string) => void,
+  { onToken, onCards, onDone, onError }: ChatStreamHandlers,
 ): AbortController {
   const controller = new AbortController();
 
@@ -74,6 +84,9 @@ export function sendChatMessage(
           switch (eventType) {
             case "token":
               onToken(data);
+              break;
+            case "cards":
+              onCards(parseCardsEvent(data));
               break;
             case "done":
               onDone();
