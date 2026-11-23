@@ -1,4 +1,5 @@
 import { http, HttpResponse } from "msw";
+import type { Cv } from "@/entities/cv";
 
 const BASE_URL = "http://localhost:8000";
 
@@ -6,40 +7,13 @@ const BASE_URL = "http://localhost:8000";
 // CV mock data
 // ---------------------------------------------------------------------------
 
-export const mockCvs = [
+export const mockCvs: Cv[] = [
   {
     id: "cv-1",
     name: "Software Engineer CV",
-    personal_info: {
-      full_name: "Test User",
-      email: "test@example.com",
-      phone: "+1234567890",
-      location: "Berlin, Germany",
-      linkedin_url: "https://linkedin.com/in/testuser",
-    },
-    summary: "Experienced software engineer.",
-    work_experience: [
-      {
-        company: "Acme Corp",
-        role: "Senior Engineer",
-        start_date: "2022-01",
-        end_date: "",
-        is_current: true,
-        description: "Building products.",
-      },
-    ],
-    education: [
-      {
-        institution: "MIT",
-        degree: "BSc",
-        field_of_study: "Computer Science",
-        start_year: "2016",
-        end_year: "2020",
-        description: "",
-      },
-    ],
-    skills: "TypeScript, React",
-    languages: "English (Native)",
+    content:
+      "# Test User\ntest@example.com · +1234567890 · Berlin, Germany\n\n## Summary\nExperienced software engineer.\n\n## Skills\nTypeScript, React",
+    version: 3,
     linked_applications_count: 1,
     created_at: "2026-01-10T08:00:00Z",
     updated_at: "2026-02-20T10:00:00Z",
@@ -47,12 +21,8 @@ export const mockCvs = [
   {
     id: "cv-2",
     name: "Frontend Developer CV",
-    personal_info: null,
-    summary: null,
-    work_experience: null,
-    education: null,
-    skills: null,
-    languages: null,
+    content: "",
+    version: 1,
     linked_applications_count: 0,
     created_at: "2026-02-15T09:00:00Z",
     updated_at: "2026-03-01T12:00:00Z",
@@ -467,12 +437,8 @@ export const handlers = [
     const newCv = {
       id: "cv-new",
       name: body.name ?? "Untitled CV",
-      personal_info: body.personal_info ?? null,
-      summary: body.summary ?? null,
-      work_experience: body.work_experience ?? null,
-      education: body.education ?? null,
-      skills: body.skills ?? null,
-      languages: body.languages ?? null,
+      content: body.content ?? "",
+      version: 1,
       linked_applications_count: 0,
       created_at: "2026-03-10T10:00:00Z",
       updated_at: "2026-03-10T10:00:00Z",
@@ -498,7 +464,12 @@ export const handlers = [
     if (!cv) {
       return HttpResponse.json({ detail: "Not found" }, { status: 404 });
     }
-    return HttpResponse.json({ ...cv, ...body });
+    // The real API requires the loaded version and bumps it on every save
+    const { version, ...changes } = body;
+    if (typeof version !== "number") {
+      return HttpResponse.json({ detail: "version is required" }, { status: 422 });
+    }
+    return HttpResponse.json({ ...cv, ...changes, version: version + 1 });
   }),
 
   // DELETE /api/v1/cvs/:id — delete CV
@@ -560,6 +531,7 @@ export const handlers = [
         ...original,
         id: "cv-duplicated",
         name: (body.name as string) ?? `${original.name} (copy)`,
+        version: 1,
         linked_applications_count: 0,
         created_at: "2026-03-10T10:00:00Z",
         updated_at: "2026-03-10T10:00:00Z",
