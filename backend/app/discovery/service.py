@@ -53,6 +53,7 @@ from app.discovery.evaluator import (
     BATCH_SIZE,
     MAX_DIGEST_VACANCIES,
     MAX_POST_CHARS,
+    MAX_VACANCY_COUNT,
     BatchEvaluation,
     EvaluationFormatError,
     EvaluationRateLimitedError,
@@ -255,8 +256,10 @@ async def run_initial_scans(
 ) -> RunReport:
     """First 7-day scan of every source whose first scan has not completed and
     is due (`next_initial_attempt_at` unset or passed), then evaluate the
-    pending posts of the users whose sources were scanned or who forwarded a
-    post to the bot (so a forwarded post is rated within about a minute).
+    pending posts of the users whose sources were scanned (their whole queue)
+    and the forwarded posts waiting for their first rating of the other users
+    (so a forwarded post is rated within about a minute; the rest of their
+    queue waits for the hourly check).
 
     First-scan cards are never alerted. Posts of those users that were found
     by an earlier hourly check and waited (daily cap, AI down) may be rated
@@ -265,8 +268,9 @@ async def run_initial_scans(
     config = config or DiscoveryConfig.from_settings()
     report = RunReport()
     sources = await _load_sources(session_factory, clock(), initial=True)
-    user_ids = {source.user_id for source in sources}
-    user_ids |= await _users_with_forwarded_pending(session_factory, clock())
+    scanned_ids = {source.user_id for source in sources}
+    forwarding_ids = await _users_with_forwarded_pending(session_factory, clock())
+    user_ids = scanned_ids | forwarding_ids
     if not user_ids:
         return report
 
@@ -286,6 +290,7 @@ async def run_initial_scans(
             groq_client,
             clock,
             user_ids=user_ids,
+            forwarded_only=forwarding_ids - scanned_ids,
             config=config,
             sleep=sleep,
             report=report,
@@ -355,7 +360,8 @@ async def _run_then_alert(
     cards are not left unannounced with `alert_handled_at` NULL forever.
 
     - Success or an ordinary exception: alert and reply normally, then
-      re-raise.
+      re-raise. Alerts and replies are independent: a failing alert step
+      does not skip the replies (its error is re-raised after them).
     - Cancellation (worker shutting down), also while the alert itself is
       being sent: no network — the cards are only marked handled (one short
       write), then the cancellation goes on. They stay in the Inbox; they are
@@ -378,6 +384,9 @@ async def _run_then_alert(
     except asyncio.CancelledError:
         # Cards already announced are handled; this marks the rest.
         await _alert_safely(session_factory, None, clock, report, sleep)
+        raise
+    except Exception:
+        await _reply_safely(session_factory, bot, clock, report, sleep)
         raise
     report.forward_replies_sent = await send_forward_replies(
         session_factory, bot, report.forward_results, clock, sleep=sleep
@@ -422,11 +431,16 @@ async def evaluate_pending(
     clock: Clock,
     *,
     user_ids: Collection[str] | None = None,
+    forwarded_only: Collection[str] = (),
     config: DiscoveryConfig | None = None,
     sleep: SleepFn = asyncio.sleep,
     report: RunReport | None = None,
 ) -> RunReport:
     """Evaluate `pending` posts, oldest first, within each user's daily cap.
+
+    For the users in `forwarded_only` only the forwarded posts waiting for
+    their first attempt are evaluated (the per-minute run), so the other
+    posts' MAX_EVAL_ATTEMPTS stay for the hourly retries.
 
     Users are served in order of their oldest pending post, so the queue is
     first come, first served across users. Users without a search description
@@ -446,6 +460,7 @@ async def evaluate_pending(
             config=config,
             pacer=pacer,
             report=report,
+            forwarded_only=user_id in forwarded_only,
         ).run()
         if outcome is _Outcome.STOP_RUN:
             break
@@ -773,16 +788,13 @@ async def store_forwarded_post(
     try:
         async with session_factory() as session, session.begin():
             if await _already_seen(session, user_id, [post.external_key]):
-                # Fetched from a watched channel and not rated yet: the user
-                # has seen it now, so it is not alerted later.
-                await session.execute(
-                    update(Vacancy)
-                    .where(
-                        Vacancy.user_id == user_id,
-                        Vacancy.external_key == post.external_key,
-                        Vacancy.alert_handled_at.is_(None),
-                    )
-                    .values(alert_handled_at=now)
+                await _forward_seen_post(
+                    session,
+                    user_id,
+                    post.external_key,
+                    now,
+                    chat_id=chat_id,
+                    message_id=message_id,
                 )
                 return ForwardOutcome.ALREADY_SEEN
             session.add(
@@ -834,6 +846,57 @@ async def store_forwarded_post(
         return ForwardOutcome.ALREADY_SEEN
 
 
+async def _forward_seen_post(
+    session: AsyncSession,
+    user_id: str,
+    external_key: str,
+    now: datetime,
+    *,
+    chat_id: int,
+    message_id: int,
+) -> None:
+    """A forwarded post the user has seen before. If it is still waiting for
+    its rating (fetched from a watched channel), it is not alerted later — the
+    user has seen it now — and the rating is replied to this forward instead,
+    unless an earlier forward already waits for it. A post rated before gets
+    nothing (its pending row is gone)."""
+    await session.execute(
+        update(Vacancy)
+        .where(
+            Vacancy.user_id == user_id,
+            Vacancy.external_key == external_key,
+            Vacancy.alert_handled_at.is_(None),
+        )
+        .values(alert_handled_at=now)
+    )
+    is_pending = await session.scalar(
+        select(Vacancy.id)
+        .where(
+            Vacancy.user_id == user_id,
+            Vacancy.external_key == external_key,
+            Vacancy.state == "pending",
+        )
+        .limit(1)
+    )
+    has_target = await session.scalar(
+        select(ForwardedPost.id).where(
+            ForwardedPost.user_id == user_id,
+            ForwardedPost.external_key == external_key,
+        )
+    )
+    if is_pending is None or has_target is not None:
+        return
+    session.add(
+        ForwardedPost(
+            user_id=user_id,
+            external_key=external_key,
+            chat_id=chat_id,
+            message_id=message_id,
+            created_at=now,
+        )
+    )
+
+
 def _links_to_json(links: Sequence[PostLink]) -> list[list[Any]] | None:
     """`Vacancy.links` value: `[[line, url], ...]`, NULL when there are none."""
     return [[link.line, link.url] for link in links] or None
@@ -856,19 +919,27 @@ def _links_from_json(value: object) -> tuple[PostLink, ...]:
 async def _users_with_forwarded_pending(
     session_factory: SessionFactory, now: datetime
 ) -> set[str]:
-    """Users with a forwarded post waiting for its first rating attempt, whose
-    AI is not failing and who did not hit the daily cap lately.
+    """Users with a forwarded post (an unreported `forwarded_posts` row, also
+    for a watched channel's post forwarded before it was rated) waiting for
+    its first rating attempt, whose AI is not failing and who did not hit the
+    daily cap lately.
 
     Anything else (a retry, AI down, cap) is left to the hourly check, so the
     per-minute run neither calls a failing AI every minute nor burns the
-    MAX_EVAL_ATTEMPTS meant for hourly retries in three minutes. The cap
-    check is by UTC date with a day of slack (the cap day is the user's
-    local date); a skipped user is still rated hourly.
+    MAX_EVAL_ATTEMPTS meant for hourly retries in three minutes; it rates
+    only these posts (`evaluate_pending(forwarded_only=...)`), not the rest
+    of the user's queue. The cap check is by UTC date with a day of slack
+    (the cap day is the user's local date); a skipped user is still rated
+    hourly.
     """
     async with session_factory() as session:
         rows = await session.scalars(
             select(Vacancy.user_id)
-            .join(VacancyCardSource, VacancyCardSource.vacancy_id == Vacancy.id)
+            .join(
+                ForwardedPost,
+                (ForwardedPost.user_id == Vacancy.user_id)
+                & (ForwardedPost.external_key == Vacancy.external_key),
+            )
             .join(
                 VacancySearchSettings,
                 VacancySearchSettings.user_id == Vacancy.user_id,
@@ -876,7 +947,7 @@ async def _users_with_forwarded_pending(
             .where(
                 Vacancy.state == "pending",
                 Vacancy.eval_attempts == 0,
-                VacancyCardSource.source_kind == FORWARDED_KIND,
+                ForwardedPost.reported_at.is_(None),
                 VacancySearchSettings.description.is_not(None),
                 VacancySearchSettings.ai_failing_since.is_(None),
                 or_(
@@ -1098,9 +1169,12 @@ async def _next_batch(
     now: datetime,
     daily_limit: int,
     skip_ids: Collection[str],
+    *,
+    forwarded_only: bool = False,
 ) -> _Batch | _CapReached | None:
     """The next batch to evaluate, `_CapReached`, or None when there is nothing
-    to do (no description, nothing pending)."""
+    to do (no description, nothing pending). `forwarded_only`: only posts
+    with an unreported `forwarded_posts` row and no attempt yet."""
     async with session_factory() as session:
         settings_row = await session.get(VacancySearchSettings, user_id)
         user = await session.get(User, user_id)
@@ -1134,6 +1208,16 @@ async def _next_batch(
         )
         if skip_ids:
             stmt = stmt.where(Vacancy.id.not_in(list(skip_ids)))
+        if forwarded_only:
+            stmt = stmt.where(
+                Vacancy.eval_attempts == 0,
+                Vacancy.external_key.in_(
+                    select(ForwardedPost.external_key).where(
+                        ForwardedPost.user_id == user_id,
+                        ForwardedPost.reported_at.is_(None),
+                    )
+                ),
+            )
         rows = (await session.scalars(stmt)).all()
         if not rows:
             return None
@@ -1184,6 +1268,7 @@ class _UserEvaluation:
         config: DiscoveryConfig,
         pacer: _Pacer,
         report: RunReport,
+        forwarded_only: bool = False,
     ) -> None:
         self._session_factory = session_factory
         self._groq = groq_client
@@ -1192,6 +1277,7 @@ class _UserEvaluation:
         self._config = config
         self._pacer = pacer
         self._report = report
+        self._forwarded_only = forwarded_only
         # Posts without a valid verdict wait for the next run (one attempt per
         # run), so a stubborn post cannot make this loop call the AI forever.
         self._skip_ids: set[str] = set()
@@ -1204,6 +1290,7 @@ class _UserEvaluation:
                 self._clock(),
                 self._config.daily_limit,
                 self._skip_ids,
+                forwarded_only=self._forwarded_only,
             )
             if batch is None:
                 return _Outcome.DONE
@@ -1322,7 +1409,9 @@ async def _apply_evaluation(
                         )
                     )
                 continue
-            if is_cut(row.post):
+            # Only Telegram posts (possible digests) are reported as cut; a
+            # board job is one position and its windowed text is enough.
+            if is_cut(row.post) and can_be_digest(key):
                 cut_keys.append(key)
             else:
                 evaluated_keys.append(key)
@@ -1413,10 +1502,11 @@ async def _apply_verdict(
         return split.new_ids, result(
             ForwardResultKind.DIGEST,
             matched=matched,
-            total=max(verdict.vacancy_count or 0, matched),
+            total=max(matched, min(verdict.vacancy_count or 0, MAX_VACANCY_COUNT)),
         )
     if not (verdict.match and verdict.fit is not None):
-        await _delete_pending(session, row.vacancy_id)
+        if not await _delete_pending(session, row.vacancy_id):
+            return [], None  # gone meanwhile: nothing to report
         return [], result(
             ForwardResultKind.NOT_VACANCY
             if verdict.is_vacancy is False
@@ -1604,7 +1694,8 @@ async def _count_failed_attempt(
             row.post.external_key,
             MAX_EVAL_ATTEMPTS,
         )
-        await _delete_pending(session, row.vacancy_id)
+        if not await _delete_pending(session, row.vacancy_id):
+            return False  # gone meanwhile: nothing was rejected
         report.rejected += 1
         return True
     await session.execute(
@@ -1615,16 +1706,19 @@ async def _count_failed_attempt(
     return False
 
 
-async def _delete_pending(session: AsyncSession, vacancy_id: str) -> None:
+async def _delete_pending(session: AsyncSession, vacancy_id: str) -> bool:
     """Delete a pending card and its card sources (no FK cascade on SQLite).
-    Its seen key stays, so the post never comes back."""
+    Its seen key stays, so the post never comes back. Returns whether the
+    card was deleted (False: it was gone or no longer pending)."""
     deleted = await session.execute(
         delete(Vacancy).where(Vacancy.id == vacancy_id, Vacancy.state == "pending")
     )
-    if deleted.rowcount:
-        await session.execute(
-            delete(VacancyCardSource).where(VacancyCardSource.vacancy_id == vacancy_id)
-        )
+    if not deleted.rowcount:
+        return False
+    await session.execute(
+        delete(VacancyCardSource).where(VacancyCardSource.vacancy_id == vacancy_id)
+    )
+    return True
 
 
 async def _set_ai_failing(

@@ -9,6 +9,8 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from telegram.error import BadRequest, Forbidden
 
+from app.discovery import service
+from app.discovery.evaluator import MAX_DIGEST_VACANCIES
 from app.discovery.forward_replies import (
     ForwardResult,
     ForwardResultKind,
@@ -29,6 +31,7 @@ from app.discovery.types import PostLink, RawPost
 from app.models.forwarded_post import ForwardedPost
 from app.models.vacancy import Vacancy, VacancyCardSource
 from app.models.vacancy_search_settings import VacancySearchSettings
+from app.models.vacancy_seen_key import VacancySeenKey
 from tests.discovery.fake_bot import FakeBot
 from tests.discovery.test_digests import (
     DIGEST_TEXT,
@@ -42,6 +45,7 @@ from tests.discovery.test_service import (
     CHAT_ID,
     CONFIG,
     NOW,
+    FakeGroq,
     at,
     link_telegram,
     make_pending,
@@ -237,7 +241,73 @@ async def test_forwarding_a_fetched_pending_post_stops_its_alert(factory, db) ->
     assert outcome is ForwardOutcome.ALREADY_SEEN
     [card] = await vacancies(db)
     assert card.alert_handled_at == NOW
-    assert await _forwards(db) == []  # nothing to reply about later
+    # Not rated yet: the rating is replied to this forward later.
+    [forward] = await _forwards(db)
+    assert (
+        forward.user_id,
+        forward.external_key,
+        forward.chat_id,
+        forward.message_id,
+        forward.reported_at,
+    ) == (user_id, "tg:other/1", CHAT_ID, MESSAGE_ID, None)
+
+
+def _watched_post(n: int = 1) -> RawPost:
+    return RawPost(
+        external_key=f"tg:other/{n}",
+        url=f"https://t.me/other/{n}",
+        job_link=None,
+        title=None,
+        company=None,
+        text="MATCH",
+        posted_at=NOW,
+    )
+
+
+async def _store_watched(factory, user_id: str, *, message_id: int = MESSAGE_ID):
+    return await store_forwarded_post(
+        factory,
+        user_id,
+        ForwardedChannel(handle="other", label="@other"),
+        _watched_post(),
+        NOW,
+        chat_id=CHAT_ID,
+        message_id=message_id,
+    )
+
+
+async def test_forwarding_an_evaluated_post_records_no_reply_target(
+    factory, db
+) -> None:
+    user_id = await make_user(db)
+    async with db() as session:  # rated earlier: seen key only, no pending row
+        session.add(
+            VacancySeenKey(
+                user_id=user_id,
+                external_key="tg:other/1",
+                first_seen_at=NOW - timedelta(hours=2),
+                evaluated_at=NOW - timedelta(hours=1),
+            )
+        )
+        await session.commit()
+
+    outcome = await _store_watched(factory, user_id)
+
+    assert outcome is ForwardOutcome.ALREADY_SEEN
+    assert await _forwards(db) == []
+
+
+async def test_forwarding_a_pending_post_twice_keeps_the_first_target(
+    factory, db
+) -> None:
+    user_id = await make_user(db)
+    await make_pending(db, user_id, 1)
+    await _store_watched(factory, user_id)
+
+    outcome = await _store_watched(factory, user_id, message_id=99)
+
+    assert outcome is ForwardOutcome.ALREADY_SEEN
+    assert [f.message_id for f in await _forwards(db)] == [MESSAGE_ID]
 
 
 # --- the result reply --------------------------------------------------------------
@@ -544,6 +614,99 @@ def test_format_forward_reply(result: ForwardResult, text: str) -> None:
     assert format_forward_reply(result) == text
 
 
+async def test_forwarded_pending_channel_post_is_replied_after_rating(
+    factory, db, ai, sleep, bot
+) -> None:
+    user_id = await make_user(db)
+    await link_telegram(db, user_id)
+    await make_pending(db, user_id, 1)  # tg:other/1 "MATCH 1"
+    await _store_watched(factory, user_id)
+
+    await _rate(factory, ai, sleep, bot)  # the per-minute run
+
+    [card] = await vacancies(db)
+    assert card.state == "new"
+    assert bot.texts == ["✅ Added to your Inbox: Medium · Frontend Developer — Acme"]
+    assert bot.reply_to == [MESSAGE_ID]  # no combined alert either
+
+
+async def test_digest_reply_total_is_capped(factory, db, sleep, bot) -> None:
+    user_id = await make_user(db)
+    await link_telegram(db, user_id)
+    await _store(factory, user_id, _post(text=DIGEST_TEXT))
+    ai = DigestGroq({"DG_FOUR": digest(REACT_ITEM, count=10**12)}, factory)
+
+    await _rate(factory, ai, sleep, bot)
+
+    assert bot.texts == ["✅ 1 of 200 vacancies match. Added to your Inbox."]
+
+
+@pytest.mark.parametrize("kind", list(ForwardResultKind))
+def test_forward_reply_with_max_values_fits_telegram(kind) -> None:
+    result = ForwardResult(
+        user_id="u",
+        external_key="k",
+        kind=kind,
+        fit="high",
+        title="T" * 10_000,
+        company="C" * 10_000,
+        matched=MAX_DIGEST_VACANCIES,
+        total=200,
+    )
+
+    assert len(format_forward_reply(result)) < 4096
+
+
+class _DeletingGroq(FakeGroq):
+    """Deletes every pending card while the AI is "thinking" (e.g. the user
+    removed the card meanwhile)."""
+
+    async def _create(self, **kwargs):
+        async with self.factory() as session:
+            await session.execute(
+                Vacancy.__table__.delete().where(Vacancy.state == "pending")
+            )
+            await session.commit()
+        return await super()._create(**kwargs)
+
+
+@pytest.mark.parametrize("text", ["News", "NOMATCH Java dev"])
+async def test_forward_gone_before_its_verdict_gets_no_reply(
+    factory, db, sleep, bot, text: str
+) -> None:
+    user_id = await make_user(db)
+    await link_telegram(db, user_id)
+    await _store(factory, user_id, _post(text=text))
+    ai = _DeletingGroq(factory)
+
+    report = await _rate(factory, ai, sleep, bot)
+
+    assert report.forward_results == []
+    assert bot.attempts == 0
+    [forward] = await _forwards(db)
+    assert forward.reported_at is None
+
+
+async def test_alert_failure_does_not_skip_forward_replies(
+    factory, db, ai, sleep, bot, monkeypatch
+) -> None:
+    user_id = await make_user(db)
+    await link_telegram(db, user_id)
+    await _store(factory, user_id, _post())
+
+    async def broken_alerts(*args, **kwargs):
+        raise RuntimeError("alerts broke")
+
+    monkeypatch.setattr(service, "send_run_alerts", broken_alerts)
+
+    with pytest.raises(RuntimeError, match="alerts broke"):
+        await _rate(factory, ai, sleep, bot)
+
+    assert bot.texts == ["✅ Added to your Inbox: High · Frontend Developer — Acme"]
+    [forward] = await _forwards(db)
+    assert forward.reported_at == NOW
+
+
 # --- rated within a minute ---------------------------------------------------------
 
 
@@ -568,6 +731,31 @@ async def test_per_minute_run_skips_users_without_forwarded_posts(
     await run_initial_scans(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep)
 
     assert ai.calls == []
+
+
+async def test_per_minute_run_rates_only_forwarded_posts(
+    factory, db, http, ai, sleep
+) -> None:
+    user_id = await make_user(db)
+    await make_pending(db, user_id, 2, text="MATCH")  # watched posts
+    async with db() as session:  # tg:other/1 already failed once (hourly retry)
+        await session.execute(
+            update(Vacancy)
+            .where(Vacancy.external_key == "tg:other/1")
+            .values(eval_attempts=1)
+        )
+        await session.commit()
+    await _store(factory, user_id, _post(text="MATCH HIGH forwarded"))
+
+    await run_initial_scans(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep)
+
+    assert ai.posts_sent == ["MATCH HIGH forwarded"]
+    states = {c.external_key: (c.state, c.eval_attempts) for c in await vacancies(db)}
+    assert states == {
+        "tg:other/1": ("pending", 1),
+        "tg:other/2": ("pending", 0),
+        "tgc:1234567890/1": ("new", 0),
+    }
 
 
 async def test_rejected_watched_post_is_still_deleted(factory, db, ai, sleep) -> None:

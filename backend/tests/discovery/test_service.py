@@ -823,6 +823,52 @@ class TestEvaluation:
             if "AI read only" in r.getMessage()
         )
 
+    async def test_long_board_jobs_are_not_flagged_cut(
+        self, factory, db, ai, sleep, caplog
+    ) -> None:
+        """Board jobs are single positions read windowed; only Telegram posts
+        (possible digests) are reported as cut."""
+        user_id = await make_user(db)
+        long_text = "MATCH " + "x" * MAX_POST_CHARS
+        async with db() as session:
+            for n, key in enumerate(
+                ("gh:acme/1", "lever:acme/2", "lever_eu:acme/3", "teamtailor:acme/4")
+            ):
+                session.add(
+                    VacancySeenKey(user_id=user_id, external_key=key, first_seen_at=NOW)
+                )
+                session.add(
+                    Vacancy(
+                        user_id=user_id,
+                        external_key=key,
+                        url=f"https://jobs.example.com/{n}",
+                        text=long_text,
+                        posted_at=NOW,
+                        found_at=NOW - timedelta(minutes=10 - n),
+                        state="pending",
+                    )
+                )
+            await session.commit()
+
+        with caplog.at_level(logging.WARNING, logger="app.discovery.service"):
+            report = await evaluate_pending(
+                factory, ai, at(NOW), config=CONFIG, sleep=sleep
+            )
+
+        async with db() as session:
+            flags = dict(
+                (
+                    await session.execute(
+                        select(VacancySeenKey.external_key, VacancySeenKey.cut_for_ai)
+                    )
+                ).all()
+            )
+        assert set(flags.values()) == {False}
+        assert all(at_ == NOW for at_ in (await seen_keys(db)).values())
+        assert report.posts_cut == 0
+        assert report.posts_evaluated == 4
+        assert not [r for r in caplog.records if "AI read only" in r.getMessage()]
+
     async def test_no_description_stays_pending(self, factory, db, ai, sleep) -> None:
         user_id = await make_user(db, description=None)
         await make_pending(db, user_id, 2)

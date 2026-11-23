@@ -34,6 +34,7 @@ __all__ = [
     "MAX_DIGEST_VACANCIES",
     "MAX_POST_CHARS",
     "MAX_REASON_CHARS",
+    "MAX_VACANCY_COUNT",
     "SYSTEM_PROMPT",
     "BatchEvaluation",
     "EvaluationError",
@@ -211,6 +212,10 @@ class Fit(StrEnum):
 
 # Spec 012: at most this many matching vacancies are kept from one digest post.
 MAX_DIGEST_VACANCIES = 20
+# Spec 012: `vacancy_count` is clamped to 0..MAX_VACANCY_COUNT. A real digest
+# lists a few dozen jobs at most; an absurd count from the AI would make the
+# forward reply ("k of N vacancies match") misleading.
+MAX_VACANCY_COUNT = 200
 
 # Only Telegram posts can be digests: watched channels and public forwards
 # ("tg:") and private forwards ("tgc:"). A board job (Greenhouse, Lever, ...)
@@ -290,6 +295,7 @@ class PostVerdict(BaseModel):
     matching ones, already range-checked and capped at MAX_DIGEST_VACANCIES by
     `parse_response`) is used, and the top-level match/fit are ignored. With
     `vacancy_count` <= 1 or missing, the top-level fields work as before.
+    `vacancy_count` is clamped to 0..MAX_VACANCY_COUNT.
     """
 
     model_config = ConfigDict(extra="ignore", frozen=True)
@@ -310,6 +316,13 @@ class PostVerdict(BaseModel):
     @property
     def is_digest(self) -> bool:
         return self.vacancy_count is not None and self.vacancy_count >= 2
+
+    @field_validator("vacancy_count")
+    @classmethod
+    def _clamp_vacancy_count(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        return max(0, min(value, MAX_VACANCY_COUNT))
 
     @field_validator("fit", mode="before")
     @classmethod

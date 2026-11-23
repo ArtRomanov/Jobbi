@@ -607,6 +607,17 @@ class TestDigests:
 
         assert results == {} and missing == ["p1"]
 
+    @pytest.mark.parametrize(
+        ("count", "kept"),
+        [(10**12, 200), (201, 200), (200, 200), (-5, 0), (3, 3)],
+    )
+    def test_vacancy_count_is_clamped_to_0_200(self, count: int, kept: int) -> None:
+        raw = response_json(digest("p1", item([1, 2]), count=count))
+
+        results, _ = parse_response(raw, ["p1"], {"p1": 10})
+
+        assert results["p1"].vacancy_count == kept
+
     def test_invalid_vacancy_count_makes_the_post_invalid(self) -> None:
         raw = response_json(digest("p1", item([1, 2]), vacancy_count="many"))
 
