@@ -16,19 +16,21 @@ from unittest.mock import patch
 
 import httpx
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.application import Application
 from app.models.cv import Cv
 from app.models.user import User
 from app.services.vacancy_service import tailored_cv_name
+from tests.cv_upload_files import make_docx
 from tests.test_vacancies_api import add_card
 
 CVS_URL = "/api/v1/cvs"
 APPS_URL = "/api/v1/applications"
 VACANCIES_URL = "/api/v1/vacancies"
 T0 = datetime(2026, 11, 1, 12, 0)
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 def _auth(token: str) -> dict[str, str]:
@@ -389,6 +391,64 @@ async def test_deleting_the_base_leaves_no_base(
     assert await _base_cv_id(db_session, user_id) is None
     listed = await _list(client, token)
     assert [(cv["id"], cv["is_base"]) for cv in listed] == [(other.id, False)]
+
+
+async def _point_base_at(db: AsyncSession, user_id: str, cv_id: str) -> None:
+    """Set `users.base_cv_id` directly, bypassing the API (SQLite does not
+    enforce the FK, so a pointer to a deleted CV can exist)."""
+    await db.execute(update(User).where(User.id == user_id).values(base_cv_id=cv_id))
+    await db.commit()
+
+
+async def test_dangling_base_pointer_counts_as_no_base(
+    client, token, user_id, db_session
+) -> None:
+    own = await _make_cv(db_session, user_id, "Own", updated_minutes=1)
+    newer = await _make_cv(db_session, user_id, "Newer", updated_minutes=2)
+    await _point_base_at(db_session, user_id, "missing-cv-id")
+
+    listed = await _list(client, token)
+
+    assert [(cv["id"], cv["is_base"]) for cv in listed] == [
+        (newer.id, False),
+        (own.id, False),
+    ]
+    one = await client.get(f"{CVS_URL}/{own.id}", headers=_auth(token))
+    assert one.json()["is_base"] is False
+
+
+async def test_upload_replaces_a_dangling_base_pointer(
+    client, token, user_id, db_session
+) -> None:
+    await _point_base_at(db_session, user_id, "missing-cv-id")
+
+    resp = await client.post(
+        f"{CVS_URL}/upload",
+        files={"file": ("up.docx", make_docx(), DOCX_MIME)},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["became_base"] is True
+    assert body["is_base"] is True
+    assert await _base_cv_id(db_session, user_id) == body["id"]
+
+
+async def test_upload_replaces_a_pointer_to_another_users_cv(
+    client, token, user_id, other_registered_user, db_session
+) -> None:
+    theirs = await _make_cv(db_session, other_registered_user["user"]["id"], "Theirs")
+    await _point_base_at(db_session, user_id, theirs.id)
+
+    resp = await client.post(
+        f"{CVS_URL}/upload",
+        files={"file": ("up.docx", make_docx(), DOCX_MIME)},
+        headers=_auth(token),
+    )
+
+    assert resp.json()["became_base"] is True
+    assert [cv["is_base"] for cv in await _list(client, token)] == [True]
 
 
 async def test_deleting_another_cv_keeps_the_base(

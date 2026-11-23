@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { http, HttpResponse } from "msw";
+import { delay, http, HttpResponse } from "msw";
 import { CvsPage } from "@/pages/cvs";
 import type { Cv } from "@/entities/cv";
 import { makeMockCv, mockCvs } from "./mocks/handlers";
@@ -11,7 +11,7 @@ vi.mock("@/features/cv-pdf", () => ({ downloadCvTextPdf: vi.fn().mockResolvedVal
 
 const CVS_URL = "*/api/v1/cvs";
 const MAKE_BASE_URL = "*/api/v1/cvs/:id/make-base";
-const NO_BASE_HINT = "Mark one of your CVs as base — “Add & tailor CV” will start from it.";
+const NO_BASE_HINT = 'Mark one of your CVs as base — "Add & tailor CV" will start from it.';
 
 function serveCvs(cvs: Cv[]): void {
   server.use(http.get(CVS_URL, () => HttpResponse.json(cvs)));
@@ -175,5 +175,72 @@ describe("CVs page — Make base", () => {
     expect(await screen.findByText("CV not found.")).toBeInTheDocument();
     expect(screen.queryByText("Base CV updated")).not.toBeInTheDocument();
     expect(within(rowOf("Software Engineer CV")).getByText("Base")).toBeInTheDocument();
+  });
+});
+
+describe("CVs page — refreshing the list", () => {
+  it("ignores an older refresh that answers after a newer one", async () => {
+    const user = userEvent.setup();
+    const stale = mockCvs.map((cv) => ({ ...cv, name: `${cv.name} (stale)` }));
+    const fresh = mockCvs.map((cv) => (cv.id === "cv-2" ? { ...cv, name: "Fresh name" } : cv));
+    let calls = 0;
+    server.use(
+      http.get(CVS_URL, async () => {
+        calls += 1;
+        if (calls === 2) {
+          // The first refresh is slow and must lose to the second
+          await delay(150);
+          return HttpResponse.json(stale);
+        }
+        return HttpResponse.json(calls === 1 ? mockCvs : fresh);
+      }),
+    );
+    renderWithProviders(<CvsPage />);
+
+    await screen.findByRole("region", { name: "My CVs" });
+    await user.click(screen.getByRole("button", { name: "Make base: Frontend Developer CV" }));
+    await waitFor(() => expect(calls).toBe(2));
+    await user.click(screen.getByRole("button", { name: `Make base: ${mockCvs[2]!.name}` }));
+
+    expect(await screen.findByText("Fresh name")).toBeInTheDocument();
+    // Let the slow response land; it must not replace the newer list
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(calls).toBe(3);
+    expect(screen.getByText("Fresh name")).toBeInTheDocument();
+    expect(screen.queryByText(/\(stale\)/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the list and shows a toast when a refresh fails", async () => {
+    const user = userEvent.setup();
+    let calls = 0;
+    server.use(
+      http.get(CVS_URL, () => {
+        calls += 1;
+        return calls === 1
+          ? HttpResponse.json(mockCvs)
+          : HttpResponse.json({ detail: "Server is down." }, { status: 500 });
+      }),
+    );
+    renderWithProviders(<CvsPage />);
+
+    await screen.findByRole("region", { name: "My CVs" });
+    await user.click(screen.getByRole("button", { name: "Make base: Frontend Developer CV" }));
+
+    await waitFor(() => expect(calls).toBe(2));
+    expect(await screen.findByText("Base CV updated")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Could not refresh your CVs. Reload the page to see the latest list."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "My CVs" })).toBeInTheDocument();
+    expect(rowNames(section("My CVs"))).toEqual(["Software Engineer CV", "Frontend Developer CV"]);
+    expect(screen.getByRole("region", { name: "Tailored for applications" })).toBeInTheDocument();
+  });
+
+  it("shows the error in place of the list when the first load fails", async () => {
+    server.use(http.get(CVS_URL, () => HttpResponse.json({ detail: "x" }, { status: 500 })));
+    renderWithProviders(<CvsPage />);
+
+    expect(await screen.findByText(/Request failed/)).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "My CVs" })).not.toBeInTheDocument();
   });
 });

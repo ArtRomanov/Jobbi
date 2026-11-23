@@ -80,3 +80,25 @@ describe("FormSelect groups", () => {
     expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual(["A", "B"]);
   });
 });
+
+describe("FormSelect aria-describedby", () => {
+  it("keeps the caller's description together with the error", () => {
+    render(
+      <>
+        <p id="hint">Hint</p>
+        <FormSelect label="Pick" id="pick" options={[]} aria-describedby="hint" error="Required" />
+      </>,
+    );
+    expect(screen.getByRole("combobox", { name: "Pick" })).toHaveAttribute(
+      "aria-describedby",
+      "hint pick-error",
+    );
+  });
+
+  it("uses only the caller's description without an error, and none by default", () => {
+    const { rerender } = render(<FormSelect label="Pick" options={[]} aria-describedby="hint" />);
+    expect(screen.getByRole("combobox", { name: "Pick" })).toHaveAttribute("aria-describedby", "hint");
+    rerender(<FormSelect label="Pick" options={[]} />);
+    expect(screen.getByRole("combobox", { name: "Pick" })).not.toHaveAttribute("aria-describedby");
+  });
+});

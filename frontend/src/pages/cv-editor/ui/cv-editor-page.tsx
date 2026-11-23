@@ -10,6 +10,7 @@ import { downloadCvTextPdf } from "@/features/cv-pdf";
 import { UploadNotice } from "@/features/cv-upload";
 import { Badge, PageCard, PageHeader, colors, useToast } from "@/shared/ui";
 import { handleApiError } from "@/shared/api";
+import { BASE_LABEL, TAILORED_FOR_PREFIX } from "../lib/constants";
 
 interface EditorSeed {
   key: string;
@@ -177,10 +178,10 @@ export function CvEditorPage() {
             color: colors.textSecondary,
           }}
         >
-          {cv.is_base ? <Badge tone="accent">Base</Badge> : null}
+          {cv.is_base ? <Badge tone="accent">{BASE_LABEL}</Badge> : null}
           {isTailoredCv(cv) ? (
             <span>
-              Tailored for: <CvTailoredFor cv={cv} />
+              {TAILORED_FOR_PREFIX} <CvTailoredFor cv={cv} />
             </span>
           ) : null}
         </p>

@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import case, func, select, update
+from sqlalchemy import Select, case, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.application import Application
@@ -39,8 +39,19 @@ class CvDetails:
         return self.cv.kind == CV_KIND_TAILORED and self.tailored_for is None
 
 
+def _user_cv_ids(user_id: str) -> Select[tuple[str]]:
+    """Subquery: ids of the user's CVs."""
+    return select(Cv.id).where(Cv.user_id == user_id)
+
+
 async def get_base_cv_id(db: AsyncSession, user_id: str) -> str | None:
-    return await db.scalar(select(User.base_cv_id).where(User.id == user_id))
+    """The user's base CV id, or None. A pointer to a CV that no longer exists
+    (SQLite does not enforce the FK) counts as "no base"."""
+    return await db.scalar(
+        select(User.base_cv_id).where(
+            User.id == user_id, User.base_cv_id.in_(_user_cv_ids(user_id))
+        )
+    )
 
 
 async def describe_cvs(
@@ -130,15 +141,22 @@ async def create_uploaded_cv(
     """Create an own CV from an upload; it becomes the base if the user has
     none. Returns the CV and whether it became the base.
 
-    The base is set by a conditional `UPDATE ... WHERE base_cv_id IS NULL`, so
-    of two concurrent first uploads only one becomes the base.
+    The base is set by a conditional `UPDATE ... WHERE base_cv_id IS NULL OR
+    base_cv_id NOT IN (the user's CVs)`, so of two concurrent first uploads
+    only one becomes the base, and a dangling pointer counts as "no base".
     """
     cv = Cv(user_id=user_id, name=data.name, content=data.content)
     db.add(cv)
     await db.flush()
     result = await db.execute(
         update(User)
-        .where(User.id == user_id, User.base_cv_id.is_(None))
+        .where(
+            User.id == user_id,
+            or_(
+                User.base_cv_id.is_(None),
+                User.base_cv_id.not_in(_user_cv_ids(user_id)),
+            ),
+        )
         .values(base_cv_id=cv.id)
         .execution_options(synchronize_session=False)
     )

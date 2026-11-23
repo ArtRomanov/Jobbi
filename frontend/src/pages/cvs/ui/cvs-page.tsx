@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { listCvs, deleteCv, duplicateCv, groupCvs, type Cv } from "@/entities/cv";
 import { downloadCvTextPdf } from "@/features/cv-pdf";
@@ -11,6 +11,7 @@ import {
   NO_CVS_TEXT,
   PAGE_SUBTITLE,
   PAGE_TITLE,
+  REFRESH_ERROR_MESSAGE,
   TAILORED_TITLE,
 } from "../lib/constants";
 import { CvList } from "./cv-list";
@@ -33,20 +34,40 @@ export function CvsPage() {
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
   const { showToast } = useToast();
 
-  // Only the first load shows "Loading..."; refreshes keep the list on screen
+  // Each load gets a number; only the latest one may touch state, so an older
+  // response that arrives late never overwrites a newer list
+  const latestRequestRef = useRef(0);
+  const hasListRef = useRef(false);
+
+  // Only the first load shows "Loading..." and, on failure, the error in place
+  // of the list. A failed refresh keeps the list on screen and shows a toast.
   const fetchCvs = useCallback(async () => {
-    setError(null);
+    latestRequestRef.current += 1;
+    const requestId = latestRequestRef.current;
     try {
-      setCvs(await listCvs());
+      const data = await listCvs();
+      if (requestId !== latestRequestRef.current) return;
+      hasListRef.current = true;
+      setCvs(data);
+      setError(null);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to load CVs");
+      if (requestId !== latestRequestRef.current) return;
+      if (hasListRef.current) {
+        showToast(REFRESH_ERROR_MESSAGE, "error");
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to load CVs");
+      }
     } finally {
-      setIsLoading(false);
+      if (requestId === latestRequestRef.current) setIsLoading(false);
     }
-  }, []);
+  }, [showToast]);
 
   useEffect(() => {
     void fetchCvs();
+    return () => {
+      // Unmounted: drop any response still in flight
+      latestRequestRef.current += 1;
+    };
   }, [fetchCvs]);
 
   const handleDelete = useCallback(
