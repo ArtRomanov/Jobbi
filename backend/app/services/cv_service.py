@@ -1,8 +1,12 @@
-from sqlalchemy import func, select, update
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.application import Application
-from app.models.cv import Cv
+from app.models.cv import CV_KIND_OWN, CV_KIND_TAILORED, Cv
+from app.models.user import User
 from app.schemas.cv import CvCreate, CvUpdate
 from app.services import chat_card_service
 
@@ -11,41 +15,163 @@ class CvNotFoundError(Exception):
     """No CV with this id belongs to the user."""
 
 
-async def list_cvs(db: AsyncSession, user_id: str) -> list[dict]:
-    """List all CVs for a user with linked application count."""
-    # Subquery for linked application count
-    count_subq = (
-        select(
-            Application.cv_id,
-            func.count(Application.id).label("app_count"),
-        )
-        .where(Application.cv_id.isnot(None))
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TailoredFor:
+    """The application a tailored copy was made for."""
+
+    application_id: str
+    company_name: str
+    role_title: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CvDetails:
+    """A CV plus the facts the CV endpoints show next to it."""
+
+    cv: Cv
+    is_base: bool
+    linked_applications_count: int
+    # None for an own CV, and for a tailored copy whose application is gone.
+    tailored_for: TailoredFor | None
+
+    @property
+    def tailored_application_deleted(self) -> bool:
+        return self.cv.kind == CV_KIND_TAILORED and self.tailored_for is None
+
+
+async def get_base_cv_id(db: AsyncSession, user_id: str) -> str | None:
+    return await db.scalar(select(User.base_cv_id).where(User.id == user_id))
+
+
+async def describe_cvs(
+    db: AsyncSession, user_id: str, cvs: Sequence[Cv]
+) -> list[CvDetails]:
+    """Attach base flag, linked-application count and tailored target to the
+    user's `cvs`, in the given order. Three queries whatever the count."""
+    if not cvs:
+        return []
+    cv_ids = [cv.id for cv in cvs]
+    base_cv_id = await get_base_cv_id(db, user_id)
+
+    count_rows = await db.execute(
+        select(Application.cv_id, func.count(Application.id))
+        .where(Application.user_id == user_id, Application.cv_id.in_(cv_ids))
         .group_by(Application.cv_id)
-        .subquery()
     )
+    counts: dict[str, int] = {cv_id: count for cv_id, count in count_rows}
 
-    query = (
-        select(Cv, func.coalesce(count_subq.c.app_count, 0).label("app_count"))
-        .outerjoin(count_subq, Cv.id == count_subq.c.cv_id)
-        .where(Cv.user_id == user_id)
-        .order_by(Cv.updated_at.desc())
-    )
-
-    result = await db.execute(query)
-    rows = result.all()
+    target_ids = {
+        cv.tailored_for_application_id
+        for cv in cvs
+        if cv.tailored_for_application_id is not None
+    }
+    targets: dict[str, TailoredFor] = {}
+    if target_ids:
+        # Owner-scoped: another user's application is never described.
+        rows = await db.execute(
+            select(
+                Application.id, Application.company_name, Application.role_title
+            ).where(Application.user_id == user_id, Application.id.in_(target_ids))
+        )
+        targets = {
+            app_id: TailoredFor(
+                application_id=app_id, company_name=company, role_title=role
+            )
+            for app_id, company, role in rows
+        }
 
     return [
-        {
-            "cv": row[0],
-            "linked_applications_count": row[1],
-        }
-        for row in rows
+        CvDetails(
+            cv=cv,
+            is_base=cv.id == base_cv_id,
+            linked_applications_count=counts.get(cv.id, 0),
+            tailored_for=(
+                targets.get(cv.tailored_for_application_id)
+                if cv.kind == CV_KIND_TAILORED and cv.tailored_for_application_id
+                else None
+            ),
+        )
+        for cv in cvs
     ]
+
+
+async def describe_cv(db: AsyncSession, user_id: str, cv: Cv) -> CvDetails:
+    return (await describe_cvs(db, user_id, [cv]))[0]
+
+
+async def list_cvs(db: AsyncSession, user_id: str) -> list[CvDetails]:
+    """The user's CVs: the base first, then the other own CVs, then tailored
+    copies; each group most recently updated first."""
+    base_cv_id = await get_base_cv_id(db, user_id)
+    group = case(
+        (Cv.id == (base_cv_id or ""), 0),
+        (Cv.kind == CV_KIND_OWN, 1),
+        else_=2,
+    )
+    result = await db.execute(
+        select(Cv)
+        .where(Cv.user_id == user_id)
+        .order_by(group, Cv.updated_at.desc(), Cv.created_at.desc(), Cv.id)
+    )
+    return await describe_cvs(db, user_id, result.scalars().all())
 
 
 async def create_cv(db: AsyncSession, user_id: str, data: CvCreate) -> Cv:
     cv = Cv(user_id=user_id, name=data.name, content=data.content)
     db.add(cv)
+    await db.commit()
+    await db.refresh(cv)
+    return cv
+
+
+async def create_uploaded_cv(
+    db: AsyncSession, user_id: str, data: CvCreate
+) -> tuple[Cv, bool]:
+    """Create an own CV from an upload; it becomes the base if the user has
+    none. Returns the CV and whether it became the base.
+
+    The base is set by a conditional `UPDATE ... WHERE base_cv_id IS NULL`, so
+    of two concurrent first uploads only one becomes the base.
+    """
+    cv = Cv(user_id=user_id, name=data.name, content=data.content)
+    db.add(cv)
+    await db.flush()
+    result = await db.execute(
+        update(User)
+        .where(User.id == user_id, User.base_cv_id.is_(None))
+        .values(base_cv_id=cv.id)
+        .execution_options(synchronize_session=False)
+    )
+    became_base = result.rowcount == 1
+    await db.commit()
+    await db.refresh(cv)
+    return cv, became_base
+
+
+async def make_base(db: AsyncSession, user_id: str, cv_id: str) -> Cv | None:
+    """Make the user's CV `cv_id` their base CV. Returns None if it is not
+    theirs. Idempotent.
+
+    A tailored copy becomes an own CV for good and keeps its application link.
+    Neither change touches `version` or `updated_at`.
+    """
+    cv = await get_cv(db, user_id, cv_id)
+    if cv is None:
+        return None
+    await db.execute(
+        update(User)
+        .where(User.id == user_id)
+        .values(base_cv_id=cv.id)
+        .execution_options(synchronize_session=False)
+    )
+    if cv.kind != CV_KIND_OWN:
+        await db.execute(
+            update(Cv)
+            .where(Cv.id == cv.id)
+            # Explicit so the `onupdate` does not move the CV in the list.
+            .values(kind=CV_KIND_OWN, updated_at=Cv.updated_at)
+            .execution_options(synchronize_session=False)
+        )
     await db.commit()
     await db.refresh(cv)
     return cv
@@ -155,15 +281,31 @@ async def delete_cv(db: AsyncSession, user_id: str, cv_id: str) -> bool:
         app.cv_id = None
     # Cards keep `cv_id` without an FK: pending ones on this CV go stale.
     await chat_card_service.mark_cv_cards_stale(db, cv_id)
+    # No FK enforcement on SQLite: deleting the base leaves no base.
+    await db.execute(
+        update(User)
+        .where(User.id == user_id, User.base_cv_id == cv_id)
+        .values(base_cv_id=None)
+        .execution_options(synchronize_session=False)
+    )
 
     await db.delete(cv)
     await db.commit()
     return True
 
 
-async def build_cv_copy(db: AsyncSession, user_id: str, cv_id: str, name: str) -> Cv:
+async def build_cv_copy(
+    db: AsyncSession,
+    user_id: str,
+    cv_id: str,
+    name: str,
+    *,
+    tailored_for_application_id: str | None = None,
+) -> Cv:
     """Add a copy of the user's CV `cv_id` under `name`, then flush.
 
+    The copy is an own CV, or a tailored copy of the application
+    `tailored_for_application_id` when given. It is never the base.
     Does not commit: the caller owns the transaction.
 
     Raises CvNotFoundError if the CV does not exist or is another user's.
@@ -176,6 +318,8 @@ async def build_cv_copy(db: AsyncSession, user_id: str, cv_id: str, name: str) -
         user_id=user_id,
         name=name,
         content=original.content,
+        kind=CV_KIND_OWN if tailored_for_application_id is None else CV_KIND_TAILORED,
+        tailored_for_application_id=tailored_for_application_id,
     )
     db.add(copy)
     await db.flush()

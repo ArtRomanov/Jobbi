@@ -162,6 +162,14 @@ async def delete_application(
         .where(Vacancy.application_id == application.id)
         .values(application_id=None)
     )
+    # ...and the tailored copies made for it, which stay tailored and then
+    # read "Application deleted". `updated_at` is kept so they keep their place.
+    await db.execute(
+        update(Cv)
+        .where(Cv.tailored_for_application_id == application.id)
+        .values(tailored_for_application_id=None, updated_at=Cv.updated_at)
+        .execution_options(synchronize_session=False)
+    )
     # Nor for the chat: its cards and messages go by hand.
     await delete_application_cards(db, application.id)
     await db.execute(

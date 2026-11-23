@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
@@ -27,11 +27,25 @@ class CvUpdate(BaseModel):
     version: int
 
 
+class CvTailoredFor(BaseModel):
+    """The application a tailored copy was made for."""
+
+    application_id: str
+    company_name: str
+    role_title: str
+
+
 class CvRead(BaseModel):
     id: str
     name: str
     content: str
+    kind: Literal["own", "tailored"]
+    is_base: bool
     version: int
+    # Set for a tailored copy whose application still exists.
+    tailored_for: CvTailoredFor | None
+    # A tailored copy whose application is gone ("Application deleted").
+    tailored_application_deleted: bool
     linked_applications_count: int = 0
     created_at: datetime
     updated_at: datetime
@@ -46,7 +60,7 @@ class CvDuplicateRequest(BaseModel):
 class CvUploadRead(CvRead):
     """``POST /cvs/upload`` response: the new CV plus upload facts."""
 
-    # Always false until the base CV lands (spec 011 slice 5).
+    # The user had no base CV, so this upload became it.
     became_base: bool
     # The extracted text was over 20 000 characters and was cut.
     truncated: bool

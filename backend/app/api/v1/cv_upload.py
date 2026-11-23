@@ -29,11 +29,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import Message, Receive
 
-from app.api.v1.cvs import _cv_to_read
+from app.api.v1.cvs import cv_to_read
 from app.core.deps import get_current_user, get_db
 from app.models.user import User
 from app.schemas.cv import CvCreate, CvUploadRead
-from app.services.cv_service import create_cv
+from app.services.cv_service import create_uploaded_cv
 from app.services.cv_upload import (
     MAX_UPLOAD_BYTES,
     CvUploadError,
@@ -157,14 +157,19 @@ async def upload_user_cv(
             status_code=HTTPStatus.BAD_REQUEST, detail=UploadFailed.code
         ) from exc
 
-    cv = await create_cv(
+    cv, became_base = await create_uploaded_cv(
         db, current_user.id, CvCreate(name=extracted.name, content=extracted.text)
     )
-    logger.info("cv_uploaded", cv_id=cv.id, truncated=extracted.truncated)
+    logger.info(
+        "cv_uploaded",
+        cv_id=cv.id,
+        truncated=extracted.truncated,
+        became_base=became_base,
+    )
     # Built from the same CvRead the other CV endpoints return, so new CvRead
     # fields show up here without changes.
     return CvUploadRead(
-        **_cv_to_read(cv).model_dump(),
-        became_base=False,
+        **(await cv_to_read(db, current_user.id, cv)).model_dump(),
+        became_base=became_base,
         truncated=extracted.truncated,
     )
