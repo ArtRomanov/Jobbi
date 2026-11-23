@@ -226,6 +226,7 @@ export const mockVacancySource = {
   url: null as string | null,
   job_link_contains: null as string | null,
   watching_since: null as string | null,
+  name_is_custom: false,
 };
 
 /** A saved web page source (watching, not checked since). */
@@ -662,6 +663,20 @@ export const handlers = [
 
   http.delete(`${BASE_URL}/api/v1/vacancy-sources/:id`, () => {
     return new HttpResponse(null, { status: 204 });
+  }),
+
+  // Rename: a trimmed name becomes custom; null / "" puts the default back
+  // (the mock's default is "@<id>"; no 404 or length checks)
+  http.patch(`${BASE_URL}/api/v1/vacancy-sources/:id`, async ({ params, request }) => {
+    const body = (await request.json()) as { name?: string | null };
+    const name = body.name?.trim() || null;
+    const id = String(params.id);
+    return HttpResponse.json({
+      ...mockVacancySource,
+      id,
+      display_name: name ?? `@${id}`,
+      name_is_custom: name !== null,
+    });
   }),
 
   // Echoes the update normalized like the backend: trimmed, empty description →

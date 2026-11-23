@@ -59,6 +59,7 @@ async def make_web_source(
             handle="placeholder",
             url=site.url,
             url_hash=f"{site.name:0>64}"[:64],
+            default_name=site.name,
             display_name=site.name,
             initial_scan_completed_at=WATCHING_SINCE if scanned else None,
             last_checked_at=WATCHING_SINCE,

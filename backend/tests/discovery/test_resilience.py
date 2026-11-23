@@ -335,6 +335,7 @@ class TestCleanup:
                     user_id=user_id,
                     kind="greenhouse",
                     handle=board.token,
+                    default_name=board.name,
                     display_name=board.name,
                 )
             )
@@ -624,6 +625,7 @@ class TestRepostMerge:
                     user_id=user_id,
                     kind="greenhouse",
                     handle=board.token,
+                    default_name=board.name,
                     display_name=board.name,
                 )
             )

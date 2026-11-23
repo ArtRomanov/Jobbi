@@ -1,12 +1,14 @@
 import type { VacancySource } from "@/entities/vacancy-source";
 import { colors } from "@/shared/ui";
 import { NO_SOURCES_MESSAGE } from "../lib/constants";
+import type { SourceEditedHandler } from "../model/types";
 import { SourceListItem } from "./source-list-item";
 
 interface SourceListProps {
   sources: readonly VacancySource[];
   removingIds: ReadonlySet<string>;
   onRemove: (id: string) => void;
+  onEdited: SourceEditedHandler;
   onRegisterRemoveButton: (id: string, element: HTMLButtonElement | null) => void;
 }
 
@@ -15,6 +17,7 @@ export function SourceList({
   sources,
   removingIds,
   onRemove,
+  onEdited,
   onRegisterRemoveButton,
 }: SourceListProps) {
   if (sources.length === 0) {
@@ -29,6 +32,7 @@ export function SourceList({
           source={source}
           isRemoving={removingIds.has(source.id)}
           onRemove={onRemove}
+          onEdited={onEdited}
           onRegisterRemoveButton={onRegisterRemoveButton}
         />
       ))}

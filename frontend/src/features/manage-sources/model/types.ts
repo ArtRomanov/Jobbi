@@ -5,7 +5,7 @@ import type {
   VacancySource,
   VacancySourcePreview,
 } from "@/entities/vacancy-source";
-import type { WebSourceOptions } from "./schemas";
+import type { EditSourceValues, WebSourceOptions } from "./schemas";
 
 /** Inline validation messages of the web source preview fields. */
 export type WebSourceFieldErrors = Partial<Record<keyof WebSourceOptions, string>>;
@@ -33,6 +33,8 @@ export interface UseManageSourcesResult {
   isAddDisabled: boolean;
   /** Append a just-created source to the local list. */
   appendSource: (source: VacancySource) => void;
+  /** Replace a source with the server's copy after an edit. */
+  replaceSource: (source: VacancySource) => void;
   /** Resolves true when the source was removed. */
   removeSource: (id: string) => Promise<boolean>;
   retryLoad: () => void;
@@ -82,3 +84,13 @@ export interface UseAddSourceResult {
   addBoard: (boardInput: string) => Promise<boolean>;
   cancelPreview: () => void;
 }
+
+export interface UseEditSourceResult {
+  isSaving: boolean;
+  /** Inline error above the dialog buttons, or null. */
+  error: string | null;
+  save: (values: EditSourceValues) => Promise<void>;
+}
+
+/** Called with the server's copy after a successful edit. */
+export type SourceEditedHandler = (source: VacancySource) => void;

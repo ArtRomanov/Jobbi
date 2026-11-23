@@ -1,6 +1,9 @@
 import type { components } from "@/shared/api";
 
-/** One watched source (Telegram channel, company job board or web page). */
+/**
+ * One watched source (Telegram channel, company job board or web page).
+ * `name_is_custom`: the user renamed it (false → `display_name` is the default name).
+ */
 export type VacancySource = components["schemas"]["VacancySourceRead"];
 
 /** Where a source comes from: "telegram" | "greenhouse" | "lever" | "lever_eu" | "teamtailor" | "web". */
@@ -35,3 +38,9 @@ export type AtsHint = components["schemas"]["AtsHint"];
  * `kind`; web adds the default name, the first-page count and up to 5 titles.
  */
 export type VacancySourcePreview = components["schemas"]["VacancySourcePreview"];
+
+/**
+ * Body of PATCH /api/v1/vacancy-sources/{id}: a field left out stays unchanged.
+ * `name`: null or "" → back to the default name. `input` / `job_link_contains`: Slice 6.
+ */
+export type VacancySourceUpdate = components["schemas"]["VacancySourceUpdate"];

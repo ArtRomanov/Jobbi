@@ -29,6 +29,7 @@ from app.schemas.vacancy import (
     VacancySourcePreviewRequest,
     VacancySourceRead,
     VacancySourcesResponse,
+    VacancySourceUpdate,
 )
 from app.services.cv_service import CvNotFoundError
 from app.services.vacancy_service import (
@@ -65,6 +66,7 @@ from app.services.vacancy_source_service import (
     is_unavailable,
     list_sources,
     preview_source,
+    rename_source,
     update_search_settings,
 )
 
@@ -74,6 +76,7 @@ NOT_IN_INBOX_MESSAGE = "Vacancy is not in the Inbox."
 VACANCY_NOT_FOUND_MESSAGE = "Vacancy not found."
 ALREADY_ADDED_MESSAGE = "Already added"
 ALREADY_TRACKED_MESSAGE = "You already track this"
+LINK_CHANGE_UNSUPPORTED_MESSAGE = "Changing the link is not supported yet"
 
 CardAction = Callable[[AsyncSession, str, str], Awaitable[None]]
 
@@ -84,6 +87,7 @@ def _source_to_read(source: VacancySource) -> VacancySourceRead:
         key=source_key(source.kind, source.handle),
         kind=source.kind,
         display_name=source.display_name,
+        name_is_custom=source.display_name != source.default_name,
         last_checked_at=source.last_checked_at,
         scanning=is_scanning(source),
         unavailable=is_unavailable(source),
@@ -151,8 +155,9 @@ async def get_vacancy_sources(
         "`found_count`, up to 5 `titles` in page order and `ats_hint` are "
         "returned. `source_id` (a source being edited) is left out of the "
         "duplicate and limit checks. 400 for an unusable link, an unreadable "
-        "page or no vacancies; 409 when already watched; 404 for an unknown "
-        "`source_id`."
+        "page or no vacancies (unless page 1 links to a job board: then 200 "
+        "with `found_count` 0 and the `ats_hint`); 409 when already watched; "
+        "404 for an unknown `source_id`."
     ),
 )
 async def preview_vacancy_source(
@@ -235,6 +240,42 @@ async def create_vacancy_source(
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail=DUPLICATE_SOURCE_MESSAGE
         ) from exc
+    return _source_to_read(source)
+
+
+@router.patch(
+    "/vacancy-sources/{source_id}",
+    response_model=VacancySourceRead,
+    summary="Edit a source (rename)",
+    description=(
+        "Partial update. `name`: trimmed; null or blank restores the default "
+        "name; 400 over 100 characters. Card labels follow the new name. "
+        "`input` / `job_link_contains` are not supported yet (400). 404 for "
+        "an unknown or another user's source."
+    ),
+)
+async def patch_vacancy_source(
+    source_id: str,
+    body: VacancySourceUpdate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> VacancySourceRead:
+    fields = body.model_fields_set
+    if fields & {"input", "job_link_contains"}:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, detail=LINK_CHANGE_UNSUPPORTED_MESSAGE
+        )
+    try:
+        source = await rename_source(
+            db,
+            current_user.id,
+            source_id,
+            body.name if "name" in fields else UNSET,
+        )
+    except SourceInputError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=exc.message) from exc
+    except SourceNotFoundError as exc:
+        raise not_found("Source") from exc
     return _source_to_read(source)
 
 

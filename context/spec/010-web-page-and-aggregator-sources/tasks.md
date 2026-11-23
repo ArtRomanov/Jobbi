@@ -29,31 +29,31 @@ Conventions for every slice:
 
 ---
 
-- [ ] **Slice 3: Worker reads web pages and fills the Inbox**
+- [x] **Slice 3: Worker reads web pages and fills the Inbox**
   - [x] Migration: `vacancies.needs_detail` (bool, default false), `detail_attempts` (int, default 0). **[Agent: database-expert]**
   - [x] `fetchers/web_job.py`: JSON-LD `JobPosting` (text, `datePosted`, title, company) else `trafilatura.extract` on fetched HTML (never `fetch_url`); `cap_text`, `fits_columns`. Fixture tests (geekjob/yandex with JobPosting, ingamejob/ostrovok without). **[Agent: python-backend]**
   - [x] `web_scan.py` + `service.py`: `SUPPORTED_KINDS` gains `web`; `_SourceRef` carries `url`/pattern; listing pass up to 5 pages, stop at a page with a seen key and at the first failed page; new items → `pending` + `needs_detail`; `no_vacancies` / unreachable / refused-host read errors with spec texts and 24 h Unavailable. Detail step: also after a failed listing, only for users with a description, ≤ 30 rows oldest first, 1 s apart, exclude-word check on the filled text, 404/410 drops the row, 3 failures → title-only, budget 3 consecutive failures / 5 min per source, 40-min cap on the web part of `check_all`, listing steps of all sources first. Pending queries (`_users_with_pending`, `_next_batch`) skip `needs_detail`; title/company `coalesce` flipped for web in `_apply_evaluation` and `_promote_earlier_pending`; `waiting_count` excludes `needs_detail`. Worker tests from tech spec §4 incl. the no-network-in-transaction guard. **[Agent: python-backend]**
-  - [ ] Verify: live — with a description set, a geekjob search and an ingamejob listing; force a seen key to be dropped (or wait for a new posting) and run `check_all`: cards appear with full text, AI title/company, date from JobPosting on geekjob; an exclude word that appears only in a job's body drops it; a 404 job is not evaluated; logs show per-source duration. **[Agent: qa-tester]**
+  - [ ] Verify: live — with a description set, a geekjob search and an ingamejob listing; force a seen key to be dropped (or wait for a new posting) and run `check_all`: cards appear with full text, AI title/company, date from JobPosting on geekjob; an exclude word that appears only in a job's body drops it; a 404 job is not evaluated; logs show per-source duration. **[Agent: qa-tester]** _(2026-11-23 live with real Groq: geekjob + ingamejob, 8 seen keys removed per source → exactly those 16 came back; job pages read (1.6–3.7 K chars of real body), geekjob dates from JSON-LD; 4 Groq calls, 3 matches shown with AI company names not on the listing; body-only exclude word ("SaltStack") dropped the card with no AI call; 404 job dropped with no AI call; rerun evaluates nothing; per-source durations logged; waiting_count ignores needs_detail rows)_
 
 ---
 
-- [ ] **Slice 4: ATS hint in the preview**
+- [x] **Slice 4: ATS hint in the preview**
   - [x] `web_listing` collects Greenhouse/Lever/Teamtailor board links (incl. Greenhouse `embed/job_board?for=<token>`) and returns the most frequent as `ats_hint {kind, input, label}`; preview returns it. Fixture tests (Wrike-like page, embed link). **[Agent: python-backend]**
   - [x] Frontend: hint text "This page uses <Service> — add the board instead for full job texts and dates" + "Add the board" (adds like a pasted board link, closes the preview); the page itself can still be saved. Tests. **[Agent: typescript-frontend]**
-  - [ ] Verify: preview `https://www.wrike.com/jobs/` → Greenhouse hint; "Add the board" adds the Greenhouse source with its name. **[Agent: qa-tester]**
+  - [x] Verify: preview `https://www.wrike.com/jobs/` → Greenhouse hint; "Add the board" adds the Greenhouse source with its name. **[Agent: qa-tester]** _(2026-11-23 API: Wrike → Greenhouse hint, adding it → "Wrike" board; Tripledot (no job links) → 200 found 0 + Greenhouse hint (follow-up: hint also on empty pages); Salmon (Ashby) → no-vacancies error; geekjob → no hint; previews never write. Browser part not run — Chrome extension not connected)_
 
 ---
 
-- [ ] **Slice 5: Rename any source**
-  - [ ] Migration: `vacancy_sources.default_name` (255, NOT NULL, backfilled from `display_name`). **[Agent: database-expert]**
-  - [ ] `PATCH /vacancy-sources/{id}` with `{name}` only: ≤ 100 (400), empty → `default_name`; `name_is_custom` in the schema. Label fix: delete updates `vacancy_card_sources.label` to the current name before detaching (so "(removed)" shows the latest name). Tests incl. rename-then-delete. **[Agent: python-backend]**
-  - [ ] Frontend: `updateVacancySource`; Edit button on every row opening `EditSourceDialog` (`Modal`, name field only for now); local state replaced after save; `onSourceEdited` → page bumps `refreshKey` so cards show the new name at once. Tests. **[Agent: typescript-frontend]**
-  - [ ] Verify: browser — rename a Telegram channel and a web page; cards and the source filter show the new name without reload; clear the name → default returns; delete it → "(removed)" uses the latest name. **[Agent: qa-tester]**
+- [x] **Slice 5: Rename any source**
+  - [x] Migration: `vacancy_sources.default_name` (255, NOT NULL, backfilled from `display_name`). **[Agent: database-expert]**
+  - [x] `PATCH /vacancy-sources/{id}` with `{name}` only: ≤ 100 (400), empty → `default_name`; `name_is_custom` in the schema. Label fix: delete updates `vacancy_card_sources.label` to the current name before detaching (so "(removed)" shows the latest name). Tests incl. rename-then-delete. **[Agent: python-backend]**
+  - [x] Frontend: `updateVacancySource`; Edit button on every row opening `EditSourceDialog` (`Modal`, name field only for now); local state replaced after save; `onSourceEdited` → page bumps `refreshKey` so cards show the new name at once. Tests. **[Agent: typescript-frontend]**
+  - [ ] Verify: browser — rename a Telegram channel and a web page; cards and the source filter show the new name without reload; clear the name → default returns; delete it → "(removed)" uses the latest name. **[Agent: qa-tester]** _(2026-11-23 API 5/5: Telegram and web renamed, card label follows the live name, empty/null/spaces → default, 100 ok / 101 → 400, other user → 404, rename-then-delete → "(removed)" shows the latest name; browser part not run — Chrome extension not connected)_
 
 ---
 
 - [ ] **Slice 6: Edit links and patterns (web edit, replace for other kinds)**
-  - [ ] Migration: `vacancy_sources.initial_attempt_started_at`, `revision` (int, default 0). **[Agent: database-expert]**
+  - [x] Migration: `vacancy_sources.initial_attempt_started_at`, `revision` (int, default 0). **[Agent: database-expert]**
   - [ ] Worker: initial-scan runner sets/clears `initial_attempt_started_at`; `_store_posts` source UPDATE gains `AND revision = :rev` (rowcount 0 aborts); detail step stops on a revision change. Tests incl. edit-during-fetch. **[Agent: python-backend]**
   - [ ] API: `PATCH` with `input` / `job_link_contains`. Edited source excluded from duplicate and 30-source checks (also in preview via `source_id`). Web: re-fetch up to 5 pages, one transaction updates url/hash/pattern, `revision += 1`, seen keys for what is listed, deletes the source's pending rows. Other kinds or a kind change: replace in one transaction via a no-commit helper split out of `delete_source` (with the label fix), new source gets the normal first scan. `409` "This source is being scanned — try again in a moment" while the lease is fresh (stale after 10 min). `editable` in the schema. Tests from tech spec §4 (edit at 30 sources, React→Vue pending deleted, Telegram replace, 409). **[Agent: python-backend]**
   - [ ] Frontend: `EditSourceDialog` gains link (all kinds) and pattern (web) with `SourcePreview` before Save; non-dismissable while saving; replace → `refreshRemovedSources`; Edit disabled when `!editable`; `mergePolledSources` copies `editable` and `watching_since`. Tests. **[Agent: typescript-frontend]**

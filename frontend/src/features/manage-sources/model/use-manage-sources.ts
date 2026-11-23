@@ -155,6 +155,11 @@ export function useManageSources(
     setSources((prev) => [...prev, source]);
   }, []);
 
+  // Edit: the server's copy replaces the row in place (order kept)
+  const replaceSource = useCallback((source: VacancySource): void => {
+    setSources((prev) => prev.map((item) => (item.id === source.id ? source : item)));
+  }, []);
+
   const refreshRemovedSources = useCallback(async (): Promise<void> => {
     removedRequestRef.current += 1;
     const requestId = removedRequestRef.current;
@@ -206,6 +211,7 @@ export function useManageSources(
     removingIds,
     isAddDisabled,
     appendSource,
+    replaceSource,
     removeSource,
     retryLoad,
   };

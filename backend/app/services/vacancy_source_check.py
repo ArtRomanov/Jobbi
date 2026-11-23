@@ -231,13 +231,18 @@ async def read_web_listing(
     *,
     max_pages: int,
     total_timeout_s: float,
+    allow_empty_with_hint: bool = False,
 ) -> web_scan.ListingRead:
     """Read the listing for the API; the result holds at least one job.
+
+    With `allow_empty_with_hint` (preview only) a page 1 without jobs is still
+    returned when it links to a job board, so the ATS hint can be shown.
 
     Raises:
         UnsafeLinkError: the URL or a redirect on page 1 breaks the SSRF guard.
         PageUnreadableError: page 1 could not be read in time.
-        NoVacanciesError: page 1 lists no jobs.
+        NoVacanciesError: page 1 lists no jobs (and, with
+            `allow_empty_with_hint`, links to no job board either).
     """
     try:
         listing = await web_scan.read_listing(
@@ -252,6 +257,8 @@ async def read_web_listing(
     except PageFetchError as exc:
         logger.info("web_page_check_failed", reason=exc.reason)
         raise PageUnreadableError from exc
-    if not listing.jobs:
+    if not listing.jobs and not (
+        allow_empty_with_hint and listing.ats_hint is not None
+    ):
         raise NoVacanciesError
     return listing

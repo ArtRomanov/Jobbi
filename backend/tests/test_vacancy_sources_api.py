@@ -76,6 +76,7 @@ async def _insert_source(
         user_id=user_id,
         kind="telegram",
         handle=handle,
+        default_name=f"@{handle}",
         display_name=f"@{handle}",
         **overrides,
     )
@@ -191,6 +192,7 @@ async def test_add_public_channel(
         "key",
         "kind",
         "display_name",
+        "name_is_custom",
         "last_checked_at",
         "scanning",
         "unavailable",

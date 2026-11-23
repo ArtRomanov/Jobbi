@@ -5,6 +5,7 @@ import {
   JOB_LINK_CONTAINS_LABEL,
   JOB_LINK_CONTAINS_MAX_LENGTH,
   JOB_LINK_CONTAINS_PLACEHOLDER,
+  PREVIEW_NO_VACANCIES_TEXT,
   PREVIEW_TITLES_LIMIT,
   SOURCE_NAME_LABEL,
   SOURCE_NAME_MAX_LENGTH,
@@ -37,7 +38,8 @@ interface SourcePreviewProps {
 
 /**
  * Preview of a web page source before it is saved: "Found N vacancies", the
- * first titles in site order, "Job link contains" with Re-check, an optional
+ * first titles in site order (or a muted "No vacancies found…" line when the
+ * page has no job links but links to an ATS board; Save is then disabled), "Job link contains" with Re-check, an optional
  * name (placeholder = default name) and Save / Cancel. Shared by add and edit.
  */
 export function SourcePreview({
@@ -60,7 +62,10 @@ export function SourcePreview({
   const [jobLinkContains, setJobLinkContains] = useState(initialJobLinkContains);
   const [name, setName] = useState(initialName);
   const [fieldErrors, setFieldErrors] = useState<WebSourceFieldErrors>({});
-  const titles = (result.titles ?? []).slice(0, PREVIEW_TITLES_LIMIT);
+  const foundCount = result.found_count ?? 0;
+  // Zero jobs only comes back with an ATS hint; saving such a page would fail
+  const hasNoVacancies = foundCount === 0;
+  const titles = hasNoVacancies ? [] : (result.titles ?? []).slice(0, PREVIEW_TITLES_LIMIT);
 
   useEffect(() => {
     if (focusOnMount) headingRef.current?.focus();
@@ -101,7 +106,7 @@ export function SourcePreview({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
-    if (busy) return;
+    if (busy || hasNoVacancies) return;
     const values = validate();
     if (!values) return;
     // On failure the loading Save button was disabled (focus dropped); bring it back
@@ -124,9 +129,13 @@ export function SourcePreview({
           id={headingId}
           ref={headingRef}
           tabIndex={-1}
-          style={{ fontSize: "0.9375rem", fontWeight: 600, color: colors.textPrimary }}
+          style={
+            hasNoVacancies
+              ? { fontSize: "0.875rem", fontWeight: 400, color: colors.textMuted }
+              : { fontSize: "0.9375rem", fontWeight: 600, color: colors.textPrimary }
+          }
         >
-          {formatFoundCount(result.found_count ?? 0)}
+          {hasNoVacancies ? PREVIEW_NO_VACANCIES_TEXT : formatFoundCount(foundCount)}
         </h3>
         {titles.length > 0 ? (
           <ol
@@ -198,7 +207,12 @@ export function SourcePreview({
           </p>
         ) : null}
         <div style={{ display: "flex", gap: "0.5rem" }}>
-          <Button ref={saveButtonRef} type="submit" loading={busyAction === "save"} disabled={busy && busyAction !== "save"}>
+          <Button
+            ref={saveButtonRef}
+            type="submit"
+            loading={busyAction === "save"}
+            disabled={hasNoVacancies || (busy && busyAction !== "save")}
+          >
             Save
           </Button>
           <Button type="button" variant="secondary" disabled={busy} onClick={onCancel}>

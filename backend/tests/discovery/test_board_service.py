@@ -42,7 +42,11 @@ async def make_board(
 ) -> str:
     async with db() as session:
         source = VacancySource(
-            user_id=user_id, kind=kind, handle=handle, display_name=display_name
+            user_id=user_id,
+            kind=kind,
+            handle=handle,
+            default_name=display_name,
+            display_name=display_name,
         )
         session.add(source)
         await session.commit()

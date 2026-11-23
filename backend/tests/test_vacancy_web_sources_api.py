@@ -54,6 +54,12 @@ CAREERS_PAGE = """<html><body>
 <a href="/careers/102-data-analyst">Data Analyst</a>
 </body></html>"""
 
+# A career page that embeds its Greenhouse board via JS: no job links of its own.
+EMBEDDED_BOARD_PAGE = """<html><body><h1>Careers</h1>
+<div id="grnhse_app"></div>
+<script src="https://boards.greenhouse.io/embed/job_board/js?for=acme"></script>
+</body></html>"""
+
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
@@ -117,7 +123,11 @@ async def _count(db: AsyncSession, model: type) -> int:
 
 async def _insert_telegram(db: AsyncSession, user_id: str, handle: str) -> str:
     source = VacancySource(
-        user_id=user_id, kind="telegram", handle=handle, display_name=f"@{handle}"
+        user_id=user_id,
+        kind="telegram",
+        handle=handle,
+        default_name=f"@{handle}",
+        display_name=f"@{handle}",
     )
     db.add(source)
     await db.commit()
@@ -131,6 +141,7 @@ async def _insert_web(db: AsyncSession, user_id: str, url: str) -> str:
         handle="placeholder",
         url=url,
         url_hash=_sha(url),
+        default_name="geekjob.ru",
         display_name="geekjob.ru",
     )
     db.add(source)
@@ -239,6 +250,62 @@ async def test_preview_page_without_vacancies(
 
     assert resp.status_code == 400
     assert resp.json() == {"detail": NO_VACANCIES}
+
+
+async def test_preview_without_vacancies_but_with_board_link_returns_hint(
+    client: httpx.AsyncClient, token: str, respx_mock: respx.MockRouter
+) -> None:
+    page = _page(respx_mock, "/careers", EMBEDDED_BOARD_PAGE)
+
+    resp = await client.post(
+        PREVIEW_URL, json={"input": "https://acme.com/careers"}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "kind": "web",
+        "default_name": "acme.com",
+        "found_count": 0,
+        "titles": [],
+        "ats_hint": {
+            "kind": "greenhouse",
+            "input": "https://job-boards.greenhouse.io/acme",
+            "label": "Greenhouse",
+        },
+    }
+    # The board itself is not fetched.
+    assert page.call_count == 1
+    assert len(respx_mock.calls) == 1
+
+
+async def test_preview_without_vacancies_or_board_link_is_400(
+    client: httpx.AsyncClient, token: str, respx_mock: respx.MockRouter
+) -> None:
+    _page(respx_mock, "/careers", "<html><body><h1>Careers</h1></body></html>")
+
+    resp = await client.post(
+        PREVIEW_URL, json={"input": "https://acme.com/careers"}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": NO_VACANCIES}
+
+
+async def test_save_without_vacancies_but_with_board_link_is_400(
+    client: httpx.AsyncClient,
+    token: str,
+    respx_mock: respx.MockRouter,
+    db_session: AsyncSession,
+) -> None:
+    _page(respx_mock, "/careers", EMBEDDED_BOARD_PAGE)
+
+    resp = await client.post(
+        URL, json={"input": "https://acme.com/careers"}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": NO_VACANCIES}
+    assert await _count(db_session, VacancySource) == 0
 
 
 @pytest.mark.parametrize(

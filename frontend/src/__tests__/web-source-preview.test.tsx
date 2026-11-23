@@ -478,4 +478,97 @@ describe("Web page source: ATS hint in the preview", () => {
     expect(getInput()).toHaveValue(PAGE_LINK);
     await waitFor(() => expect(button).toHaveFocus());
   });
+
+  describe("page with no job links but a board", () => {
+    /** Zero jobs + hint without a pattern; a pattern re-check finds jobs. */
+    function mockZeroJobsHintPreview(): void {
+      server.use(
+        http.post(PREVIEW_URL, async ({ request }) => {
+          const body = (await request.json()) as { job_link_contains?: string | null };
+          const hint = { kind: "greenhouse", input: BOARD_LINK, label: "Greenhouse" };
+          return HttpResponse.json(
+            body.job_link_contains
+              ? { ...mockWebPreview, found_count: 2, titles: ["A", "B"], ats_hint: hint }
+              : { ...mockWebPreview, found_count: 0, titles: [], ats_hint: hint },
+          );
+        }),
+      );
+    }
+
+    async function openZeroPreview(user: ReturnType<typeof userEvent.setup>): Promise<HTMLElement> {
+      await user.type(getInput(), `${PAGE_LINK}{Enter}`);
+      const heading = await screen.findByRole("heading", { name: NO_VACANCIES });
+      return heading.closest("section") as HTMLElement;
+    }
+
+    it("shows the no-vacancies text, the hint and no enabled Save", async () => {
+      mockZeroJobsHintPreview();
+      const user = userEvent.setup();
+      renderWithProviders(<InboxPage />);
+      await waitForList();
+
+      const preview = await openZeroPreview(user);
+
+      expect(within(preview).queryByText(/^Found/)).not.toBeInTheDocument();
+      expect(within(preview).queryAllByRole("listitem")).toHaveLength(0);
+      expect(within(preview).queryByRole("alert")).not.toBeInTheDocument();
+      expect(within(preview).getByText(HINT_TEXT)).toBeInTheDocument();
+      expect(within(preview).getByRole("button", { name: "Add the board" })).toBeEnabled();
+      expect(within(preview).getByRole("button", { name: "Save" })).toBeDisabled();
+      expect(within(preview).getByRole("button", { name: "Re-check" })).toBeEnabled();
+    });
+
+    it("'Add the board' works from the no-vacancies state", async () => {
+      mockZeroJobsHintPreview();
+      const creates: unknown[] = [];
+      server.use(
+        http.post(SOURCES_URL, async ({ request }) => {
+          creates.push(await request.json());
+          return HttpResponse.json(
+            {
+              ...mockWebSource,
+              id: "src-wrike",
+              key: "greenhouse:wrike",
+              kind: "greenhouse",
+              display_name: "Wrike",
+              url: BOARD_LINK,
+              watching_since: null,
+              last_checked_at: null,
+              scanning: true,
+            },
+            { status: 201 },
+          );
+        }),
+      );
+      const user = userEvent.setup();
+      renderWithProviders(<InboxPage />);
+      await waitForList();
+
+      const preview = await openZeroPreview(user);
+      await user.click(within(preview).getByRole("button", { name: "Add the board" }));
+
+      expect(await screen.findByText("Wrike", OUTSIDE_SOURCE_FILTER)).toBeInTheDocument();
+      expect(creates).toEqual([{ input: BOARD_LINK }]);
+      expect(screen.queryByRole("heading", { name: NO_VACANCIES })).not.toBeInTheDocument();
+      await waitFor(() => expect(getInput()).toHaveFocus());
+    });
+
+    it("a re-check that finds jobs shows them and re-enables Save", async () => {
+      mockZeroJobsHintPreview();
+      const user = userEvent.setup();
+      renderWithProviders(<InboxPage />);
+      await waitForList();
+
+      const preview = await openZeroPreview(user);
+      await user.type(within(preview).getByLabelText("Job link contains (optional)"), "/jobs/");
+      await user.click(within(preview).getByRole("button", { name: "Re-check" }));
+
+      expect(await screen.findByRole("heading", { name: "Found 2 vacancies" })).toBeInTheDocument();
+      expect(within(preview).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+        "A",
+        "B",
+      ]);
+      expect(within(preview).getByRole("button", { name: "Save" })).toBeEnabled();
+    });
+  });
 });

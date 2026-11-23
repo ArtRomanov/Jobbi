@@ -306,6 +306,7 @@ class TestSourcesStatus:
             user_id=user_id,
             kind="telegram",
             handle="live_jobs",
+            default_name="Live Jobs (new title)",
             display_name="Live Jobs (new title)",
         )
         db_session.add(live)
@@ -336,7 +337,11 @@ class TestSourcesStatus:
         self, client, token, user_id, db_session
     ) -> None:
         source = VacancySource(
-            user_id=user_id, kind="telegram", handle="jobs", display_name="Jobs 2026"
+            user_id=user_id,
+            kind="telegram",
+            handle="jobs",
+            default_name="Jobs 2026",
+            display_name="Jobs 2026",
         )
         db_session.add(source)
         await db_session.commit()
@@ -364,6 +369,7 @@ async def test_source_delete_clears_references(
         user_id=user_id,
         kind="telegram",
         handle="jobs_channel",
+        default_name="@jobs_channel",
         display_name="@jobs_channel",
     )
     db_session.add(source)
@@ -392,10 +398,18 @@ async def test_source_delete_removes_its_pending_posts_only(
     client, token, user_id, db_session
 ) -> None:
     source = VacancySource(
-        user_id=user_id, kind="telegram", handle="jobs", display_name="@jobs"
+        user_id=user_id,
+        kind="telegram",
+        handle="jobs",
+        default_name="@jobs",
+        display_name="@jobs",
     )
     other = VacancySource(
-        user_id=user_id, kind="telegram", handle="other", display_name="@other"
+        user_id=user_id,
+        kind="telegram",
+        handle="other",
+        default_name="@other",
+        display_name="@other",
     )
     db_session.add_all([source, other])
     await db_session.commit()
@@ -431,6 +445,7 @@ async def test_source_delete_of_other_user_keeps_references(
         user_id=other_id,
         kind="telegram",
         handle="their_jobs",
+        default_name="@their_jobs",
         display_name="@their_jobs",
     )
     db_session.add(source)
@@ -588,3 +603,144 @@ class TestCardActions:
         assert await removed_sources() == []
         await _act(client, token, card.id, "restore")
         assert await removed_sources() == removed
+
+
+# ---------------------------------------------------------------------------
+# PATCH /vacancy-sources/{id} — rename (spec 010 Slice 5)
+# ---------------------------------------------------------------------------
+
+
+async def _jobs_source(db: AsyncSession, user_id: str) -> str:
+    source = VacancySource(
+        user_id=user_id,
+        kind="telegram",
+        handle="jobs",
+        default_name="@jobs",
+        display_name="@jobs",
+    )
+    db.add(source)
+    await db.commit()
+    return source.id
+
+
+async def _patch(
+    client: httpx.AsyncClient, token: str, source_id: str, body: dict
+) -> httpx.Response:
+    return await client.patch(
+        f"{SOURCES_URL}/{source_id}", json=body, headers=_auth(token)
+    )
+
+
+class TestRenameSource:
+    async def test_rename_shows_in_list_and_on_cards(
+        self, client, token, user_id, db_session
+    ) -> None:
+        source_id = await _jobs_source(db_session, user_id)
+        await add_card(db_session, user_id, "1", source_id=source_id)
+
+        resp = await _patch(client, token, source_id, {"name": "  My jobs  "})
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["display_name"] == "My jobs"
+        assert resp.json()["name_is_custom"] is True
+        listed = (await client.get(SOURCES_URL, headers=_auth(token))).json()
+        assert [
+            (s["display_name"], s["name_is_custom"]) for s in listed["sources"]
+        ] == [("My jobs", True)]
+        cards = (await client.get(URL, headers=_auth(token))).json()["items"]
+        assert cards[0]["sources"] == [{"key": "telegram:jobs", "label": "My jobs"}]
+
+    @pytest.mark.parametrize("name", ["", "   ", None])
+    async def test_blank_name_restores_default(
+        self, client, token, user_id, db_session, name
+    ) -> None:
+        source_id = await _jobs_source(db_session, user_id)
+        await _patch(client, token, source_id, {"name": "Custom"})
+
+        resp = await _patch(client, token, source_id, {"name": name})
+
+        assert resp.status_code == 200
+        assert resp.json()["display_name"] == "@jobs"
+        assert resp.json()["name_is_custom"] is False
+
+    async def test_name_length_limit(self, client, token, user_id, db_session) -> None:
+        source_id = await _jobs_source(db_session, user_id)
+
+        too_long = await _patch(client, token, source_id, {"name": "x" * 101})
+        exact = await _patch(client, token, source_id, {"name": "y" * 100})
+
+        assert too_long.status_code == 400
+        assert too_long.json()["detail"] == "Name can be up to 100 characters"
+        assert exact.status_code == 200
+        assert exact.json()["display_name"] == "y" * 100
+
+    async def test_new_source_is_not_custom(
+        self, client, token, user_id, db_session
+    ) -> None:
+        await _jobs_source(db_session, user_id)
+
+        body = (await client.get(SOURCES_URL, headers=_auth(token))).json()
+
+        assert body["sources"][0]["name_is_custom"] is False
+
+    async def test_empty_body_changes_nothing(
+        self, client, token, user_id, db_session
+    ) -> None:
+        source_id = await _jobs_source(db_session, user_id)
+        await _patch(client, token, source_id, {"name": "Custom"})
+
+        resp = await _patch(client, token, source_id, {})
+
+        assert resp.status_code == 200
+        assert resp.json()["display_name"] == "Custom"
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {"input": "https://t.me/other"},
+            {"job_link_contains": "/job/"},
+            {"name": "New", "job_link_contains": None},
+        ],
+    )
+    async def test_link_change_is_not_supported_yet(
+        self, client, token, user_id, db_session, body
+    ) -> None:
+        source_id = await _jobs_source(db_session, user_id)
+
+        resp = await _patch(client, token, source_id, body)
+
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "Changing the link is not supported yet"
+        listed = (await client.get(SOURCES_URL, headers=_auth(token))).json()
+        assert listed["sources"][0]["display_name"] == "@jobs"
+
+    async def test_unknown_or_foreign_source_is_404(
+        self, client, token, user_id, db_session, other_registered_user
+    ) -> None:
+        source_id = await _jobs_source(db_session, user_id)
+        other_token = other_registered_user["access_token"]
+
+        foreign = await _patch(client, other_token, source_id, {"name": "Mine"})
+        unknown = await _patch(client, token, "no-such-id", {"name": "Mine"})
+
+        assert foreign.status_code == 404
+        assert unknown.status_code == 404
+        listed = (await client.get(SOURCES_URL, headers=_auth(token))).json()
+        assert listed["sources"][0]["display_name"] == "@jobs"
+
+    async def test_rename_then_delete_keeps_latest_name_as_removed_label(
+        self, client, token, user_id, db_session
+    ) -> None:
+        source_id = await _jobs_source(db_session, user_id)
+        await add_card(db_session, user_id, "1", source_id=source_id)
+        await _patch(client, token, source_id, {"name": "Renamed jobs"})
+
+        resp = await client.delete(f"{SOURCES_URL}/{source_id}", headers=_auth(token))
+
+        assert resp.status_code == 204
+        body = (await client.get(SOURCES_URL, headers=_auth(token))).json()
+        assert body["removed_sources"] == [
+            {"key": "telegram:jobs", "label": "Renamed jobs"}
+        ]
+        cards = (await client.get(URL, headers=_auth(token))).json()["items"]
+        assert cards[0]["sources"] == [{"key": "telegram:jobs", "label": "Renamed jobs"}]

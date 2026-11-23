@@ -40,6 +40,9 @@ export const SOURCE_NAME_LABEL = "Name";
 export const FIELD_TOO_LONG_MESSAGE = "Use up to 100 characters";
 /** How many vacancy titles the preview lists. */
 export const PREVIEW_TITLES_LIMIT = 5;
+/** Preview with no job links (only an ATS hint): same wording as the backend's 400. */
+export const PREVIEW_NO_VACANCIES_TEXT =
+  "No vacancies found on this page. Check the link or set 'Job link contains'.";
 
 export const DESCRIPTION_MAX_LENGTH = 500;
 export const EXCLUDE_MAX_ITEMS = 50;
@@ -51,3 +54,9 @@ export const DESCRIPTION_PLACEHOLDER =
   "Senior frontend, React or Vue, remote or EU, from 4000 €, no outsourcing";
 export const EXCLUDE_HINT =
   "Posts containing any of these words or phrases are skipped. Press Enter or comma to add.";
+
+export const EDIT_SOURCE_TITLE = "Edit source";
+export const EDIT_LABEL = "Edit";
+export const SAVE_LABEL = "Save";
+export const CANCEL_LABEL = "Cancel";
+export const SOURCE_NAME_HINT = "Leave empty to use the default name";

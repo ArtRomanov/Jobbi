@@ -21,6 +21,18 @@ class VacancySourceCreate(BaseModel):
     name: str | None = None
 
 
+class VacancySourceUpdate(BaseModel):
+    """Partial edit of a source; fields left out stay unchanged.
+
+    `name`: up to 100 chars after trimming; null or blank = the default name.
+    `input` / `job_link_contains` (change the link) are not supported yet.
+    """
+
+    name: str | None = None
+    input: str | None = None
+    job_link_contains: str | None = None
+
+
 class VacancySourcePreviewRequest(BaseModel):
     input: str
     job_link_contains: str | None = None
@@ -61,6 +73,8 @@ class VacancySourceRead(BaseModel):
     key: str
     kind: SourceKind
     display_name: str
+    # True when the user renamed the source (display_name != default name).
+    name_is_custom: bool
     last_checked_at: UtcDatetime | None
     scanning: bool
     unavailable: bool

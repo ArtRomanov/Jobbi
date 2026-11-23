@@ -1,11 +1,12 @@
 import { useCallback, useId, useRef, type ReactNode } from "react";
+import type { VacancySource } from "@/entities/vacancy-source";
 import { Button, SectionHeader, colors } from "@/shared/ui";
 import { LOAD_ERROR_MESSAGE, NO_DESCRIPTION_HINT } from "../lib/constants";
 import { pickFocusAfterRemove } from "../lib/helpers";
 import type { WebSourceOptions } from "../model/schemas";
 import { useAddSource } from "../model/use-add-source";
 import { useManageSources } from "../model/use-manage-sources";
-import type { SourcesChangeHandler } from "../model/types";
+import type { SourceEditedHandler, SourcesChangeHandler } from "../model/types";
 import { AddSourceForm } from "./add-source-form";
 import { SearchSettingsForm } from "./search-settings-form";
 import { SourcePreview } from "./source-preview";
@@ -16,6 +17,8 @@ interface SourcesPanelProps {
   onScanFinished?: () => void;
   /** Live and removed sources, whenever either changes (feeds the Inbox source filter). */
   onSourcesChange?: SourcesChangeHandler;
+  /** After a successful edit (the page refreshes its vacancy list so cards show the new name). */
+  onSourceEdited?: SourceEditedHandler;
 }
 
 /**
@@ -24,7 +27,7 @@ interface SourcesPanelProps {
  * edit the search description + exclude words. `onScanFinished` runs when a
  * source's scan ends (the page refreshes its vacancy list).
  */
-export function SourcesPanel({ onScanFinished, onSourcesChange }: SourcesPanelProps) {
+export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }: SourcesPanelProps) {
   const headingId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const removeButtonsRef = useRef(new Map<string, HTMLButtonElement>());
@@ -37,6 +40,7 @@ export function SourcesPanel({ onScanFinished, onSourcesChange }: SourcesPanelPr
     removingIds,
     isAddDisabled,
     appendSource,
+    replaceSource,
     removeSource,
     retryLoad,
   } = useManageSources(onScanFinished, onSourcesChange);
@@ -92,6 +96,14 @@ export function SourcesPanel({ onScanFinished, onSourcesChange }: SourcesPanelPr
     inputRef.current?.focus();
   }, [cancelPreview]);
 
+  const handleEdited = useCallback(
+    (source: VacancySource): void => {
+      replaceSource(source);
+      onSourceEdited?.(source);
+    },
+    [replaceSource, onSourceEdited],
+  );
+
   // After a removal, focus the next Remove button, or the input when the list is empty
   const handleRemove = useCallback(
     async (id: string): Promise<void> => {
@@ -133,6 +145,7 @@ export function SourcesPanel({ onScanFinished, onSourcesChange }: SourcesPanelPr
           sources={sources}
           removingIds={removingIds}
           onRemove={(id) => void handleRemove(id)}
+          onEdited={handleEdited}
           onRegisterRemoveButton={registerRemoveButton}
         />
       );

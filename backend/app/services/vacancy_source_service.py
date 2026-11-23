@@ -325,7 +325,9 @@ async def preview_source(
         SourceNotFoundError: `source_id` is not one of the user's sources.
         DuplicateSourceError: the same normalized URL is already watched.
         SourceLimitError: MAX_SOURCES reached.
-        SourceCheckError: unsafe link, page not readable, or no vacancies.
+        SourceCheckError: unsafe link, page not readable, or no vacancies
+            and no job board link (no vacancies + a board link is a 200 with
+            `found_count` 0 and the `ats_hint`).
     """
     parsed = parse_source_input(raw_input)
     if parsed.kind != "web":
@@ -344,6 +346,7 @@ async def preview_source(
         pattern,
         max_pages=1,
         total_timeout_s=PREVIEW_TIMEOUT_SECONDS,
+        allow_empty_with_hint=True,
     )
     return SourcePreview(
         kind=parsed.kind,
@@ -411,6 +414,7 @@ async def add_source(
         user_id=user_id,
         kind=parsed.kind,
         handle=parsed.handle,
+        default_name=display_name,
         display_name=display_name,
     )
     db.add(source)
@@ -449,6 +453,7 @@ async def _add_web_source(
     await _check_can_add(db, user_id, parsed)
     now = _now_naive()
     source_id = str(uuid.uuid4())
+    default_name = web_default_name(parsed.url)
     source = VacancySource(
         id=source_id,
         user_id=user_id,
@@ -457,7 +462,8 @@ async def _add_web_source(
         url=parsed.url,
         url_hash=url_hash(parsed.url),
         job_link_contains=pattern,
-        display_name=custom_name or web_default_name(parsed.url),
+        default_name=default_name,
+        display_name=custom_name or default_name,
         initial_scan_completed_at=now,
         last_checked_at=now,
     )
@@ -479,24 +485,51 @@ def _seen_keys(
     return [VacancySeenKey(user_id=user_id, external_key=key) for key in keys]
 
 
-async def delete_source(db: AsyncSession, user_id: str, source_id: str) -> bool:
-    """Delete one of the user's sources. Returns False if it is not theirs.
+async def rename_source(
+    db: AsyncSession,
+    user_id: str,
+    source_id: str,
+    name: str | None | _Unset = UNSET,
+) -> VacancySource:
+    """Set the source's display name; null or blank restores the default name,
+    UNSET leaves it unchanged (the source is still looked up).
+
+    No network call: the name is the user's own label. Live card labels follow
+    at once (the Inbox reads the live name).
+
+    Raises:
+        SourceInputError: the name is longer than MAX_SOURCE_NAME_LENGTH.
+        SourceNotFoundError: not one of the user's sources.
+    """
+    custom_name = None if isinstance(name, _Unset) else normalize_source_name(name)
+    result = await db.execute(
+        select(VacancySource).where(
+            VacancySource.id == source_id, VacancySource.user_id == user_id
+        )
+    )
+    source = result.scalar_one_or_none()
+    if source is None:
+        await db.rollback()
+        raise SourceNotFoundError
+    if not isinstance(name, _Unset):
+        source.display_name = custom_name or source.default_name
+    await db.commit()
+    await db.refresh(source)
+    return source
+
+
+async def _delete_source_rows(db: AsyncSession, source: VacancySource) -> None:
+    """Remove a source and detach its cards, without committing.
 
     Its posts still waiting for the AI (`pending`) are deleted with their card
     sources: removing a source stops its scan. Their seen keys stay, so a
     re-added source does not show them again. Cards already in the Inbox stay;
     their references are cleared explicitly (SQLite does not enforce ON DELETE
-    SET NULL here). Card sources keep the source identity and label, so the
-    Inbox can still filter them.
+    SET NULL here). Card sources keep the source identity and get the current
+    display name as their label, so "(removed)" shows the latest name.
     """
-    result = await db.execute(
-        delete(VacancySource).where(
-            VacancySource.id == source_id, VacancySource.user_id == user_id
-        )
-    )
-    if result.rowcount == 0:
-        await db.rollback()
-        return False
+    source_id = source.id
+    user_id = source.user_id
     pending_ids = select(Vacancy.id).where(
         Vacancy.source_id == source_id,
         Vacancy.user_id == user_id,
@@ -512,7 +545,25 @@ async def delete_source(db: AsyncSession, user_id: str, source_id: str) -> bool:
     await db.execute(
         update(VacancyCardSource)
         .where(VacancyCardSource.source_id == source_id)
-        .values(source_id=None)
+        .values(label=source.display_name, source_id=None)
     )
+    await db.execute(delete(VacancySource).where(VacancySource.id == source_id))
+
+
+async def delete_source(db: AsyncSession, user_id: str, source_id: str) -> bool:
+    """Delete one of the user's sources. Returns False if it is not theirs.
+
+    See `_delete_source_rows` for what happens to its cards.
+    """
+    result = await db.execute(
+        select(VacancySource).where(
+            VacancySource.id == source_id, VacancySource.user_id == user_id
+        )
+    )
+    source = result.scalar_one_or_none()
+    if source is None:
+        await db.rollback()
+        return False
+    await _delete_source_rows(db, source)
     await db.commit()
     return True

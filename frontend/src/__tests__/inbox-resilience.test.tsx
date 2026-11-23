@@ -221,7 +221,7 @@ describe("Unavailable sources", () => {
       within(noReason!).getByText("Unavailable — Could not reach the source"),
     ).toBeInTheDocument();
     // Read in order: name, kind, then the reason
-    expect(gone!.textContent).toBe("@gone_boardTelegramUnavailable — Job board not foundRemove");
+    expect(gone!.textContent).toBe("@gone_boardTelegramUnavailable — Job board not foundEditRemove");
   });
 });
 

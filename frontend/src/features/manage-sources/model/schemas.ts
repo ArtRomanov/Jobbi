@@ -34,3 +34,14 @@ export function toFieldErrors(
   }
   return errors;
 }
+
+/**
+ * Edit dialog. Name only for now (Slice 5); Slice 6 adds the link and the
+ * "Job link contains" pattern. Blank name → null (the server puts the default back).
+ */
+export const editSourceSchema = z.object({
+  name: optionalText(SOURCE_NAME_MAX_LENGTH),
+});
+
+export type EditSourceFormInput = z.input<typeof editSourceSchema>;
+export type EditSourceValues = z.output<typeof editSourceSchema>;

@@ -276,6 +276,7 @@ async def make_source(
             user_id=user_id,
             kind="telegram",
             handle=handle,
+            default_name=f"@{handle}",
             display_name=f"@{handle}",
             initial_scan_completed_at=NOW - timedelta(days=1) if scanned else None,
         )
@@ -1409,12 +1410,14 @@ async def test_no_http_or_groq_call_while_a_transaction_is_open(
                     user_id=user_id,
                     kind="greenhouse",
                     handle=board.token,
+                    default_name=board.name,
                     display_name=board.name,
                 ),
                 VacancySource(
                     user_id=user_id,
                     kind="lever",
                     handle=lever_board.company,
+                    default_name="Acme Labs",
                     display_name="Acme Labs",
                 ),
             ]

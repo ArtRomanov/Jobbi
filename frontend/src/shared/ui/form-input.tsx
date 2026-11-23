@@ -4,6 +4,8 @@ import { colors } from "./theme";
 interface FormInputProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string;
   error?: string;
+  /** Muted helper text under the field (linked with `aria-describedby`). */
+  hint?: string;
 }
 
 /**
@@ -11,10 +13,12 @@ interface FormInputProps extends InputHTMLAttributes<HTMLInputElement> {
  * Accepts React Hook Form register spread via forwardRef.
  */
 export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
-  function FormInput({ label, error, id: providedId, ...rest }, ref) {
+  function FormInput({ label, error, hint, id: providedId, ...rest }, ref) {
     const generatedId = useId();
     const id = providedId ?? generatedId;
     const errorId = `${id}-error`;
+    const hintId = `${id}-hint`;
+    const describedBy = [hint ? hintId : null, error ? errorId : null].filter(Boolean).join(" ");
 
     return (
       <div style={{ marginBottom: "1rem" }}>
@@ -34,7 +38,7 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
           ref={ref}
           id={id}
           aria-invalid={error ? true : undefined}
-          aria-describedby={error ? errorId : undefined}
+          aria-describedby={describedBy || undefined}
           style={{
             width: "100%",
             padding: "0.5rem 0.75rem",
@@ -45,6 +49,11 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
           }}
           {...rest}
         />
+        {hint ? (
+          <p id={hintId} style={{ marginTop: "0.25rem", fontSize: "0.75rem", color: colors.textMuted }}>
+            {hint}
+          </p>
+        ) : null}
         {error ? (
           <p
             id={errorId}

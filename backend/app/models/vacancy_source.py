@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import ForeignKey, String, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -63,9 +63,23 @@ class VacancySource(Base):
     url_hash: Mapped[str | None] = mapped_column(String(64))
     # Web only: optional substring a job link must contain.
     job_link_contains: Mapped[str | None] = mapped_column(String(100))
+    # Name taken from the source itself: web domain, Telegram channel title or
+    # job board title. Never the user's custom name.
+    default_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Effective name shown everywhere: the user's custom name, else
+    # default_name.
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     initial_scan_completed_at: Mapped[datetime | None] = mapped_column()
     next_initial_attempt_at: Mapped[datetime | None] = mapped_column()
+    # Lease: set by the worker while a first-scan attempt runs, cleared when
+    # it ends. Edits are refused while it is fresh; stale after 10 min
+    # (crashed worker) and then ignored.
+    initial_attempt_started_at: Mapped[datetime | None] = mapped_column()
+    # Bumped by every edit that changes what is fetched. The worker stores
+    # fetched results only if the revision is unchanged since it loaded it.
+    revision: Mapped[int] = mapped_column(
+        nullable=False, default=0, server_default=text("0")
+    )
     last_checked_at: Mapped[datetime | None] = mapped_column()
     failing_since: Mapped[datetime | None] = mapped_column()
     last_error: Mapped[str | None] = mapped_column(String(255))

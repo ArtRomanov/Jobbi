@@ -1,2 +1,2 @@
 export { SourcesPanel } from "./ui/sources-panel";
-export type { SourcesChangeHandler } from "./model/types";
+export type { SourceEditedHandler, SourcesChangeHandler } from "./model/types";
