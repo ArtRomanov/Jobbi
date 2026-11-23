@@ -41,3 +41,12 @@ class CvRead(BaseModel):
 
 class CvDuplicateRequest(BaseModel):
     name: str | None = None
+
+
+class CvUploadRead(CvRead):
+    """``POST /cvs/upload`` response: the new CV plus upload facts."""
+
+    # Always false until the base CV lands (spec 011 slice 5).
+    became_base: bool
+    # The extracted text was over 20 000 characters and was cut.
+    truncated: bool
