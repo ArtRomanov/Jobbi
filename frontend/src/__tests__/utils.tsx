@@ -16,8 +16,13 @@ export interface RenderWithProvidersOptions extends RenderOptions {
   initialEntries?: InitialEntry[];
   /** Index of the active entry in `initialEntries`. Defaults to the last one. */
   initialIndex?: number;
-  /** Route path that renders `ui`. Defaults to `"*"` (every URL), so params need an explicit path. */
+  /**
+   * Route path that renders `ui`. Defaults to `"*"` (every URL), so params need an
+   * explicit path. With `children` it defaults to none (a pathless layout route).
+   */
   path?: string;
+  /** Nested routes rendered through `ui`'s `<Outlet>`, e.g. when `ui` is a layout. */
+  children?: RouteObject[];
   /** Extra sibling routes, e.g. a navigation target such as `/dashboard`. */
   routes?: RouteObject[];
 }
@@ -46,13 +51,17 @@ export function renderWithProviders(
   {
     initialEntries = ["/"],
     initialIndex,
-    path = "*",
+    path,
+    children,
     routes = [],
     ...options
   }: RenderWithProvidersOptions = {},
 ): RenderWithProvidersResult {
+  const uiRoute: RouteObject = children
+    ? { path, element: ui, children }
+    : { path: path ?? "*", element: ui };
   const router = createMemoryRouter(
-    [{ element: <ProvidersOutlet />, children: [{ path, element: ui }, ...routes] }],
+    [{ element: <ProvidersOutlet />, children: [uiRoute, ...routes] }],
     { initialEntries, initialIndex },
   );
   const result = render(<RouterProvider router={router} />, options);

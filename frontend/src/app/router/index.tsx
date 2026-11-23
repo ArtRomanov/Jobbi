@@ -16,7 +16,7 @@ import { Layout } from "@/app/layout";
 import { ToastProvider } from "@/shared/ui";
 import type { ReactNode } from "react";
 
-export function ProtectedRoute({ children }: { children: ReactNode }) {
+function ProtectedRoute({ children }: { children: ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
 
   if (!isAuthenticated) {
