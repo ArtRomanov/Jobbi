@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
 import {
@@ -8,7 +8,7 @@ import {
   type ApplicationDetail,
   type StatusHistory,
 } from "@/entities/application";
-import { listCvs, duplicateCv, type Cv } from "@/entities/cv";
+import { buildCvSelectChoices, listCvs, duplicateCv, type Cv } from "@/entities/cv";
 import { Button, FormInput, FormSelect, FormTextarea, colors, useToast } from "@/shared/ui";
 import { handleApiError, isApiError } from "@/shared/api";
 import { isSafeExternalUrl } from "@/shared/lib";
@@ -48,6 +48,8 @@ export function ApplicationPanel({
   const [isCvListLoading, setIsCvListLoading] = useState(false);
   const [isLinkingCv, setIsLinkingCv] = useState(false);
   const [isDuplicating, setIsDuplicating] = useState(false);
+  // Own CVs first (base first, "(base)"), then the "Tailored copies" group
+  const cvChoices = useMemo(() => buildCvSelectChoices(cvList), [cvList]);
 
   const { showToast } = useToast();
   const navigate = useNavigate();
@@ -473,10 +475,19 @@ export function ApplicationPanel({
                     }}
                   >
                     <option value="">None</option>
-                    {cvList.map((cv) => (
-                      <option key={cv.id} value={cv.id}>
-                        {cv.name}
+                    {cvChoices.options.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
                       </option>
+                    ))}
+                    {cvChoices.groups.map((group) => (
+                      <optgroup key={group.label} label={group.label}>
+                        {group.options.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
                 </div>

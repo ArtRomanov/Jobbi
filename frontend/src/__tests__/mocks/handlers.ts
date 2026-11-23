@@ -1,4 +1,6 @@
 import { http, HttpResponse } from "msw";
+import type { ChangeCard } from "@/entities/chat";
+import type { Cv } from "@/entities/cv";
 
 const BASE_URL = "http://localhost:8000";
 
@@ -6,58 +8,67 @@ const BASE_URL = "http://localhost:8000";
 // CV mock data
 // ---------------------------------------------------------------------------
 
-export const mockCvs = [
+/** Fields every CV gets unless a fixture says otherwise: an own, non-base CV. */
+const OWN_CV_FIELDS = {
+  is_base: false,
+  kind: "own",
+  tailored_for: null,
+  tailored_application_deleted: false,
+} as const satisfies Pick<Cv, "is_base" | "kind" | "tailored_for" | "tailored_application_deleted">;
+
+/**
+ * Server order (spec 011): base first, then own CVs, then tailored copies,
+ * each by `updated_at` desc.
+ */
+export const mockCvs: Cv[] = [
   {
     id: "cv-1",
     name: "Software Engineer CV",
-    personal_info: {
-      full_name: "Test User",
-      email: "test@example.com",
-      phone: "+1234567890",
-      location: "Berlin, Germany",
-      linkedin_url: "https://linkedin.com/in/testuser",
-    },
-    summary: "Experienced software engineer.",
-    work_experience: [
-      {
-        company: "Acme Corp",
-        role: "Senior Engineer",
-        start_date: "2022-01",
-        end_date: "",
-        is_current: true,
-        description: "Building products.",
-      },
-    ],
-    education: [
-      {
-        institution: "MIT",
-        degree: "BSc",
-        field_of_study: "Computer Science",
-        start_year: "2016",
-        end_year: "2020",
-        description: "",
-      },
-    ],
-    skills: "TypeScript, React",
-    languages: "English (Native)",
+    content:
+      "# Test User\ntest@example.com · +1234567890 · Berlin, Germany\n\n## Summary\nExperienced software engineer.\n\n## Skills\nTypeScript, React",
+    version: 3,
     linked_applications_count: 1,
     created_at: "2026-01-10T08:00:00Z",
     updated_at: "2026-02-20T10:00:00Z",
+    ...OWN_CV_FIELDS,
+    is_base: true,
   },
   {
     id: "cv-2",
     name: "Frontend Developer CV",
-    personal_info: null,
-    summary: null,
-    work_experience: null,
-    education: null,
-    skills: null,
-    languages: null,
+    content: "",
+    version: 1,
     linked_applications_count: 0,
     created_at: "2026-02-15T09:00:00Z",
     updated_at: "2026-03-01T12:00:00Z",
+    ...OWN_CV_FIELDS,
+  },
+  {
+    id: "cv-3",
+    name: "Software Engineer CV \u2014 Acme Corp Senior Engineer",
+    content: "# Test User",
+    version: 2,
+    linked_applications_count: 1,
+    created_at: "2026-03-05T09:00:00Z",
+    updated_at: "2026-03-06T12:00:00Z",
+    ...OWN_CV_FIELDS,
+    kind: "tailored",
+    tailored_for: { application_id: "app-1", company_name: "Acme Corp", role_title: "Senior Engineer" },
   },
 ];
+
+/** Builds a CV fixture: an own, non-base CV unless `overrides` say otherwise. */
+export function makeMockCv(overrides: Partial<Cv> & Pick<Cv, "id" | "name">): Cv {
+  return {
+    content: "",
+    version: 1,
+    linked_applications_count: 0,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    ...OWN_CV_FIELDS,
+    ...overrides,
+  };
+}
 
 export const mockCvDetail = { ...mockCvs[0] };
 
@@ -72,6 +83,7 @@ export const mockChatMessages = [
     role: "user",
     content: "Help me prepare for my interview at Acme Corp.",
     created_at: "2026-03-01T10:00:00Z",
+    cards: [],
   },
   {
     id: "msg-2",
@@ -80,8 +92,55 @@ export const mockChatMessages = [
     content:
       "I'd be happy to help you prepare for your interview at Acme Corp! Let's start with some common questions.",
     created_at: "2026-03-01T10:01:00Z",
+    cards: [],
   },
 ];
+
+// ---------------------------------------------------------------------------
+// Chat change cards (spec 011 slice 7) — local contract until schema regen
+// ---------------------------------------------------------------------------
+
+export const mockChangeCards = {
+  replace: {
+    id: "card-replace",
+    op: "replace",
+    before_text: "## Summary\nExperienced software engineer.",
+    after_text: "## Summary\nSenior software engineer with 8 years in React.",
+    position: null,
+    anchor_text: null,
+    state: "pending",
+    cv_id: "cv-1",
+    message_id: "msg-2",
+    created_at: "2026-03-01T10:01:00Z",
+    decided_at: null,
+  },
+  insert: {
+    id: "card-insert",
+    op: "insert",
+    before_text: "",
+    after_text: "GraphQL, Node.js",
+    position: "after_line",
+    anchor_text: "## Skills",
+    state: "pending",
+    cv_id: "cv-1",
+    message_id: "msg-2",
+    created_at: "2026-03-01T10:01:00Z",
+    decided_at: null,
+  },
+  remove: {
+    id: "card-remove",
+    op: "remove",
+    before_text: "test@example.com · +1234567890 · Berlin, Germany",
+    after_text: "",
+    position: null,
+    anchor_text: null,
+    state: "pending",
+    cv_id: "cv-1",
+    message_id: "msg-2",
+    created_at: "2026-03-01T10:01:00Z",
+    decided_at: null,
+  },
+} as const satisfies Record<string, ChangeCard>;
 
 // ---------------------------------------------------------------------------
 // Telegram mock data
@@ -510,15 +569,12 @@ export const handlers = [
     const newCv = {
       id: "cv-new",
       name: body.name ?? "Untitled CV",
-      personal_info: body.personal_info ?? null,
-      summary: body.summary ?? null,
-      work_experience: body.work_experience ?? null,
-      education: body.education ?? null,
-      skills: body.skills ?? null,
-      languages: body.languages ?? null,
+      content: body.content ?? "",
+      version: 1,
       linked_applications_count: 0,
       created_at: "2026-03-10T10:00:00Z",
       updated_at: "2026-03-10T10:00:00Z",
+      ...OWN_CV_FIELDS,
     };
     return HttpResponse.json(newCv, { status: 201 });
   }),
@@ -541,7 +597,21 @@ export const handlers = [
     if (!cv) {
       return HttpResponse.json({ detail: "Not found" }, { status: 404 });
     }
-    return HttpResponse.json({ ...cv, ...body });
+    // The real API requires the loaded version and bumps it on every save
+    const { version, ...changes } = body;
+    if (typeof version !== "number") {
+      return HttpResponse.json({ detail: "version is required" }, { status: 422 });
+    }
+    return HttpResponse.json({ ...cv, ...changes, version: version + 1 });
+  }),
+
+  // POST /api/v1/cvs/:id/make-base — the CV becomes the base (a tailored copy becomes own)
+  http.post(`${BASE_URL}/api/v1/cvs/:id/make-base`, ({ params }) => {
+    const cv = mockCvs.find((c) => c.id === params.id);
+    if (!cv) {
+      return HttpResponse.json({ detail: "CV not found." }, { status: 404 });
+    }
+    return HttpResponse.json({ ...cv, is_base: true, kind: "own" });
   }),
 
   // DELETE /api/v1/cvs/:id — delete CV
@@ -557,6 +627,36 @@ export const handlers = [
   http.get(`${BASE_URL}/api/v1/applications/:id/chat`, () => {
     return HttpResponse.json(mockChatMessages);
   }),
+
+  // POST /api/v1/applications/:id/chat/cards/:cardId/accept — apply a change card
+  http.post(
+    `${BASE_URL}/api/v1/applications/:id/chat/cards/:cardId/accept`,
+    ({ params }) => {
+      const base =
+        Object.values(mockChangeCards).find((c) => c.id === params.cardId) ??
+        mockChangeCards.replace;
+      return HttpResponse.json({
+        ...base,
+        state: "accepted",
+        decided_at: "2026-03-01T10:05:00Z",
+      });
+    },
+  ),
+
+  // POST /api/v1/applications/:id/chat/cards/:cardId/reject — reject a change card
+  http.post(
+    `${BASE_URL}/api/v1/applications/:id/chat/cards/:cardId/reject`,
+    ({ params }) => {
+      const base =
+        Object.values(mockChangeCards).find((c) => c.id === params.cardId) ??
+        mockChangeCards.replace;
+      return HttpResponse.json({
+        ...base,
+        state: "rejected",
+        decided_at: "2026-03-01T10:05:00Z",
+      });
+    },
+  ),
 
   // DELETE /api/v1/applications/:id/chat — clear chat history
   http.delete(`${BASE_URL}/api/v1/applications/:id/chat`, () => {
@@ -603,6 +703,9 @@ export const handlers = [
         ...original,
         id: "cv-duplicated",
         name: (body.name as string) ?? `${original.name} (copy)`,
+        // A duplicate is always an own, non-base CV
+        ...OWN_CV_FIELDS,
+        version: 1,
         linked_applications_count: 0,
         created_at: "2026-03-10T10:00:00Z",
         updated_at: "2026-03-10T10:00:00Z",

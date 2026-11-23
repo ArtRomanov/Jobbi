@@ -1,7 +1,7 @@
 """add web columns to vacancy_sources
 
 Revision ID: 4e7a1c9b2d05
-Revises: 031b22b73174
+Revises: cd2779fea0d9
 Create Date: 2026-11-23 12:00:00.000000
 
 """
@@ -14,7 +14,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "4e7a1c9b2d05"
-down_revision: str | None = "031b22b73174"
+down_revision: str | None = "cd2779fea0d9"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

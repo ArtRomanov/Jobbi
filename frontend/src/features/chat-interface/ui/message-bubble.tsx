@@ -31,6 +31,7 @@ export function MessageBubble({
 
   return (
     <div
+      data-message-role={role}
       style={{
         ...variant,
         maxWidth: "80%",

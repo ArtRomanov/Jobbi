@@ -1,6 +1,5 @@
 import { act, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Route, Routes } from "react-router-dom";
 import { useToast } from "@/shared/ui";
 import type { ToastOptions, ToastType } from "@/shared/ui";
 import { renderWithProviders } from "./utils";
@@ -66,10 +65,8 @@ describe("Toast", () => {
 
   it("renders a link that navigates and closes the toast", async () => {
     const user = userEvent.setup();
-    renderWithProviders(
-      <Routes>
-        <Route path="*" element={<Trigger options={{ link: { label: "Open it", to: "/target" } }} />} />
-      </Routes>,
+    const { router } = renderWithProviders(
+      <Trigger options={{ link: { label: "Open it", to: "/target" } }} />,
     );
 
     await user.click(screen.getByRole("button", { name: "Show" }));
@@ -77,9 +74,8 @@ describe("Toast", () => {
     expect(link).toHaveAttribute("href", "/target");
 
     await user.click(link);
-    expect(window.location.pathname).toBe("/target");
+    expect(router.state.location.pathname).toBe("/target");
     expect(screen.queryByText("Hello")).not.toBeInTheDocument();
-    window.history.replaceState(null, "", "/");
   });
 
   it("pauses while focused and closes after the remaining time once focus leaves", async () => {

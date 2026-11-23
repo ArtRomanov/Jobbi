@@ -1,30 +1,24 @@
 import { StrictMode, useState } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
-import { http, HttpResponse } from "msw";
+import { useLocation } from "react-router-dom";
+import { delay, http, HttpResponse } from "msw";
 import { ChatPage } from "@/pages/chat/ui/chat-page";
-import { ToastProvider } from "@/shared/ui";
+import { mockChangeCards } from "./mocks/handlers";
 import { server } from "./setup";
+import { renderWithProviders } from "./utils";
 
 const BASE_URL = "http://localhost:8000";
+const CARD_TITLE = /^CV text — change \d+$/;
+const ACCEPT = /^Accept change \d+$/;
+const REJECT = /^Reject change \d+$/;
 
 function renderChatPage(applicationId: string) {
-  return render(
-    <MemoryRouter
-      initialEntries={[`/applications/${applicationId}/chat`]}
-    >
-      <ToastProvider>
-        <Routes>
-          <Route
-            path="/applications/:id/chat"
-            element={<ChatPage />}
-          />
-          <Route path="/dashboard" element={<p>Dashboard</p>} />
-        </Routes>
-      </ToastProvider>
-    </MemoryRouter>,
-  );
+  return renderWithProviders(<ChatPage />, {
+    initialEntries: [`/applications/${applicationId}/chat`],
+    path: "/applications/:id/chat",
+    routes: [{ path: "/dashboard", element: <p>Dashboard</p> }],
+  });
 }
 
 beforeEach(() => {
@@ -101,15 +95,10 @@ describe("ChatPage draft from router state", () => {
   }
 
   function renderWithDraft() {
-    return render(
-      <MemoryRouter initialEntries={[{ pathname: "/applications/app-1/chat", state: { draft: DRAFT } }]}>
-        <ToastProvider>
-          <Routes>
-            <Route path="/applications/:id/chat" element={<RemountableChat />} />
-          </Routes>
-        </ToastProvider>
-      </MemoryRouter>,
-    );
+    return renderWithProviders(<RemountableChat />, {
+      initialEntries: [{ pathname: "/applications/app-1/chat", state: { draft: DRAFT } }],
+      path: "/applications/:id/chat",
+    });
   }
 
   it("pre-fills the input without sending it", async () => {
@@ -155,28 +144,18 @@ describe("ChatPage draft under StrictMode", () => {
       const location = useLocation();
       return <output aria-label="router state">{JSON.stringify(location.state)}</output>;
     }
-    render(
-      <StrictMode>
-        <MemoryRouter
-          initialEntries={[
-            { pathname: "/applications/app-1/chat", state: { draft: "Adapt my CV to this vacancy" } },
-          ]}
-        >
-          <ToastProvider>
-            <Routes>
-              <Route
-                path="/applications/:id/chat"
-                element={
-                  <>
-                    <ChatPage />
-                    <StateProbe />
-                  </>
-                }
-              />
-            </Routes>
-          </ToastProvider>
-        </MemoryRouter>
-      </StrictMode>,
+    renderWithProviders(
+      <>
+        <ChatPage />
+        <StateProbe />
+      </>,
+      {
+        initialEntries: [
+          { pathname: "/applications/app-1/chat", state: { draft: "Adapt my CV to this vacancy" } },
+        ],
+        path: "/applications/:id/chat",
+        wrapper: StrictMode,
+      },
     );
 
     expect(screen.getByRole("textbox", { name: "Chat message" })).toHaveValue("Adapt my CV to this vacancy");
@@ -185,5 +164,266 @@ describe("ChatPage draft under StrictMode", () => {
     );
     await screen.findByText(/Acme Corp — Senior Engineer/);
     expect(screen.getByRole("textbox", { name: "Chat message" })).toHaveValue("Adapt my CV to this vacancy");
+  });
+});
+
+describe("ChatPage change cards", () => {
+  const userMessage = {
+    id: "msg-1",
+    application_id: "app-1",
+    role: "user",
+    content: "Improve my CV",
+    created_at: "2026-03-01T10:00:00Z",
+    cards: [],
+  };
+  const assistantMessage = {
+    id: "msg-2",
+    application_id: "app-1",
+    role: "assistant",
+    content: "Here are two edits.",
+    created_at: "2026-03-01T10:01:00Z",
+    cards: [mockChangeCards.replace, mockChangeCards.remove],
+  };
+
+  function sseBody(frames: string[]): ReadableStream<Uint8Array> {
+    const encoder = new TextEncoder();
+    return new ReadableStream({
+      start(controller) {
+        for (const frame of frames) controller.enqueue(encoder.encode(frame));
+        controller.close();
+      },
+    });
+  }
+
+  it("renders cards from the history after a reload, in order, still clickable", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get(`${BASE_URL}/api/v1/applications/:id/chat`, () =>
+        HttpResponse.json([userMessage, assistantMessage]),
+      ),
+    );
+    renderChatPage("app-1");
+
+    await screen.findByText("Here are two edits.");
+    const cards = screen.getAllByRole("article", { name: CARD_TITLE });
+    expect(cards).toHaveLength(2);
+    expect(within(cards[0]!).getByText("Before")).toBeInTheDocument();
+    expect(within(cards[1]!).getByText("Removed")).toBeInTheDocument();
+
+    await user.click(within(cards[0]!).getByRole("button", { name: ACCEPT }));
+
+    expect(await within(cards[0]!).findByText("Accepted")).toBeInTheDocument();
+    expect(within(cards[1]!).getByRole("button", { name: ACCEPT })).toBeEnabled();
+  });
+
+  /**
+   * GET /chat answers `[]` until the message is sent, then `afterSend`;
+   * POST /chat streams `frames`. Returns the number of GET calls so far.
+   */
+  function mockStream(frames: string[], afterSend: unknown[]): () => number {
+    let posted = false;
+    let getCalls = 0;
+    server.use(
+      http.get(`${BASE_URL}/api/v1/applications/:id/chat`, () => {
+        getCalls += 1;
+        return HttpResponse.json(posted ? afterSend : []);
+      }),
+      http.post(`${BASE_URL}/api/v1/applications/:id/chat`, () => {
+        posted = true;
+        return new HttpResponse(sseBody(frames), {
+          headers: { "Content-Type": "text/event-stream" },
+        });
+      }),
+    );
+    return () => getCalls;
+  }
+
+  async function send(text: string): Promise<void> {
+    const user = userEvent.setup();
+    await screen.findByText(/No messages yet/);
+    await user.type(screen.getByRole("textbox", { name: "Chat message" }), text);
+    await user.keyboard("{Enter}");
+  }
+
+  const cardsFrame = (cards: unknown[]): string =>
+    `event: cards\ndata: ${JSON.stringify(cards)}\n\n`;
+  // Same framing as the backend: JSON payloads on one `data:` line
+  const tokenFrame = (text: string): string =>
+    `event: token\ndata: ${JSON.stringify({ text })}\n\n`;
+  const DONE = `event: done\ndata: ${JSON.stringify({ status: "complete" })}\n\n`;
+
+  it("attaches cards from the SSE stream to the streamed reply", async () => {
+    const getCalls = mockStream(
+      [
+        tokenFrame("Added "),
+        tokenFrame("it."),
+        cardsFrame([mockChangeCards.insert]),
+        DONE,
+      ],
+      [
+        { ...userMessage, content: "Add GraphQL" },
+        { ...assistantMessage, content: "Added it.", cards: [mockChangeCards.insert] },
+      ],
+    );
+    renderChatPage("app-1");
+    await send("Add GraphQL");
+
+    const card = await screen.findByRole("article", { name: CARD_TITLE });
+    expect(within(card).getByText("Added after: ## Skills")).toBeInTheDocument();
+    expect(screen.getByText("Added it.")).toBeInTheDocument();
+
+    // The history reload after `done` keeps the same card element (same message id)
+    await waitFor(() => expect(getCalls()).toBe(2));
+    expect(screen.getByRole("article", { name: CARD_TITLE })).toBe(card);
+
+    await userEvent.setup().click(within(card).getByRole("button", { name: REJECT }));
+    expect(await screen.findByText("Rejected")).toBeInTheDocument();
+    expect(screen.getAllByRole("article", { name: CARD_TITLE })).toHaveLength(1);
+  });
+
+  it("keeps a card decided while the history reload was in flight", async () => {
+    let releaseReload: () => void = () => undefined;
+    const reloadGate = new Promise<void>((resolve) => {
+      releaseReload = resolve;
+    });
+    let posted = false;
+    let getCalls = 0;
+    server.use(
+      http.get(`${BASE_URL}/api/v1/applications/:id/chat`, async () => {
+        getCalls += 1;
+        if (!posted) return HttpResponse.json([]);
+        // The reload read the card before the Accept landed: still pending
+        await reloadGate;
+        return HttpResponse.json([
+          { ...userMessage, content: "Add GraphQL" },
+          { ...assistantMessage, content: "Added it (saved).", cards: [mockChangeCards.insert] },
+        ]);
+      }),
+      http.post(`${BASE_URL}/api/v1/applications/:id/chat`, () => {
+        posted = true;
+        return new HttpResponse(
+          sseBody([tokenFrame("Added it."), cardsFrame([mockChangeCards.insert]), DONE]),
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      }),
+    );
+    renderChatPage("app-1");
+    await send("Add GraphQL");
+
+    const card = await screen.findByRole("article", { name: CARD_TITLE });
+    await waitFor(() => expect(getCalls).toBe(2));
+    await userEvent.setup().click(within(card).getByRole("button", { name: ACCEPT }));
+    expect(await within(card).findByText("Accepted")).toBeInTheDocument();
+
+    releaseReload();
+
+    // The reload has landed (the saved reply text replaced the streamed one)
+    expect(await screen.findByText("Added it (saved).")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole("article", { name: CARD_TITLE })).toHaveAttribute(
+        "data-state",
+        "accepted",
+      ),
+    );
+    expect(screen.queryByRole("button", { name: ACCEPT })).not.toBeInTheDocument();
+  });
+
+  it("shows a cards-only reply without an empty assistant bubble", async () => {
+    const getCalls = mockStream(
+      [cardsFrame([mockChangeCards.remove]), DONE],
+      [
+        { ...userMessage, content: "Drop my contacts" },
+        { ...assistantMessage, content: "", cards: [mockChangeCards.remove] },
+      ],
+    );
+    const { container } = renderChatPage("app-1");
+    await send("Drop my contacts");
+
+    const card = await screen.findByRole("article", { name: CARD_TITLE });
+    expect(within(card).getByText("Removed")).toBeInTheDocument();
+    await waitFor(() => expect(getCalls()).toBe(2));
+    expect(screen.getByRole("article", { name: CARD_TITLE })).toBe(card);
+    expect(container.querySelectorAll('[data-message-role="assistant"]')).toHaveLength(0);
+  });
+
+  it("shows the decoded text of token frames, not their JSON", async () => {
+    mockStream(
+      [tokenFrame('Line one\nwith "quotes"'), cardsFrame([]), DONE],
+      [],
+    );
+    const { container } = renderChatPage("app-1");
+    await screen.findByText(/No messages yet/);
+    // Hold the reload after `done`, so the streamed reply stays on screen
+    server.use(
+      http.get(`${BASE_URL}/api/v1/applications/:id/chat`, async () => {
+        await delay("infinite");
+        return HttpResponse.json([]);
+      }),
+    );
+    await send("Hi");
+
+    await waitFor(() =>
+      expect(
+        container.querySelector('[data-message-role="assistant"]'),
+      ).toHaveTextContent('Line one with "quotes"'),
+    );
+    expect(screen.queryByText(/\{"text"/)).not.toBeInTheDocument();
+  });
+
+  it("shows the decoded detail of an error frame", async () => {
+    mockStream(
+      [`event: error\ndata: ${JSON.stringify({ detail: "Model unavailable" })}\n\n`],
+      [],
+    );
+    renderChatPage("app-1");
+    await send("Hi");
+
+    expect(await screen.findByText("Model unavailable")).toBeInTheDocument();
+  });
+
+  const errorFrame = (detail: string): string =>
+    `event: error\ndata: ${JSON.stringify({ detail })}\n\n`;
+
+  it("reloads the history when the stream fails after tokens, so a saved reply shows", async () => {
+    const getCalls = mockStream(
+      [tokenFrame("Here is "), tokenFrame("the answer."), errorFrame("Something went wrong.")],
+      [
+        { ...userMessage, content: "Help" },
+        { ...assistantMessage, content: "Here is the answer.", cards: [mockChangeCards.insert] },
+      ],
+    );
+    renderChatPage("app-1");
+    await send("Help");
+
+    expect(await screen.findByText("Something went wrong.")).toBeInTheDocument();
+    await waitFor(() => expect(getCalls()).toBe(2));
+    expect(await screen.findByText("Here is the answer.")).toBeInTheDocument();
+    expect(screen.getByRole("article", { name: CARD_TITLE })).toBeInTheDocument();
+  });
+
+  it("does not reload the history when the stream fails before any token", async () => {
+    const getCalls = mockStream([errorFrame("Something went wrong.")], []);
+    renderChatPage("app-1");
+    await send("Help");
+
+    expect(await screen.findByText("Something went wrong.")).toBeInTheDocument();
+    expect(getCalls()).toBe(1);
+  });
+
+  it("ignores an empty cards event", async () => {
+    const getCalls = mockStream(
+      [tokenFrame("No edits needed."), cardsFrame([]), DONE],
+      [
+        { ...userMessage, content: "Is my CV fine?" },
+        { ...assistantMessage, content: "No edits needed.", cards: [] },
+      ],
+    );
+    const { container } = renderChatPage("app-1");
+    await send("Is my CV fine?");
+
+    await waitFor(() => expect(getCalls()).toBe(2));
+    expect(await screen.findByText("No edits needed.")).toBeInTheDocument();
+    expect(screen.queryByRole("article")).not.toBeInTheDocument();
+    expect(container.querySelectorAll('[data-message-role="assistant"]')).toHaveLength(1);
   });
 });

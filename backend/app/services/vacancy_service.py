@@ -415,8 +415,16 @@ _CV_NAME_MAX = Cv.__table__.c.name.type.length or 255
 
 
 def tailored_cv_name(cv_name: str, company_name: str, role_title: str) -> str:
-    """The copy name "<CV name> — <Company> <Role>", cut to the column length."""
-    return f"{cv_name} — {company_name} {role_title}"[:_CV_NAME_MAX]
+    """The copy name "<CV name> — <Company> <Role>", cut to the column length.
+
+    An empty (or blank) company or role is left out with its space; with
+    both empty the name is the CV name alone, without the dash.
+    """
+    target = " ".join(
+        part for part in (company_name.strip(), role_title.strip()) if part
+    )
+    name = f"{cv_name} — {target}" if target else cv_name
+    return name[:_CV_NAME_MAX]
 
 
 async def add_to_tracker(
@@ -440,7 +448,8 @@ async def add_to_tracker(
     3. Application in status researching; `job_url` = job link or post URL
        (None unless it is an http(s) URL);
        notes = the given notes, else the card text.
-    4. With `base_cv_id`: a copy named "<CV> — <Company> <Role>", linked.
+    4. With `base_cv_id` (the CV the user chose): a tailored copy named
+       "<CV> — <Company> <Role>", linked both ways to the application.
     5. Card linked to the application; commit.
 
     Raises VacancyNotFoundError (missing, pending, another user's),
@@ -510,6 +519,7 @@ async def add_to_tracker(
                 user_id,
                 base_cv_id,
                 tailored_cv_name(base.name, company_name, role_title),
+                tailored_for_application_id=application.id,
             )
             application.cv_id = copy.id
             cv_id = copy.id

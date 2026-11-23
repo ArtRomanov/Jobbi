@@ -1,10 +1,13 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, ForeignKey, String, Text, func
+from sqlalchemy import JSON, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
+
+CV_KIND_OWN = "own"
+CV_KIND_TAILORED = "tailored"
 
 
 class Cv(Base):
@@ -22,6 +25,29 @@ class Cv(Base):
         index=True,
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    content: Mapped[str] = mapped_column(
+        Text, nullable=False, default="", server_default=""
+    )
+    # "own" or "tailored" (a copy made by "Add & tailor CV"). Kept apart from
+    # `tailored_for_application_id` so a copy whose application was deleted
+    # still reads as tailored ("Application deleted").
+    kind: Mapped[str] = mapped_column(
+        String(10), nullable=False, default=CV_KIND_OWN, server_default=CV_KIND_OWN
+    )
+    # The application a tailored copy was made for. SQLite does not enforce
+    # FKs, so `delete_application` nulls it by hand. `use_alter` breaks the
+    # applications.cv_id <-> cvs.tailored_for_application_id FK cycle.
+    tailored_for_application_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("applications.id", ondelete="SET NULL", use_alter=True),
+        nullable=True,
+    )
+    # Optimistic-concurrency token: bumped on every name or content write.
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
+    # Legacy structured form fields (spec 003). Not read or written by app code
+    # since spec 011; kept for one release as the rollback path.
     personal_info: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     work_experience: Mapped[list | None] = mapped_column(JSON, nullable=True)

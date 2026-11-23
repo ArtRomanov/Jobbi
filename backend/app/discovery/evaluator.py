@@ -52,13 +52,19 @@ MAX_DESCRIPTION_CHARS = 500
 MAX_PROFILE_VALUE_CHARS = 100
 MAX_NAME_CHARS = 200
 REQUEST_TIMEOUT_S = 60.0
-MAX_COMPLETION_TOKENS = 2_000
+# Reasoning models count their thinking in completion tokens: gpt-oss-20b at
+# reasoning_effort "medium" used ~2 300 completion tokens on 5 long posts
+# (2026-11-23), so the cap leaves room for that plus the JSON answer.
+MAX_COMPLETION_TOKENS = 4_000
 
 # Fence markers. Post text can never contain "<<<" or ">>>" (see `_defang`), so a
 # post cannot close its own fence or open a fake one.
 _FENCE_OPEN = "<<<POST {key}>>>"
 _FENCE_CLOSE = "<<<END {key}>>>"
-_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+# Only a reasoning block that opens the answer is stripped (qwen puts one there).
+# Tags elsewhere can be text a post made the model copy into a reason; removing
+# from one such tag to the next would silently delete other posts' verdicts.
+_THINK_RE = re.compile(r"\A\s*<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
 SYSTEM_PROMPT = """\
 You screen posts from job channels and career pages for one job seeker.
@@ -385,6 +391,17 @@ def _map_status_error(exc: groq.APIStatusError) -> EvaluationError:
     return EvaluationTransportError(f"HTTP {status} {code or ''}".strip())
 
 
+def _model_options(model: str) -> dict[str, Any]:
+    """Extra request options per model family.
+
+    gpt-oss reasons before answering. "medium" is pinned on purpose: "low" cut
+    the tokens by two thirds but broke the fit rules (smoke 10/16 vs 15/16).
+    """
+    if model.startswith("openai/gpt-oss"):
+        return {"reasoning_effort": "medium"}
+    return {}
+
+
 async def evaluate_batch(
     client: groq.AsyncGroq,
     model: str,
@@ -410,6 +427,7 @@ async def evaluate_batch(
             response_format={"type": "json_object"},
             temperature=0,
             max_completion_tokens=MAX_COMPLETION_TOKENS,
+            **_model_options(model),
             timeout=REQUEST_TIMEOUT_S,
         )
     except groq.APIStatusError as exc:

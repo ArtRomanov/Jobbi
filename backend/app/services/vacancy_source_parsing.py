@@ -22,6 +22,8 @@ Supported inputs:
   empty handle (the source id becomes the handle when it is saved).
 
 Order: Telegram -> Greenhouse/Lever -> Teamtailor -> web. Error texts:
+- a private invite link (`t.me/+HASH`, `t.me/joinchat/HASH`) ->
+  PRIVATE_INVITE_MESSAGE (only public channels can be read);
 - a scheme other than http/https (`file:`, `ftp:`, `javascript:`, ...), a
   `user:pass@` part, an invalid port or an over-long link -> UNSAFE_LINK_MESSAGE;
 - the parsed host is, or ends with, `.greenhouse.io`, `.lever.co` or
@@ -49,6 +51,10 @@ MAX_HANDLE_INPUT_LENGTH = 200
 INVALID_INPUT_MESSAGE = "Enter a Telegram channel as @name or a t.me/name link"
 BOARD_INVALID_INPUT_MESSAGE = "Not a Greenhouse, Lever or Teamtailor job board link"
 UNSAFE_LINK_MESSAGE = "This link can't be used"
+PRIVATE_INVITE_MESSAGE = (
+    "Private Telegram invite links are not supported. "
+    "Add a public channel as @name or a t.me/name link"
+)
 
 # Telegram usernames: 5-32 letters, digits or underscores.
 _TELEGRAM_HANDLE = r"[A-Za-z0-9_]{5,32}"
@@ -119,6 +125,11 @@ _SCHEME_PREFIX = re.compile(
 )
 _HTTP_SCHEMES = frozenset({"http", "https"})
 _HOST_LABEL = re.compile(r"(?!-)[a-z0-9-]{1,63}(?<!-)")
+# Private invite links: `t.me/+HASH` or `t.me/joinchat/HASH` (also on
+# telegram.me). Only used to pick a clearer error text, never accepted.
+_TELEGRAM_PRIVATE_INVITE = re.compile(
+    r"(?:https?://)?(?:t|telegram)\.me/(?:\+|joinchat/)", re.IGNORECASE
+)
 
 
 class SourceInputError(ValueError):
@@ -245,6 +256,8 @@ def _is_valid_host(host: str) -> bool:
 
 def _invalid_input_message(text: str) -> str:
     """Pick the error text for input that is not usable as it is."""
+    if _TELEGRAM_PRIVATE_INVITE.match(text):
+        return PRIVATE_INVITE_MESSAGE
     if _is_board_host(_input_host(text)):
         return BOARD_INVALID_INPUT_MESSAGE
     if _url_scheme(text) is not None:
@@ -274,7 +287,11 @@ def _parse_web(text: str) -> ParsedSource:
     if _is_board_host(host):
         raise SourceInputError(BOARD_INVALID_INPUT_MESSAGE)
     if _is_telegram_host(host):
-        raise SourceInputError(INVALID_INPUT_MESSAGE)
+        raise SourceInputError(
+            PRIVATE_INVITE_MESSAGE
+            if _TELEGRAM_PRIVATE_INVITE.match(text)
+            else INVALID_INPUT_MESSAGE
+        )
     if not host or not _is_valid_host(host):
         # Without a scheme it was probably a mistyped channel name.
         raise SourceInputError(

@@ -2,7 +2,10 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.application import Application
+from app.services.chat_service import get_application_context
 from app.services.groq_client import build_system_prompt
 
 BASE_URL = "/api/v1/applications"
@@ -177,23 +180,9 @@ class _FakeApplication:
 class _FakeCv:
     """Minimal stand-in for Cv model attributes used by build_system_prompt."""
 
-    def __init__(
-        self,
-        name: str = "My CV",
-        personal_info: dict | None = None,
-        summary: str | None = None,
-        work_experience: list | None = None,
-        education: list | None = None,
-        skills: str | None = None,
-        languages: str | None = None,
-    ):
+    def __init__(self, name: str = "My CV", content: str = "") -> None:
         self.name = name
-        self.personal_info = personal_info
-        self.summary = summary
-        self.work_experience = work_experience
-        self.education = education
-        self.skills = skills
-        self.languages = languages
+        self.content = content
 
 
 def test_build_system_prompt_without_cv() -> None:
@@ -206,44 +195,63 @@ def test_build_system_prompt_without_cv() -> None:
     assert "Candidate's CV" not in prompt
 
 
-def test_build_system_prompt_with_cv() -> None:
+_CV_TEXT = (
+    "# Jane Doe\n"
+    "jane@example.com · Yerevan\n\n"
+    "## Summary\n"
+    "Experienced SRE with 5 years of production ops.\n\n"
+    "## Experience\n"
+    "### SRE — CloudCo\n"
+    "Jan 2020 – Jun 2023\n"
+    "Managed infra\n\n"
+    "## Skills\n"
+    "Python, Kubernetes, Terraform"
+)
+
+
+def test_build_system_prompt_with_cv_has_the_whole_text_fenced() -> None:
     app = _FakeApplication(company_name="MegaCorp", role_title="SRE")
-    cv = _FakeCv(
-        name="Main CV",
-        personal_info={"full_name": "Jane Doe"},
-        summary="Experienced SRE with 5 years of production ops.",
-        work_experience=[
-            {
-                "role": "SRE",
-                "company": "CloudCo",
-                "start_date": "2020-01",
-                "end_date": "2023-06",
-                "description": "Managed infra",
-            }
-        ],
-        education=[
-            {
-                "degree": "BSc",
-                "field_of_study": "CS",
-                "institution": "MIT",
-                "start_year": "2016",
-                "end_year": "2020",
-            }
-        ],
-        skills="Python, Kubernetes, Terraform",
-        languages="English, German",
-    )
+    cv = _FakeCv(name="Main CV", content=_CV_TEXT)
+
     prompt = build_system_prompt(app, cv)
 
     assert "MegaCorp" in prompt
-    assert "SRE" in prompt
-    assert "Main CV" in prompt
-    assert "Jane Doe" in prompt
-    assert "Experienced SRE" in prompt
-    assert "CloudCo" in prompt
-    assert "BSc" in prompt
-    assert "Python, Kubernetes, Terraform" in prompt
-    assert "English, German" in prompt
+    assert "Candidate's CV" in prompt
+    block = _fenced(prompt, "CV")
+    assert block == f"<<<DATA CV>>>\n{_CV_TEXT}\n"
+
+
+async def test_chat_context_feeds_the_linked_cv_text(
+    client: httpx.AsyncClient, registered_user: dict, db_session: AsyncSession
+) -> None:
+    headers = _auth_header(registered_user["access_token"])
+    cv = await client.post(
+        "/api/v1/cvs", json={"name": "Main CV", "content": _CV_TEXT}, headers=headers
+    )
+    app = await client.post(
+        BASE_URL,
+        json={"company_name": "MegaCorp", "role_title": "SRE"},
+        headers=headers,
+    )
+    linked_resp = await client.patch(
+        f"{BASE_URL}/{app.json()['id']}",
+        json={"cv_id": cv.json()["id"]},
+        headers=headers,
+    )
+    assert linked_resp.status_code == 200
+    application = await db_session.get(Application, app.json()["id"])
+    assert application is not None
+
+    prompt, _, linked = await get_application_context(db_session, application)
+
+    assert linked is not None
+    assert _fenced(prompt, "CV") == f"<<<DATA CV>>>\n{_CV_TEXT}\n"
+
+
+def test_build_system_prompt_with_empty_cv_text() -> None:
+    prompt = build_system_prompt(_FakeApplication(), _FakeCv(content=""))
+
+    assert _fenced(prompt, "CV") == "<<<DATA CV>>>\n\n"
 
 
 def test_build_system_prompt_with_notes() -> None:
@@ -371,17 +379,14 @@ def test_build_system_prompt_hostile_application_field_stays_fenced(
 
 
 def test_build_system_prompt_hostile_cv_stays_fenced() -> None:
-    cv = _FakeCv(
-        name=_HOSTILE,
-        summary=_HOSTILE,
-        work_experience=[{"role": "Dev", "company": "X", "description": _HOSTILE}],
-        skills=_HOSTILE,
-    )
+    cv = _FakeCv(content=f"## Summary\n{_HOSTILE}\n\n## Skills\n{_HOSTILE}")
 
     prompt = build_system_prompt(_FakeApplication(), cv)
 
     block = _fenced(prompt, "CV")
-    assert block.count("Ignore previous instructions") == 4
+    assert block.count("Ignore previous instructions") == 2
+    # The fake closing marker was defanged, so it can't end the block early.
+    assert "<<END CV>>" in block
     assert "Ignore previous instructions" not in prompt.replace(block, "")
 
 

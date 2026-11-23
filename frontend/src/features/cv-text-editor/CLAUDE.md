@@ -1,0 +1,13 @@
+# CV Text Editor Feature
+
+The CV editor (functional spec 011 §2.1): name field + one textarea for the whole CV, formatting hint, live preview (`CvTextPreview` from `@/entities/cv`, via `useDeferredValue`). Wide screens: editor and preview side by side; phone width (`PHONE_MEDIA_QUERY`): `SegmentedControl` tabs "Edit" / "Preview", "Edit" first. `pages/cv-editor` owns loading, saving, the toast and the `version` sent with PATCH.
+
+- The textarea and the preview share `CV_PANE_BOX_STYLE` (config): fixed `CV_PANE_HEIGHT`, same border/padding/background, each scrolls inside itself (`overflowY: auto`), no textarea resize. The preview is `role="region"` "CV preview" with `tabIndex={0}` so keyboard users can scroll it.
+- `initialValues` are read once (on mount); the page must not remount the editor after a save, or the user's draft is reset.
+- Text limit 20 000 (UTF-16 units, the same unit `maxLength` counts). Typing stops via `maxLength`; a paste is intercepted only when it would pass the limit, then cut to fit by `insertTextWithinLimit` (never splits a surrogate pair), caret placed after the pasted part. A paste that fits stays native so browser undo keeps working.
+- `onExport` (optional) adds "Export PDF", which exports the current draft (name trimmed), not the saved version.
+- Name: `maxLength` 255, trimmed before save; blank → "Required" and `onSave` is not called.
+- Counter "N / 20 000" (space-grouped) shows above `CV_CONTENT_COUNTER_THRESHOLD` (18 000) and joins the textarea's `aria-describedby`.
+- Dirty = the draft differs from `savedValues` (name compared trimmed). "Save" is disabled while not dirty or saving; reverting disables it again. It uses `Button keepFocusable` (`aria-disabled`, not `disabled`), so focus stays on it after a save; `handleSubmit` guards too. The formatting hint's symbols are `aria-hidden`; the textarea is described by `CV_FORMATTING_HINT_DESCRIPTION` (plain words, visually hidden). A blank name shows "Required" while typing.
+- `saveError` (from the page) is shown as `role="alert"` next to Save; `getCvSaveErrorMessage` maps a PATCH 409 `CV_CHANGED` to the "changed elsewhere" text and any other failure to "Could not save the CV. Please try again." The draft is never touched on failure.
+- `useUnsavedChangesGuard(isDirty)`: `useBlocker` (needs the data router) + `beforeunload` while dirty; the editor renders `UnsavedChangesDialog` ("Stay" first and focused, then "Leave"; Escape = Stay). `REPLACE` navigations are not blocked (the app rewriting its own entry, not the user leaving), so the page's `/cvs/new` → `/cvs/<id>/edit` move after the first save and `UploadNotice`'s same-URL state clear go through.

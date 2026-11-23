@@ -23,7 +23,11 @@ from app.models.vacancy import Vacancy, VacancyCardSource
 from app.models.vacancy_seen_key import VacancySeenKey
 from app.models.vacancy_source import VacancySource
 from app.services import vacancy_source_service
-from app.services.vacancy_source_parsing import UNSAFE_LINK_MESSAGE
+from app.services.vacancy_source_parsing import (
+    INVALID_INPUT_MESSAGE,
+    PRIVATE_INVITE_MESSAGE,
+    UNSAFE_LINK_MESSAGE,
+)
 from tests import conftest as root_conftest
 
 _real_session_local = root_conftest.TestSessionLocal
@@ -1354,11 +1358,8 @@ async def test_edit_refused_while_a_first_scan_attempt_runs(
             None,
             "Name can be up to 100 characters",
         ),
-        (
-            {"input": "t.me/joinchat/xyz"},
-            None,
-            "Enter a Telegram channel as @name or a t.me/name link",
-        ),
+        ({"input": "t.me/joinchat/xyz"}, None, PRIVATE_INVITE_MESSAGE),
+        ({"input": "t.me/ab"}, None, INVALID_INPUT_MESSAGE),
     ],
 )
 async def test_edit_errors_match_add_and_change_nothing(

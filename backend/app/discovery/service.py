@@ -90,7 +90,9 @@ logger = logging.getLogger(__name__)
 
 LOOKBACK = timedelta(days=7)
 MAX_PAGES = 10
-EVAL_PAUSE_S = 30.0
+# One AI call per pause. gpt-oss-20b spends ~4 000-5 000 tokens per batch of 5,
+# so 30 s (two calls a minute) would exceed the 8 000 tokens/minute account limit.
+EVAL_PAUSE_S = 45.0
 MAX_EVAL_ATTEMPTS = 3
 # Seen keys of posts inside the lookback window were first seen inside it too
 # (a post cannot be seen before it is posted); the margin absorbs clock skew.

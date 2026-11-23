@@ -1,27 +1,21 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { Layout } from "@/app/layout";
 import { notifyVacanciesChanged } from "@/entities/vacancy";
-import { ToastProvider } from "@/shared/ui";
 import { server } from "./setup";
+import { renderWithProviders } from "./utils";
 
 const NEW_COUNT_URL = "*/api/v1/vacancies/new-count";
 
 function renderLayout(): void {
-  render(
-    <MemoryRouter initialEntries={["/dashboard"]}>
-      <ToastProvider>
-        <Routes>
-          <Route element={<Layout />}>
-            <Route path="/dashboard" element={<p>Dashboard page</p>} />
-            <Route path="/cvs" element={<p>CVs page</p>} />
-          </Route>
-        </Routes>
-      </ToastProvider>
-    </MemoryRouter>,
-  );
+  renderWithProviders(<Layout />, {
+    initialEntries: ["/dashboard"],
+    children: [
+      { path: "/dashboard", element: <p>Dashboard page</p> },
+      { path: "/cvs", element: <p>CVs page</p> },
+    ],
+  });
 }
 
 /** Serves counts in order; the last one repeats. Returns the call counter. */
