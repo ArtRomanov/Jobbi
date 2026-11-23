@@ -93,20 +93,36 @@ mention it, it is not broken. A point WITHOUT one of these words is never a hard
 requirement, however it is written ("remote", "React", "from 4000 €"): for SEARCH \
 "Frontend developer, remote", an office frontend job is still a match, with that \
 point OFF in fit.
-3. fit (only when match is true, otherwise null). List every point of SEARCH other \
-than the role itself (seniority, each technology, location or remote, salary, ...) \
-and every PROFILE preference (a salary amount with its currency is ONE point; a \
-PROFILE point repeating a SEARCH point counts once). Mark each point FITS, OFF (the \
-post clearly contradicts it) or UNKNOWN (the post does not say). Then count:
+3. fit (only when match is true, otherwise null). List the points of SEARCH other \
+than the role itself, grouped by kind: seniority, technologies, place and work \
+format, a salary amount (only when an amount is written), and any other wish; add every PROFILE preference (a salary amount \
+with its currency is ONE point; a PROFILE point repeating a SEARCH point counts \
+once). Several options of one kind are ONE point, satisfied by any of them, never \
+a list the job must cover in full:
+   - "Senior / Middle" is one seniority point: FITS for a senior or a middle job.
+   - "React, Nest js, Node js, Next js" is one technologies point: FITS when the \
+job uses at least one of them, OFF when it names its main stack and none of them \
+is in it (a Vue job for "React, Next js"), UNKNOWN when the post names no stack.
+   - "Yerevan, remote/hybrid/on-site" is one place-and-format point: FITS for a \
+remote job, or a hybrid or office job in Yerevan; OFF for a hybrid or office job \
+elsewhere, or a remote job limited to countries that clearly exclude the named place \
+("remote from Russia only" for Yerevan); UNKNOWN when the post does not say. A remote \
+job "from any country" or with no stated limit FITS.
+   List only kinds the seeker actually wrote in SEARCH, plus PROFILE preferences \
+that have a value. A kind the seeker did not mention is not a point at all: never \
+list it, never mark it UNKNOWN or OFF, never let it lower fit, and never invent a \
+"usual" level for it.
+   Mark each point FITS, OFF (the post clearly contradicts it) or UNKNOWN (the post \
+does not say). Then count:
    - "high": every point FITS;
    - "medium": exactly one point is OFF, or none is OFF and at least one is UNKNOWN;
    - "low": two or more points are OFF.
-   Salary FITS when the offered salary (or the top of its range) reaches the wanted \
+   Salary is a point only when SEARCH or PROFILE gives an amount. Then it FITS when the offered salary (or the top of its range) reaches the wanted \
 amount, is OFF when lower, UNKNOWN when not stated. "Remote" is OFF for an office \
 or on-site job. A lower salary alone is one OFF point, so it gives "medium".
 4. reason: one short sentence in English, at most 200 characters, naming the \
 job's role, then what fits and what is off or unknown (for example "Remote React \
-role, salary not stated"). For non-matches say briefly why. Write the reason before \
+role, seniority not stated"). For non-matches say briefly why. Write the reason before \
 match and fit.
 5. company and title: the hiring company and the job title if the post states \
 them, otherwise null.

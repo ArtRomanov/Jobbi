@@ -45,6 +45,8 @@ class Scenario:
     cases: list[Case]
 
 
+WELLDIN_FULL_POST = "📑 Вакансия Senior Frontend Developer\n\nот $5 000 в месяц · Удалённо из любой страны · Полная занятость\n\n💎 Welldin ищет Senior Frontend Developer для работающего AI-продукта в сфере найма на рынках США и Европы. Предстоит взять на себя фронтенд и определять архитектуру продукта: развивать SPA на React и TypeScript, выбирать стратегию рендеринга, строить модульную архитектуру, создавать интерфейсы с обновлениями в реальном времени, интегрировать внешние API, контролировать производительность и размер бандла, покрывать бизнес-логику тестами. Прямая работа с основателями, минимум бюрократии.\n\n🧩 Требования: От 5 лет опыта во фронтенде, уверенное владение React и TypeScript; понимание event loop, рендеринга и профилирования в браузере; опыт с SSR/SSG, Redux, локальным состоянием и кешированием серверных данных; знание WebSockets, SSE, CORS и браузерной сетевой части; работа со сборщиками webpack, Vite, esbuild или rollup; опыт юнит-тестирования бизнес-логики; умение аргументировать и продвигать технические решения. Плюсом будут микрофронтенды или монорепо, работа с видео и аудио в браузере, разговорный английский и опыт в стартапе на ранней стадии.\n\n\n⚠️ Если работодатель просит войти в их систему через iCloud/Google, прислать код, запустить код/ПО - это мошенники. Обязательно пишите в поддержку."
+
 SCENARIOS = [
     Scenario(
         description="Senior frontend, React, remote, from 4000 €",
@@ -78,6 +80,74 @@ SCENARIOS = [
         cases=[
             Case("Frontend Developer, office in Sofia, React", True, Fit.MEDIUM),
             Case("Full Stack developer (React + Node), remote", False, None),
+        ],
+    ),
+    # Live 2026-11-23 (@frontend_jobs_vakansii): every listed technology and the
+    # city were treated as separate must-haves, so remote React jobs got Medium.
+    Scenario(
+        description=(
+            "Senior / Middle Frontend developer, Full-stack developer, React, "
+            "Nest js, Node js, Next js, Yerevan, remote/hybrid/on-site"
+        ),
+        profile={},
+        cases=[
+            Case(
+                "Вакансия Senior Frontend Developer. от $5 000 в месяц · Удалённо из "
+                "любой страны · Полная занятость. Welldin: SPA на React и TypeScript, "
+                "SSR/SSG, Redux, WebSockets. От 5 лет опыта во фронтенде.",
+                True,
+                Fit.HIGH,
+            ),
+            Case(
+                "Вакансия Senior Frontend Engineer. Удалённо · Полная занятость. "
+                "Squads (финтех, Solana): UI-компоненты, дизайн-система. От 5 лет "
+                "опыта, React, Next.js, TypeScript.",
+                True,
+                Fit.HIGH,
+            ),
+            Case(
+                "Вакансия Frontend Developer (React / Django). Удаленно · Полная "
+                "занятость. Multivision: React-приложения на TypeScript и шаблоны "
+                "Django/Jinja. Опыт уровня Mid-Level в React, TypeScript, Django.",
+                True,
+                Fit.HIGH,
+            ),
+            Case(
+                "Вакансия Middle+/Senior Frontend Developer (Vue). Удалённо · Полная "
+                "занятость. Napoleon IT: Vue 3, Composition API, TypeScript, Pinia, "
+                "Vite. Опыт от 5 лет.",
+                True,
+                Fit.MEDIUM,
+            ),
+        ],
+    ),
+    # Same description, second batch (BATCH_SIZE is 5).
+    Scenario(
+        description=(
+            "Senior / Middle Frontend developer, Full-stack developer, React, "
+            "Nest js, Node js, Next js, Yerevan, remote/hybrid/on-site"
+        ),
+        profile={},
+        cases=[
+            # Full live text: the model invented an "expected senior salary" point.
+            Case(
+                WELLDIN_FULL_POST,
+                True,
+                Fit.HIGH,
+            ),
+            Case(
+                "Вакансия Frontend Vue-разработчик. Удалённо из РФ. Lamoda ищет двух "
+                "разработчиков в B2B-команду Lamoda Seller.",
+                True,
+                Fit.LOW,
+            ),
+            Case(
+                "Вакансия Frontend / Game Client разработчик. от 4000$ · Удалённо · "
+                "Полная занятость. CrownWave Tech: игровой клиент на TypeScript и "
+                "Cocos Creator, iGaming.",
+                True,
+                Fit.MEDIUM,
+            ),
         ],
     ),
 ]
