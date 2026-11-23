@@ -60,6 +60,7 @@ from app.discovery.evaluator import (
     PostVerdict,
     VacancyItem,
     batch_take,
+    can_be_digest,
     evaluate_batch,
     fragment,
     is_cut,
@@ -110,6 +111,8 @@ MAX_PAGES = 10
 # so 30 s (two calls a minute) would exceed the 8 000 tokens/minute account limit.
 EVAL_PAUSE_S = 45.0
 MAX_EVAL_ATTEMPTS = 3
+# Length of the `external_key` columns; a digest card's `<post key>#<n>` must fit.
+MAX_EXTERNAL_KEY_CHARS = 255
 # Seen keys of posts inside the lookback window were first seen inside it too
 # (a post cannot be seen before it is posted); the margin absorbs clock skew.
 _KNOWN_KEYS_MARGIN = timedelta(days=1)
@@ -686,8 +689,9 @@ async def _store_posts(
             # (no AI call; the card keeps the first post's date, fit and text).
             if (
                 post.job_link is not None
-                # Several links: maybe a digest, merged per vacancy after rating.
-                and len(post.links) <= 1
+                # Several different links: maybe a digest, merged per vacancy
+                # after rating. One link repeated on several lines is one job.
+                and len({link.url for link in post.links}) <= 1
                 and (
                     target_id := await _merge_target(
                         session, source.user_id, post.job_link
@@ -1397,7 +1401,9 @@ async def _apply_verdict(
     def result(kind: ForwardResultKind, **fields: Any) -> ForwardResult:
         return ForwardResult(user_id=user_id, external_key=key, kind=kind, **fields)
 
-    if verdict.is_digest:
+    # Only Telegram posts can be digests; the evaluator already rates any other
+    # post as a single one, this is the belt to its braces.
+    if verdict.is_digest and can_be_digest(key):
         split = await _split_digest(session, user_id, row, verdict, report)
         if split is None:
             return [], None
@@ -1492,7 +1498,9 @@ async def _split_digest(
     on them as its job link; the rest (source, post link, dates, alert state,
     card sources) is copied from the pending row. A vacancy whose job link is
     already on a visible card adds the post's sources to that card instead.
-    Zero matching vacancies just delete the pending row.
+    Zero matching vacancies just delete the pending row. A card key that
+    would not fit the column (unreachable for Telegram keys, which are short)
+    skips that vacancy.
     """
     pending = await session.get(Vacancy, row.vacancy_id)
     if pending is None or pending.state != "pending":
@@ -1507,6 +1515,14 @@ async def _split_digest(
     new_ids: list[str] = []
     merged = 0
     for n, item in enumerate(verdict.vacancies[:MAX_DIGEST_VACANCIES], start=1):
+        card_key = f"{row.post.external_key}#{n}"
+        if len(card_key) > MAX_EXTERNAL_KEY_CHARS:
+            logger.warning(
+                "Digest %s: card key for vacancy %d is too long; skipped",
+                row.post.external_key,
+                n,
+            )
+            continue
         text = fragment(row.post.text, item.lines)
         if not text:
             logger.warning(
@@ -1530,7 +1546,7 @@ async def _split_digest(
                 id=card_id,
                 user_id=pending.user_id,
                 source_id=pending.source_id,
-                external_key=f"{row.post.external_key}#{n}",
+                external_key=card_key,
                 url=pending.url,
                 job_link=job_link,
                 title=item.title,

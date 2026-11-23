@@ -499,3 +499,42 @@ def test_emoji_before_a_link_at_line_end_keeps_its_line(field: str) -> None:
     _, post = build_forwarded_post(message, _channel_origin())
 
     assert post.links == (PostLink(line=1, url="https://a.io"),)
+
+
+@pytest.mark.parametrize(
+    "separator",
+    ["\r\n", "\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", " ", " "],
+    ids=["crlf", "cr", "vt", "ff", "fs", "gs", "rs", "nel", "ls", "ps"],
+)
+def test_line_separators_become_line_breaks(separator: str) -> None:
+    """Python's other line boundaries are stored as "\\n", so the lines the AI
+    numbers and the link lines agree; entity offsets still hit their links."""
+    raw = separator.join(["🔥 Jobs", "React: a.io", "Java", "Vue: b.io", "End"])
+    message = _message(
+        text=raw, entities=[_url_entity(raw, "a.io"), _url_entity(raw, "b.io")]
+    )
+
+    _, post = build_forwarded_post(message, _channel_origin())
+
+    assert post.text == "🔥 Jobs\nReact: a.io\nJava\nVue: b.io\nEnd"
+    assert post.links == (
+        PostLink(line=2, url="https://a.io"),
+        PostLink(line=4, url="https://b.io"),
+    )
+
+
+def test_crlf_text_links_keep_their_lines_after_a_leading_break() -> None:
+    raw = "\r\n\r\nRoles:\r\n\r\nDesigner\r\nEnd"
+    entity = MessageEntity(
+        MessageEntity.TEXT_LINK,
+        raw.index("\r\n\r\nDesigner"),
+        len("\r\n\r\nDesigner"),
+        url="https://jobs.example.com/design",
+    )
+
+    _, post = build_forwarded_post(
+        _message(text=raw, entities=[entity]), _channel_origin()
+    )
+
+    assert post.text == "Roles:\n\nDesigner\nEnd"
+    assert post.links == (PostLink(line=3, url="https://jobs.example.com/design"),)

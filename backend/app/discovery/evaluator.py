@@ -9,7 +9,7 @@ limited to booleans, enums and short strings.
 
 import logging
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Container, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -46,6 +46,7 @@ __all__ = [
     "VacancyItem",
     "batch_take",
     "build_messages",
+    "can_be_digest",
     "evaluate_batch",
     "fragment",
     "is_cut",
@@ -160,7 +161,7 @@ position that does not match. Each listed item has:
    - lines: [from, to], the number of the line where this position starts (its \
 heading or first line) and of the last line that describes it. Do not include \
 lines shared by all positions (intro, outro, hashtags, channel contacts) unless they \
-sit inside this position's block.
+sit inside this position's block. The ranges of two positions never overlap.
    - reason, fit, company and title of this position, by rules 3-5 (company is the \
 post's company when the post names one for all its positions).
    If no position matches, "vacancies" is []. For a digest the top-level fields are \
@@ -210,6 +211,16 @@ class Fit(StrEnum):
 
 # Spec 012: at most this many matching vacancies are kept from one digest post.
 MAX_DIGEST_VACANCIES = 20
+
+# Only Telegram posts can be digests: watched channels and public forwards
+# ("tg:") and private forwards ("tgc:"). A board job (Greenhouse, Lever, ...)
+# is always one position.
+_DIGEST_KEY_PREFIXES = ("tg:", "tgc:")
+
+
+def can_be_digest(external_key: str) -> bool:
+    """Whether the post with this key may be split into several vacancies."""
+    return external_key.startswith(_DIGEST_KEY_PREFIXES)
 
 
 def post_lines(text: str) -> list[str]:
@@ -463,7 +474,8 @@ def _digest_items(
     """Validate a digest's `vacancies`; None when the list is unusable.
 
     Items with a bad shape, a bad or out-of-range `lines` or a missing/invalid
-    fit are dropped, as are repeats of an earlier item's range. Items the model
+    fit are dropped, as are items whose range overlaps a kept item's range
+    (the first one wins: a line belongs to one vacancy). Items the model
     marked `"match": false` are skipped (only matches belong in the list). The
     first MAX_DIGEST_VACANCIES valid items are kept. None (the post counts as
     invalid) when `raw_items` is not a list, or is non-empty and nothing in it
@@ -475,7 +487,6 @@ def _digest_items(
         logger.warning("Invalid evaluation item %s: vacancies is not a list", key)
         return None
     kept: list[VacancyItem] = []
-    seen_ranges: set[tuple[int, int]] = set()
     problems: set[str] = set()
     candidates = 0
     for raw in raw_items:
@@ -490,10 +501,10 @@ def _digest_items(
         if line_count is not None and item.lines[1] > line_count:
             problems.add("lines:out_of_range")
             continue
-        if item.lines in seen_ranges:
-            problems.add("lines:duplicate")
+        start, end = item.lines
+        if any(start <= other.lines[1] and other.lines[0] <= end for other in kept):
+            problems.add("lines:overlap")
             continue
-        seen_ranges.add(item.lines)
         kept.append(item)
     if len(kept) < candidates:
         logger.warning(
@@ -508,8 +519,13 @@ def _digest_items(
     return tuple(kept[:MAX_DIGEST_VACANCIES])
 
 
-def _verdict(key: str, item: dict[str, Any], line_count: int | None) -> PostVerdict:
+def _verdict(
+    key: str, item: dict[str, Any], line_count: int | None, *, digest_ok: bool = True
+) -> PostVerdict:
     """Validate one answer item (its `vacancies` separately, item by item).
+
+    `digest_ok` False (a board job, see `can_be_digest`): the post is always
+    rated as one post (`_single_verdict`).
 
     Raises:
         ValidationError: the item itself is malformed.
@@ -520,6 +536,8 @@ def _verdict(key: str, item: dict[str, Any], line_count: int | None) -> PostVerd
     head = PostVerdict.model_validate(fields | {"match": False, "fit": None})
     if not head.is_digest:
         return PostVerdict.model_validate(fields).model_copy(update={"key": key})
+    if not digest_ok:
+        return _single_verdict(key, item, fields, line_count)
     items = _digest_items(key, item.get("vacancies"), line_count)
     if items is None:
         raise ValueError("digest without a valid vacancy")
@@ -539,16 +557,49 @@ def _verdict(key: str, item: dict[str, Any], line_count: int | None) -> PostVerd
     )
 
 
+def _single_verdict(
+    key: str, item: dict[str, Any], fields: dict[str, Any], line_count: int | None
+) -> PostVerdict:
+    """A post that cannot be a digest but was answered as one.
+
+    The prompt tells the model to leave a digest's top-level match/fit empty
+    and put the matching positions in `vacancies`, so the first valid
+    matching position is the post's verdict (a board job is one position; the
+    model only misread its sections). Without one, the top-level fields
+    decide, as for any single post. `vacancy_count` is dropped either way, so
+    the verdict never reads as a digest.
+
+    Raises:
+        ValidationError: the top-level fields are malformed.
+    """
+    items = _digest_items(key, item.get("vacancies"), line_count) or ()
+    single = {**fields, "key": key, "vacancy_count": None}
+    if items:
+        first = items[0]
+        single |= {
+            "is_vacancy": True,
+            "match": True,
+            "fit": first.fit,
+            "reason": first.reason,
+            "company": first.company or fields.get("company"),
+            "title": first.title or fields.get("title"),
+        }
+    return PostVerdict.model_validate(single)
+
+
 def _parse(
     raw_json: str,
     expected_keys: Iterable[str],
     line_counts: Mapping[str, int] | None = None,
+    digest_keys: Container[str] | None = None,
 ) -> tuple[dict[str, PostVerdict], list[str], list[str]]:
     """Validate the model output: (verdicts, missing keys, invalid keys).
 
     Invalid keys are also in the missing list. `line_counts` maps a key to
     `len(post_lines(text))` of its post; digest items whose range ends past it
     are dropped (without an entry only `1 <= from <= to` is checked).
+    `digest_keys`: the keys whose posts may be digests (None: all of them);
+    the others are always rated as single posts (see `_single_verdict`).
 
     Raises:
         EvaluationFormatError: not a JSON object with a `results` list.
@@ -572,7 +623,12 @@ def _parse(
         if key not in wanted or key in results:
             continue  # unknown key, duplicate, or no key: nothing to attribute
         try:
-            verdict = _verdict(key, item, counts.get(key))
+            verdict = _verdict(
+                key,
+                item,
+                counts.get(key),
+                digest_ok=digest_keys is None or key in digest_keys,
+            )
         except ValidationError as exc:
             logger.warning("Invalid evaluation item %s: %s", key, _error_summary(exc))
         except ValueError as exc:
@@ -590,6 +646,7 @@ def parse_response(
     raw_json: str,
     expected_keys: Iterable[str],
     line_counts: Mapping[str, int] | None = None,
+    digest_keys: Container[str] | None = None,
 ) -> tuple[dict[str, PostVerdict], list[str]]:
     """Validate the model output.
 
@@ -598,12 +655,13 @@ def parse_response(
     in order: left out, or answered with a malformed item. For a digest
     (`vacancy_count >= 2`) the `vacancies` items are checked one by one against
     `line_counts[key]` (see `_digest_items`); a digest whose non-empty list has
-    no valid item is malformed.
+    no valid item is malformed. Keys outside `digest_keys` (None: all keys
+    may be digests) are always rated as single posts.
 
     Raises:
         EvaluationFormatError: not a JSON object with a `results` list.
     """
-    results, missing, _ = _parse(raw_json, expected_keys, line_counts)
+    results, missing, _ = _parse(raw_json, expected_keys, line_counts, digest_keys)
     return results, missing
 
 
@@ -679,7 +737,12 @@ async def evaluate_batch(
     line_counts = {
         key: len(post_lines(post.text)) for key, post in zip(prompt_keys, posts)
     }
-    by_prompt_key, missing, invalid = _parse(content or "", prompt_keys, line_counts)
+    digest_keys = {
+        key for key, post in zip(prompt_keys, posts) if can_be_digest(post.external_key)
+    }
+    by_prompt_key, missing, invalid = _parse(
+        content or "", prompt_keys, line_counts, digest_keys
+    )
     to_external = {key: post.external_key for key, post in zip(prompt_keys, posts)}
     usage = getattr(completion, "usage", None)
     return BatchEvaluation(

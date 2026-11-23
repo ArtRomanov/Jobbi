@@ -113,14 +113,41 @@ def _first_job_link(entities: list[tuple[MessageEntity, str]]) -> str | None:
     return None
 
 
+# Line boundaries of `str.splitlines` other than "\n". They are stored as
+# "\n", because the AI numbers lines and links carry lines split on "\n" only.
+_LINE_BREAKS = frozenset("\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
+
+
+def _normalize_line_breaks(raw: str) -> tuple[str, list[int]]:
+    """`raw` with every line boundary as "\n", and the index in it of each
+    index of `raw` (plus one past the end).
+
+    "\r\n" is the only boundary of two characters: both map to its "\n".
+    """
+    out: list[str] = []
+    index_map: list[int] = []
+    for i, char in enumerate(raw):
+        index_map.append(len(out))
+        if char == "\r" and raw[i + 1 : i + 2] == "\n":
+            continue  # the "\n" that follows is the break
+        out.append("\n" if char in _LINE_BREAKS else char)
+    index_map.append(len(out))
+    return "".join(out), index_map
+
+
 def _post_links(
     entities: list[tuple[MessageEntity, str]], raw: str, stored: str
 ) -> tuple[PostLink, ...]:
-    """Outside links with the line of `stored` (`raw.strip()`, capped) on which
-    their visible text starts; links without visible text or beyond the cap are
-    dropped."""
+    """Outside links with the line of `stored` (the normalized `raw`, stripped
+    and capped) on which their visible text starts; links without visible text
+    or beyond the cap are dropped.
+
+    Entity offsets count UTF-16 code units of `raw` as Telegram sent it, so
+    positions are found in `raw` and then mapped into the normalized text.
+    """
     utf16 = raw.encode("utf-16-le")
-    lead = len(raw) - len(raw.lstrip())
+    normalized, index_map = _normalize_line_breaks(raw)
+    lead = len(normalized) - len(normalized.lstrip())
     links: list[PostLink] = []
     for entity, text in entities:
         url = _entity_url(entity, text)
@@ -131,9 +158,11 @@ def _post_links(
         visible = next(
             (i for i, char in enumerate(text, start) if not char.isspace()), None
         )
-        if visible is None or not 0 <= visible - lead < len(stored):
+        if visible is None or visible >= len(raw):
             continue
-        offset = visible - lead
+        offset = index_map[visible] - lead
+        if not 0 <= offset < len(stored):
+            continue
         link = PostLink(line=stored.count("\n", 0, offset) + 1, url=url)
         if link not in links:
             links.append(link)
@@ -145,7 +174,7 @@ def build_forwarded_post(
 ) -> tuple[ForwardedChannel, RawPost] | None:
     """Card source and post for a forwarded channel post; None without text."""
     raw = message.text or message.caption or ""
-    text = raw.strip()[:MAX_TEXT_CHARS]
+    text = _normalize_line_breaks(raw)[0].strip()[:MAX_TEXT_CHARS]
     if not text:
         return None
     entities = _link_entities(message)

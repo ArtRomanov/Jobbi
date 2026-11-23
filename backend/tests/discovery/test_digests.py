@@ -142,9 +142,11 @@ async def make_post(
     alert_handled_at: datetime | None = None,
     from_initial_scan: bool = False,
     found_at: datetime = NOW - timedelta(hours=2),
+    key: str | None = None,
 ) -> str:
-    """A pending post `tg:other/<n>` with its seen key and one card source."""
-    key = f"tg:other/{n}"
+    """A pending post (`tg:other/<n>` unless `key` is given) with its seen key
+    and one card source."""
+    key = key or f"tg:other/{n}"
     async with db() as session:
         session.add(
             VacancySeenKey(user_id=user_id, external_key=key, first_seen_at=found_at)
@@ -153,7 +155,7 @@ async def make_post(
             user_id=user_id,
             source_id=source_id,
             external_key=key,
-            url=f"https://t.me/other/{n}",
+            url=f"https://t.me/other/{n}" if key.startswith("tg") else key,
             job_link=REACT_LINK if links else None,
             text=text,
             links=links,
@@ -301,6 +303,43 @@ async def test_digest_becomes_one_card_per_matching_vacancy(
     assert ai.violations == 0
 
 
+async def test_board_job_is_never_split_as_a_digest(factory, db, sleep, four) -> None:
+    """Only Telegram posts can be digests; a board job the AI calls a digest
+    stays one card, rated by its first matching position."""
+    user_id = await make_user(db)
+    await make_post(
+        db, user_id, 1, DIGEST_TEXT, key="gh:acme/1", kind="greenhouse", handle="acme"
+    )
+    ai = DigestGroq(four, factory)
+
+    report = await evaluate_pending(factory, ai, at(NOW), config=CONFIG, sleep=sleep)
+
+    [card] = await vacancies(db)
+    assert card.external_key == "gh:acme/1"
+    assert (card.state, card.fit, card.fit_reason) == (
+        "new",
+        "high",
+        "Remote React role",
+    )
+    assert card.text == DIGEST_TEXT
+    assert report.matches == 1
+    assert report.new_card_ids == {user_id: [card.id]}
+
+
+async def test_digest_card_keys_never_exceed_the_column(
+    factory, db, sleep, four
+) -> None:
+    long_key = "tg:" + "x" * 250 + "/1"  # 255 characters: "#<n>" cannot fit
+    user_id = await make_user(db)
+    await make_post(db, user_id, 1, DIGEST_TEXT, key=long_key)
+    ai = DigestGroq(four, factory)
+
+    await evaluate_pending(factory, ai, at(NOW), config=CONFIG, sleep=sleep)
+
+    assert all(len(card.external_key) <= 255 for card in await vacancies(db))
+    assert (await seen_key(db, long_key)).evaluated_at == NOW
+
+
 async def test_digest_without_matching_vacancies_is_deleted(factory, db, sleep) -> None:
     user_id = await make_user(db)
     await make_post(db, user_id, 1, "DG_NONE\nSales\nSupport", links=[[2, REACT_LINK]])
@@ -325,18 +364,17 @@ async def test_job_link_is_the_first_link_on_the_vacancy_lines(
     await make_post(db, user_id, 1, text, links=links)
     items = [
         {"lines": [2, 3], "fit": "high", "title": "A"},
-        {"lines": [3, 3], "fit": "medium", "title": "B"},
         {"lines": [4, 5], "fit": "low", "title": "C"},
     ]
     ai = DigestGroq({"DG_LINKS": digest(*items, count=4)}, factory)
 
     await evaluate_pending(factory, ai, at(NOW), config=CONFIG, sleep=sleep)
 
-    # B's first link is A's job link, so B merges into A; C has no link.
+    # A's lines hold two links (the intro link is outside them); C has none.
     cards = await vacancies(db)
     assert [(c.external_key, c.job_link) for c in cards] == [
         ("tg:other/1#1", "https://b.example.com/1"),
-        ("tg:other/1#3", None),
+        ("tg:other/1#2", None),
     ]
 
 
@@ -694,3 +732,25 @@ async def test_channel_post_with_several_links_is_not_merged_at_store(
     assert [c.external_key for c in await vacancies(db) if c.state == "pending"] == [
         "tg:jobbi_jobs/10"
     ]
+
+
+async def test_channel_post_repeating_one_link_merges_at_store(
+    factory, db, channel, http, sleep
+) -> None:
+    """The same job link on two lines is one link: a repost, not a digest."""
+    user_id = await make_user(db, description=None)
+    await make_source(db, user_id, scanned=True)
+    card_id = await make_card(db, user_id, job_link=REACT_LINK)
+    channel.add(
+        10,
+        f'DG_CHAN React developer <a href="{REACT_LINK}">apply</a><br/>'
+        f'Questions? <a href="{REACT_LINK}">see the job</a>',
+    )
+
+    report = await check_all(
+        factory, http, DigestGroq({}, factory), at(NOW), config=CONFIG, sleep=sleep
+    )
+
+    assert report.posts_merged == 1
+    assert [c.id for c in await vacancies(db)] == [card_id]
+    assert ("telegram", "jobbi_jobs") in (await card_sources(db))[card_id]

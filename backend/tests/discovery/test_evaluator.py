@@ -539,6 +539,25 @@ class TestDigests:
             ((1, 2), Fit.HIGH)
         ]
 
+    def test_overlapping_range_is_dropped_keeping_the_first(self) -> None:
+        raw = response_json(
+            digest(
+                "p1",
+                item([2, 4]),
+                item([4, 6], fit="low"),  # shares line 4 with the first
+                item([1, 9]),  # contains the first
+                item([7, 8], fit="medium"),
+            )
+        )
+
+        results, missing = parse_response(raw, ["p1"], {"p1": 10})
+
+        assert missing == []
+        assert [(v.lines, v.fit) for v in results["p1"].vacancies] == [
+            ((2, 4), Fit.HIGH),
+            ((7, 8), Fit.MEDIUM),
+        ]
+
     def test_capped_at_twenty_keeping_the_first(self) -> None:
         items = [item([n, n]) for n in range(1, 26)]
         raw = response_json(digest("p1", *items, count=25))
@@ -624,6 +643,42 @@ async def test_evaluate_batch_checks_digest_ranges_against_each_post() -> None:
     assert [v.lines for v in batch.results["tg:jobs/1"].vacancies] == [(1, 3)]
     assert batch.missing_keys == ["tg:jobs/2"]
     assert batch.invalid_keys == ["tg:jobs/2"]
+
+
+def board_post(n: int, text: str = "a\nb\nc\nd") -> RawPost:
+    return RawPost(
+        external_key=f"gh:acme/{n}",
+        url=f"https://boards.greenhouse.io/acme/jobs/{n}",
+        job_link=f"https://boards.greenhouse.io/acme/jobs/{n}",
+        title="Frontend Engineer",
+        company="Acme",
+        text=text,
+        posted_at=datetime(2026, 11, 22, 12, 0),
+    )
+
+
+async def test_board_post_called_a_digest_is_rated_as_one_post() -> None:
+    """Only Telegram posts can be digests: a board job the AI calls a digest
+    takes its first matching position as the job's verdict."""
+    raw = response_json(
+        digest("p1", item([1, 2], fit="low", reason="Office job"), item([3, 4])),
+        digest("p2", count=3),  # a board "digest" without a match
+        digest("p3", item([1, 2])),  # a Telegram digest stays a digest
+    )
+    client = FakeGroq(raw)
+    posts = [board_post(1), board_post(2), make_post(3, "a\nb\nc")]
+
+    batch = await evaluate_batch(client, MODEL, DESCRIPTION, {}, posts)  # type: ignore[arg-type]
+
+    single = batch.results["gh:acme/1"]
+    assert not single.is_digest and single.vacancies == ()
+    assert (single.match, single.fit, single.reason) == (True, Fit.LOW, "Office job")
+    assert (single.company, single.title) == ("Acme", "Senior React Developer")
+    rejected = batch.results["gh:acme/2"]
+    assert not rejected.is_digest
+    assert (rejected.match, rejected.fit) == (False, None)
+    assert batch.results["tg:jobs/3"].is_digest
+    assert batch.missing_keys == []
 
 
 async def test_evaluate_batch_maps_keys_and_uses_json_mode() -> None:
