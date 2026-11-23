@@ -381,6 +381,35 @@ describe("ChatPage change cards", () => {
     expect(await screen.findByText("Model unavailable")).toBeInTheDocument();
   });
 
+  const errorFrame = (detail: string): string =>
+    `event: error\ndata: ${JSON.stringify({ detail })}\n\n`;
+
+  it("reloads the history when the stream fails after tokens, so a saved reply shows", async () => {
+    const getCalls = mockStream(
+      [tokenFrame("Here is "), tokenFrame("the answer."), errorFrame("Something went wrong.")],
+      [
+        { ...userMessage, content: "Help" },
+        { ...assistantMessage, content: "Here is the answer.", cards: [mockChangeCards.insert] },
+      ],
+    );
+    renderChatPage("app-1");
+    await send("Help");
+
+    expect(await screen.findByText("Something went wrong.")).toBeInTheDocument();
+    await waitFor(() => expect(getCalls()).toBe(2));
+    expect(await screen.findByText("Here is the answer.")).toBeInTheDocument();
+    expect(screen.getByRole("article", { name: CARD_TITLE })).toBeInTheDocument();
+  });
+
+  it("does not reload the history when the stream fails before any token", async () => {
+    const getCalls = mockStream([errorFrame("Something went wrong.")], []);
+    renderChatPage("app-1");
+    await send("Help");
+
+    expect(await screen.findByText("Something went wrong.")).toBeInTheDocument();
+    expect(getCalls()).toBe(1);
+  });
+
   it("ignores an empty cards event", async () => {
     const getCalls = mockStream(
       [tokenFrame("No edits needed."), cardsFrame([]), DONE],

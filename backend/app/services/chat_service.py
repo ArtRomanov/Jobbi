@@ -173,8 +173,9 @@ async def stream_chat_response(
                 cv_id=cv.id,
                 edits=edits,
             )
+        # Every card field is set in Python (id at flush), so the cards are
+        # sent as they are: no refresh after the commit that could fail and
+        # turn a saved reply into a stream error.
         await db.commit()
-        for card in cards:
-            await db.refresh(card)
 
     yield CardsReady(cards=cards)

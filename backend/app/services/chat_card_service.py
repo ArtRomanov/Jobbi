@@ -193,6 +193,7 @@ def add_cards(
             anchor_text=edit.anchor_text,
             state="pending",
             created_at=_utcnow(),
+            decided_at=None,
         )
         db.add(card)
         cards.append(card)
