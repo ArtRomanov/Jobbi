@@ -6,3 +6,4 @@ Route page for `/cvs/new` and `/cvs/:id/edit`; composes `CvTextEditor` (`@/featu
 - `cv` is the last saved/loaded CV; PATCH always sends its `version` and keeps the returned one.
 - The editor is keyed by `editorSeed`, which changes only when a different CV loads. After "Create" the page navigates to `/cvs/<id>/edit` (replace); React Router keeps this page instance, so the editor and its draft stay mounted and the CV is not fetched again (`cvRef` already holds it). `cv` state and `cvRef` change together, only via `setSavedCv`.
 - Passes `savedValues` (from `cv`, or empty for a new CV) for dirty tracking, and `saveError` from `getCvSaveErrorMessage` instead of a toast on a failed save; a 409 never reloads or overwrites the draft.
+- `UploadNotice` (`@/features/cv-upload`) sits above the editor: right after an upload it shows the extracted-text notice from router state, then clears that state (replace, same URL) so a reload does not show it again.

@@ -1,6 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
+import type { InitialEntry } from "react-router-dom";
 import { CvEditorPage } from "@/pages/cv-editor";
 import { mockCvs } from "./mocks/handlers";
 import { server } from "./setup";
@@ -17,7 +18,7 @@ const LEAVE_PROMPT = "You have unsaved changes. Leave without saving?";
 
 const savedCv = mockCvs[0]!;
 
-function renderEditor(url: string, initialEntries: string[] = [url]) {
+function renderEditor(url: string, initialEntries: InitialEntry[] = [url]) {
   return renderWithProviders(<CvEditorPage />, {
     initialEntries,
     path: "/cvs/new",
@@ -28,7 +29,7 @@ function renderEditor(url: string, initialEntries: string[] = [url]) {
   });
 }
 
-async function renderLoadedEditor(initialEntries?: string[]) {
+async function renderLoadedEditor(initialEntries?: InitialEntry[]) {
   const result = renderEditor("/cvs/cv-1/edit", initialEntries);
   await screen.findByDisplayValue(savedCv.name);
   return result;
@@ -304,6 +305,32 @@ describe("Leaving with unsaved changes", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/cvs/cv-new/edit"));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(saveButton()).toBeDisabled();
+  });
+
+  it("does not ask when the upload notice clears its router state (same-URL replace)", async () => {
+    const user = userEvent.setup();
+    const { router } = await renderLoadedEditor([
+      { pathname: "/cvs/cv-1/edit", state: { uploadNotice: { truncated: false, becameBase: false } } },
+    ]);
+
+    expect(screen.getByRole("status")).toHaveTextContent("Text extracted from your file.");
+    await waitFor(() => expect(router.state.location.state).toBeNull());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    // A dirty draft cannot exist at mount, so replay the notice's replace while dirty
+    await user.type(textArea(), "!");
+    await act(async () => {
+      await router.navigate(
+        { pathname: "/cvs/cv-1/edit" },
+        { replace: true, state: { uploadNotice: { truncated: false, becameBase: false } } },
+      );
+    });
+    await waitFor(() => expect(router.state.location.state).toBeNull());
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/cvs/cv-1/edit");
+    expect(textArea()).toHaveValue(`${savedCv.content}!`);
+    expect(screen.getByRole("status")).toHaveTextContent("Text extracted from your file.");
   });
 
   it("asks the browser to prompt on close or reload only while there are changes", async () => {

@@ -250,6 +250,45 @@ describe("CvEditorPage — edit", () => {
   });
 });
 
+describe("CvEditorPage — upload notice", () => {
+  const NOTICE = "Text extracted from your file. Check the line breaks and save.";
+
+  it("shows the notice after an upload, once, and a reload does not bring it back", async () => {
+    const first = renderWithProviders(<CvEditorPage />, {
+      initialEntries: [
+        {
+          pathname: "/cvs/cv-1/edit",
+          state: { uploadNotice: { truncated: true, becameBase: false } },
+        },
+      ],
+      path: "/cvs/:id/edit",
+    });
+
+    expect(screen.getByText(NOTICE)).toBeInTheDocument();
+    expect(
+      screen.getByText("The text was longer than 20 000 characters and was cut."),
+    ).toBeInTheDocument();
+    // The CV still loads under the notice, on the same URL
+    expect(await screen.findByDisplayValue("Software Engineer CV")).toBeInTheDocument();
+    await waitFor(() => expect(first.router.state.location.state).toBeNull());
+    expect(first.router.state.location.pathname).toBe("/cvs/cv-1/edit");
+    expect(screen.getByText(NOTICE)).toBeInTheDocument();
+
+    const reloadAt = first.router.state.location;
+    first.unmount();
+    renderWithProviders(<CvEditorPage />, { initialEntries: [reloadAt], path: "/cvs/:id/edit" });
+    expect(await screen.findByDisplayValue("Software Engineer CV")).toBeInTheDocument();
+    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+  });
+
+  it("shows no notice when the editor is opened normally", async () => {
+    renderEditor("/cvs/cv-1/edit");
+
+    expect(await screen.findByDisplayValue("Software Engineer CV")).toBeInTheDocument();
+    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+  });
+});
+
 describe("CvEditorPage — text limit", () => {
   it("leaves a paste that fits to the browser, so undo keeps working", () => {
     renderEditor("/cvs/new");

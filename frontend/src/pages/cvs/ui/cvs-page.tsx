@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { listCvs, deleteCv, duplicateCv, type Cv } from "@/entities/cv";
 import { downloadCvTextPdf } from "@/features/cv-pdf";
+import { UploadCvButton } from "@/features/cv-upload";
 import { PageCard, PageHeader, Button, colors } from "@/shared/ui";
 import { handleApiError } from "@/shared/api";
 import { useToast } from "@/shared/ui";
@@ -108,12 +109,15 @@ export function CvsPage() {
           title="My CVs"
           subtitle="Manage your resumes and download as PDF."
         />
-        <Link
-          to="/cvs/new"
-          style={{ textDecoration: "none", flexShrink: 0 }}
-        >
-          <Button type="button">Create New CV</Button>
-        </Link>
+        <div style={{ display: "flex", gap: "0.5rem", flexShrink: 0 }}>
+          <UploadCvButton />
+          <Link
+            to="/cvs/new"
+            style={{ textDecoration: "none", flexShrink: 0 }}
+          >
+            <Button type="button">Create New CV</Button>
+          </Link>
+        </div>
       </div>
 
       {isLoading && (

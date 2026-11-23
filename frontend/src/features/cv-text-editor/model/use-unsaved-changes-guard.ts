@@ -17,9 +17,17 @@ export interface UnsavedChangesGuard {
  * - closing or reloading the tab gets the browser's own leave prompt
  *   (`beforeunload`; browsers ignore any custom text there).
  *
- * `REPLACE` navigations are not blocked: they are the page swapping its own
- * URL (e.g. `/cvs/new` → `/cvs/<id>/edit` right after the first save, before
- * the saved values reach this hook), not the user leaving.
+ * Why `REPLACE` navigations are never blocked: users leave through PUSH (a
+ * link or nav click) or POP (Back/Forward); a REPLACE is the app rewriting its
+ * own history entry. The CV editor does that twice, and blocking either would
+ * prompt for a navigation the user never made:
+ * - after the first save, `/cvs/new` → `/cvs/<id>/edit`. The navigate call runs
+ *   in the save handler before the saved values re-render into this hook, so
+ *   `isDirty` is still true at that moment;
+ * - `UploadNotice` (`features/cv-upload`) clears its router state with a
+ *   same-URL replace (also skipped by the pathname/search check below).
+ * Accepted trade-off: other app replaces (e.g. the auth redirect to `/login`)
+ * are not guarded either.
  */
 export function useUnsavedChangesGuard(isDirty: boolean): UnsavedChangesGuard {
   // Read at navigation time, so the blocker function never goes stale
