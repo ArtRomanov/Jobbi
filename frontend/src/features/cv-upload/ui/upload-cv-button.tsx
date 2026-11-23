@@ -59,8 +59,12 @@ export function UploadCvButton() {
         type="button"
         variant="secondary"
         disabled={isUploading}
+        keepFocusable
         aria-busy={isUploading || undefined}
-        onClick={() => inputRef.current?.click()}
+        onClick={() => {
+          if (isUploading) return;
+          inputRef.current?.click();
+        }}
       >
         {isUploading ? "Uploading…" : "Upload CV"}
       </Button>

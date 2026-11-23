@@ -1,6 +1,7 @@
 import { memo, useMemo, type CSSProperties, type ReactNode } from "react";
-import { colors } from "@/shared/ui";
+import { colors, VisuallyHidden } from "@/shared/ui";
 import { isSafeCvLinkUrl } from "@/shared/lib";
+import { NEW_TAB_SUFFIX } from "../lib/constants";
 import { parseCvMarkdown, type CvBlock, type CvInline } from "../lib/cv-markdown";
 
 interface CvTextPreviewProps {
@@ -44,6 +45,7 @@ function renderInlines(nodes: readonly CvInline[]): ReactNode[] {
         return isSafeCvLinkUrl(node.href) ? (
           <a key={index} href={node.href} target="_blank" rel="noopener noreferrer">
             {renderInlines(node.children)}
+            <VisuallyHidden>{NEW_TAB_SUFFIX}</VisuallyHidden>
           </a>
         ) : (
           <span key={index}>{renderInlines(node.children)}</span>

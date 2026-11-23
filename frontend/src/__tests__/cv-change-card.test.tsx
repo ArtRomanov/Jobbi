@@ -20,6 +20,9 @@ const NOT_UNIQUE_TEXT =
 const TOO_LONG_TEXT =
   "This change would make the CV longer than 20 000 characters.";
 const GENERIC_TEXT = "Could not apply this change. Please try again.";
+const CARD_TITLE = /^CV text — change \d+$/;
+const ACCEPT = /^Accept change \d+$/;
+const REJECT = /^Reject change \d+$/;
 
 function card(overrides: Partial<ChangeCard> = {}): ChangeCard {
   return { ...mockChangeCards.replace, ...overrides };
@@ -32,11 +35,12 @@ function Harness({ initial }: { initial: ChangeCard[] }) {
     setCards((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
   return (
     <>
-      {cards.map((c) => (
+      {cards.map((c, index) => (
         <CvChangeCard
           key={c.id}
           applicationId="app-1"
           card={c}
+          number={index + 1}
           onCardUpdated={onCardUpdated}
         />
       ))}
@@ -64,7 +68,7 @@ describe("CvChangeCard rendering", () => {
   it("shows a replace card with before/after and −/+ diff markers", () => {
     const { container } = renderCards(card());
 
-    const article = screen.getByRole("article", { name: "CV text" });
+    const article = screen.getByRole("article", { name: CARD_TITLE });
     expect(within(article).getByText("Before")).toBeInTheDocument();
     expect(within(article).getByText("After")).toBeInTheDocument();
 
@@ -122,8 +126,8 @@ describe("CvChangeCard rendering", () => {
 
   it("shows Accept and Reject while pending", () => {
     renderCards(card());
-    expect(screen.getByRole("button", { name: "Accept" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: ACCEPT })).toBeEnabled();
+    expect(screen.getByRole("button", { name: REJECT })).toBeEnabled();
   });
 
   it("shows Accepted without buttons", () => {
@@ -142,8 +146,8 @@ describe("CvChangeCard rendering", () => {
   it("shows Stale with Accept disabled and Reject enabled", () => {
     renderCards(card({ state: "stale" }));
     expect(screen.getByText("Stale")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Accept" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: ACCEPT })).toBeDisabled();
+    expect(screen.getByRole("button", { name: REJECT })).toBeEnabled();
   });
 });
 
@@ -152,7 +156,7 @@ describe("CvChangeCard decisions", () => {
     const user = userEvent.setup();
     renderCards(card());
 
-    await user.click(screen.getByRole("button", { name: "Accept" }));
+    await user.click(screen.getByRole("button", { name: ACCEPT }));
 
     expect(await screen.findByText("Accepted")).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
@@ -163,7 +167,7 @@ describe("CvChangeCard decisions", () => {
     const user = userEvent.setup();
     renderCards(card());
 
-    await user.click(screen.getByRole("button", { name: "Reject" }));
+    await user.click(screen.getByRole("button", { name: REJECT }));
 
     expect(await screen.findByText("Rejected")).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
@@ -183,10 +187,10 @@ describe("CvChangeCard decisions", () => {
     );
     renderCards(card());
 
-    await user.click(screen.getByRole("button", { name: "Accept" }));
+    await user.click(screen.getByRole("button", { name: ACCEPT }));
 
-    expect(screen.getByRole("button", { name: "Accept" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Reject" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: ACCEPT })).toBeDisabled();
+    expect(screen.getByRole("button", { name: REJECT })).toBeDisabled();
     release();
     expect(await screen.findByText("Accepted")).toBeInTheDocument();
   });
@@ -196,13 +200,13 @@ describe("CvChangeCard decisions", () => {
     failAccept(409, "CARD_STALE");
     renderCards(card());
 
-    await user.click(screen.getByRole("button", { name: "Accept" }));
+    await user.click(screen.getByRole("button", { name: ACCEPT }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(STALE_TEXT);
     expect(screen.getByText("Stale")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Accept" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: ACCEPT })).toBeDisabled();
 
-    await user.click(screen.getByRole("button", { name: "Reject" }));
+    await user.click(screen.getByRole("button", { name: REJECT }));
 
     expect(await screen.findByText("Rejected")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -219,12 +223,12 @@ describe("CvChangeCard decisions", () => {
     failAccept(status, detail);
     renderCards(card());
 
-    await user.click(screen.getByRole("button", { name: "Accept" }));
+    await user.click(screen.getByRole("button", { name: ACCEPT }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(text);
     expect(screen.getByRole("article")).toHaveAttribute("data-state", "pending");
-    expect(screen.getByRole("button", { name: "Accept" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Reject" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: ACCEPT })).toBeEnabled();
+    expect(screen.getByRole("button", { name: REJECT })).toBeEnabled();
   });
 
   it("shows the generic error on a network failure", async () => {
@@ -232,7 +236,7 @@ describe("CvChangeCard decisions", () => {
     server.use(http.post(`${CARDS_URL}/accept`, () => HttpResponse.error()));
     renderCards(card());
 
-    await user.click(screen.getByRole("button", { name: "Accept" }));
+    await user.click(screen.getByRole("button", { name: ACCEPT }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(GENERIC_TEXT);
   });
@@ -256,7 +260,7 @@ describe("CvChangeCard decisions", () => {
     );
     renderCards(card());
 
-    await user.click(screen.getByRole("button", { name: "Accept" }));
+    await user.click(screen.getByRole("button", { name: ACCEPT }));
 
     expect(await screen.findByText("Rejected")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -266,7 +270,7 @@ describe("CvChangeCard decisions", () => {
     const user = userEvent.setup();
     renderCards(card({ state: "stale", decided_at: null }));
 
-    await user.click(screen.getByRole("button", { name: "Reject" }));
+    await user.click(screen.getByRole("button", { name: REJECT }));
 
     expect(await screen.findByText("Rejected")).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
@@ -276,17 +280,75 @@ describe("CvChangeCard decisions", () => {
     const user = userEvent.setup();
     renderCards(card(), card(mockChangeCards.insert));
 
-    const [first, second] = screen.getAllByRole("article", { name: "CV text" });
-    await user.click(within(first!).getByRole("button", { name: "Reject" }));
+    const [first, second] = screen.getAllByRole("article", { name: CARD_TITLE });
+    await user.click(within(first!).getByRole("button", { name: REJECT }));
 
     expect(await within(first!).findByText("Rejected")).toBeInTheDocument();
-    expect(within(second!).getByRole("button", { name: "Accept" })).toBeEnabled();
+    expect(within(second!).getByRole("button", { name: ACCEPT })).toBeEnabled();
 
-    await user.click(within(second!).getByRole("button", { name: "Accept" }));
+    await user.click(within(second!).getByRole("button", { name: ACCEPT }));
     await waitFor(() =>
       expect(within(second!).getByText("Accepted")).toBeInTheDocument(),
     );
     expect(within(first!).getByText("Rejected")).toBeInTheDocument();
+  });
+});
+
+describe("CvChangeCard accessibility", () => {
+  it("numbers cards within a message: title, article name and button names", () => {
+    renderCards(card(), card(mockChangeCards.insert));
+
+    const first = screen.getByRole("article", { name: "CV text — change 1" });
+    const second = screen.getByRole("article", { name: "CV text — change 2" });
+    expect(
+      within(first).getByRole("button", { name: "Accept change 1" }),
+    ).toHaveTextContent("Accept");
+    expect(
+      within(first).getByRole("button", { name: "Reject change 1" }),
+    ).toHaveTextContent("Reject");
+    expect(
+      within(second).getByRole("button", { name: "Accept change 2" }),
+    ).toBeInTheDocument();
+    expect(
+      within(second).getByRole("button", { name: "Reject change 2" }),
+    ).toBeInTheDocument();
+  });
+
+  it("moves focus to the card title after Accept resolves", async () => {
+    const user = userEvent.setup();
+    renderCards(card());
+
+    await user.click(screen.getByRole("button", { name: "Accept change 1" }));
+
+    expect(await screen.findByText("Accepted")).toBeInTheDocument();
+    const title = screen.getByText("CV text — change 1");
+    await waitFor(() => expect(title).toHaveFocus());
+    expect(title).toHaveAttribute("tabindex", "-1");
+  });
+
+  it("moves focus to the card title after Reject resolves", async () => {
+    const user = userEvent.setup();
+    renderCards(card());
+
+    await user.click(screen.getByRole("button", { name: "Reject change 1" }));
+
+    expect(await screen.findByText("Rejected")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText("CV text — change 1")).toHaveFocus(),
+    );
+  });
+
+  it("announces the new state through a status region that is always mounted", async () => {
+    const user = userEvent.setup();
+    renderCards(card());
+
+    const status = screen.getByRole("status");
+    expect(status).toBeEmptyDOMElement();
+
+    await user.click(screen.getByRole("button", { name: "Accept change 1" }));
+
+    await waitFor(() => expect(status).toHaveTextContent("Accepted"));
+    expect(screen.getByRole("status")).toBe(status);
   });
 });
 

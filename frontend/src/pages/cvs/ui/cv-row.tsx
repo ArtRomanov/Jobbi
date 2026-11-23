@@ -1,10 +1,9 @@
 import { memo } from "react";
-import { Link } from "react-router-dom";
 import { CvTailoredFor, isTailoredCv, type Cv } from "@/entities/cv";
 import { MakeBaseButton } from "@/features/cv-make-base";
-import { Badge, Button, colors } from "@/shared/ui";
+import { Badge, Button, ButtonLink, colors } from "@/shared/ui";
 import { BASE_LABEL, TAILORED_FOR_PREFIX } from "../lib/constants";
-import { formatCvDate, formatLinkedCount } from "../lib/helpers";
+import { formatCvDate, formatLinkedCount, getCvActionLabel } from "../lib/helpers";
 import type { CvRowActions } from "../model/types";
 
 interface CvRowProps extends CvRowActions {
@@ -75,14 +74,17 @@ export const CvRow = memo(function CvRow({
 
       <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", flexShrink: 0 }}>
         {cv.is_base ? null : <MakeBaseButton cv={cv} onMadeBase={onMadeBase} />}
-        <Link to={`/cvs/${cv.id}/edit`} style={{ textDecoration: "none" }}>
-          <Button type="button" variant="secondary">
-            Edit
-          </Button>
-        </Link>
+        <ButtonLink
+          to={`/cvs/${cv.id}/edit`}
+          variant="secondary"
+          aria-label={getCvActionLabel("edit", cv.name)}
+        >
+          Edit
+        </ButtonLink>
         <Button
           type="button"
           variant="secondary"
+          aria-label={getCvActionLabel("duplicate", cv.name)}
           loading={isDuplicating}
           onClick={() => onDuplicate(cv)}
         >
@@ -91,6 +93,7 @@ export const CvRow = memo(function CvRow({
         <Button
           type="button"
           variant="secondary"
+          aria-label={getCvActionLabel("pdf", cv.name)}
           loading={isDownloading}
           onClick={() => onDownload(cv)}
         >
@@ -99,6 +102,7 @@ export const CvRow = memo(function CvRow({
         <Button
           type="button"
           variant="secondary"
+          aria-label={getCvActionLabel("delete", cv.name)}
           style={{ color: colors.error, borderColor: colors.error }}
           loading={isDeleting}
           onClick={() => onDelete(cv)}

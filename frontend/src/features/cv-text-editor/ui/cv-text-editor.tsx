@@ -119,7 +119,8 @@ export function CvTextEditor({
       ) : null}
 
       <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem" }}>
-        <Button type="submit" loading={isSaving} disabled={!draft.isDirty}>
+        {/* Stays focusable after a save (aria-disabled), so focus is not lost */}
+        <Button type="submit" loading={isSaving} disabled={!draft.isDirty} keepFocusable>
           Save
         </Button>
         {onExport ? (

@@ -63,8 +63,12 @@ function renderPdf(content: string): Rendered {
 
 function renderPreview(content: string): Rendered {
   const { container, unmount } = render(<CvTextPreview content={content} />);
+  // Compare what is on screen: drop the screen-reader-only " (opens in new
+  // tab)" suffix on preview links (a PDF has no tabs)
+  const visible = container.cloneNode(true) as HTMLElement;
+  visible.querySelectorAll('a > span[style*="position: absolute"]').forEach((el) => el.remove());
   const result: Rendered = {
-    text: squash(container.textContent ?? ""),
+    text: squash(visible.textContent ?? ""),
     hrefs: Array.from(container.querySelectorAll("a"), (a) => a.getAttribute("href") ?? ""),
     listItems: container.querySelectorAll("li").length,
     boldTexts: Array.from(container.querySelectorAll("strong"), (el) => el.textContent ?? ""),

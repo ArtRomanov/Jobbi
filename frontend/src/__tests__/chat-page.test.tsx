@@ -9,6 +9,9 @@ import { server } from "./setup";
 import { renderWithProviders } from "./utils";
 
 const BASE_URL = "http://localhost:8000";
+const CARD_TITLE = /^CV text — change \d+$/;
+const ACCEPT = /^Accept change \d+$/;
+const REJECT = /^Reject change \d+$/;
 
 function renderChatPage(applicationId: string) {
   return renderWithProviders(<ChatPage />, {
@@ -202,15 +205,15 @@ describe("ChatPage change cards", () => {
     renderChatPage("app-1");
 
     await screen.findByText("Here are two edits.");
-    const cards = screen.getAllByRole("article", { name: "CV text" });
+    const cards = screen.getAllByRole("article", { name: CARD_TITLE });
     expect(cards).toHaveLength(2);
     expect(within(cards[0]!).getByText("Before")).toBeInTheDocument();
     expect(within(cards[1]!).getByText("Removed")).toBeInTheDocument();
 
-    await user.click(within(cards[0]!).getByRole("button", { name: "Accept" }));
+    await user.click(within(cards[0]!).getByRole("button", { name: ACCEPT }));
 
     expect(await within(cards[0]!).findByText("Accepted")).toBeInTheDocument();
-    expect(within(cards[1]!).getByRole("button", { name: "Accept" })).toBeEnabled();
+    expect(within(cards[1]!).getByRole("button", { name: ACCEPT })).toBeEnabled();
   });
 
   /**
@@ -265,17 +268,17 @@ describe("ChatPage change cards", () => {
     renderChatPage("app-1");
     await send("Add GraphQL");
 
-    const card = await screen.findByRole("article", { name: "CV text" });
+    const card = await screen.findByRole("article", { name: CARD_TITLE });
     expect(within(card).getByText("Added after: ## Skills")).toBeInTheDocument();
     expect(screen.getByText("Added it.")).toBeInTheDocument();
 
     // The history reload after `done` keeps the same card element (same message id)
     await waitFor(() => expect(getCalls()).toBe(2));
-    expect(screen.getByRole("article", { name: "CV text" })).toBe(card);
+    expect(screen.getByRole("article", { name: CARD_TITLE })).toBe(card);
 
-    await userEvent.setup().click(within(card).getByRole("button", { name: "Reject" }));
+    await userEvent.setup().click(within(card).getByRole("button", { name: REJECT }));
     expect(await screen.findByText("Rejected")).toBeInTheDocument();
-    expect(screen.getAllByRole("article", { name: "CV text" })).toHaveLength(1);
+    expect(screen.getAllByRole("article", { name: CARD_TITLE })).toHaveLength(1);
   });
 
   it("keeps a card decided while the history reload was in flight", async () => {
@@ -307,9 +310,9 @@ describe("ChatPage change cards", () => {
     renderChatPage("app-1");
     await send("Add GraphQL");
 
-    const card = await screen.findByRole("article", { name: "CV text" });
+    const card = await screen.findByRole("article", { name: CARD_TITLE });
     await waitFor(() => expect(getCalls).toBe(2));
-    await userEvent.setup().click(within(card).getByRole("button", { name: "Accept" }));
+    await userEvent.setup().click(within(card).getByRole("button", { name: ACCEPT }));
     expect(await within(card).findByText("Accepted")).toBeInTheDocument();
 
     releaseReload();
@@ -317,12 +320,12 @@ describe("ChatPage change cards", () => {
     // The reload has landed (the saved reply text replaced the streamed one)
     expect(await screen.findByText("Added it (saved).")).toBeInTheDocument();
     await waitFor(() =>
-      expect(screen.getByRole("article", { name: "CV text" })).toHaveAttribute(
+      expect(screen.getByRole("article", { name: CARD_TITLE })).toHaveAttribute(
         "data-state",
         "accepted",
       ),
     );
-    expect(screen.queryByRole("button", { name: "Accept" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: ACCEPT })).not.toBeInTheDocument();
   });
 
   it("shows a cards-only reply without an empty assistant bubble", async () => {
@@ -336,10 +339,10 @@ describe("ChatPage change cards", () => {
     const { container } = renderChatPage("app-1");
     await send("Drop my contacts");
 
-    const card = await screen.findByRole("article", { name: "CV text" });
+    const card = await screen.findByRole("article", { name: CARD_TITLE });
     expect(within(card).getByText("Removed")).toBeInTheDocument();
     await waitFor(() => expect(getCalls()).toBe(2));
-    expect(screen.getByRole("article", { name: "CV text" })).toBe(card);
+    expect(screen.getByRole("article", { name: CARD_TITLE })).toBe(card);
     expect(container.querySelectorAll('[data-message-role="assistant"]')).toHaveLength(0);
   });
 

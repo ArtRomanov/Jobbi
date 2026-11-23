@@ -70,11 +70,11 @@ describe("Save is active only with changes", () => {
     const user = userEvent.setup();
     await renderLoadedEditor();
 
-    expect(saveButton()).toBeDisabled();
+    expect(saveButton()).toHaveAttribute("aria-disabled", "true");
     await user.type(textArea(), "!");
-    expect(saveButton()).toBeEnabled();
+    expect(saveButton()).not.toHaveAttribute("aria-disabled");
     await user.type(textArea(), "{Backspace}");
-    expect(saveButton()).toBeDisabled();
+    expect(saveButton()).toHaveAttribute("aria-disabled", "true");
   });
 
   it("is disabled until the name changes and again after reverting it", async () => {
@@ -82,18 +82,18 @@ describe("Save is active only with changes", () => {
     await renderLoadedEditor();
 
     await user.type(nameInput(), "X");
-    expect(saveButton()).toBeEnabled();
+    expect(saveButton()).not.toHaveAttribute("aria-disabled");
     await user.type(nameInput(), "{Backspace}");
-    expect(saveButton()).toBeDisabled();
+    expect(saveButton()).toHaveAttribute("aria-disabled", "true");
     // Spaces around the name are trimmed on save, so they are no change
     await user.type(nameInput(), "  ");
-    expect(saveButton()).toBeDisabled();
+    expect(saveButton()).toHaveAttribute("aria-disabled", "true");
   });
 
   it("is disabled on a new empty CV", () => {
     renderEditor("/cvs/new");
 
-    expect(saveButton()).toBeDisabled();
+    expect(saveButton()).toHaveAttribute("aria-disabled", "true");
   });
 
   it("is disabled again after a successful save, until the next change", async () => {
@@ -105,9 +105,44 @@ describe("Save is active only with changes", () => {
     await user.click(saveButton());
     expect(await screen.findByText("CV saved")).toBeInTheDocument();
 
-    expect(saveButton()).toBeDisabled();
+    expect(saveButton()).toHaveAttribute("aria-disabled", "true");
     await user.type(textArea(), "!");
-    expect(saveButton()).toBeEnabled();
+    expect(saveButton()).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("keeps focus on Save after a keyboard save (aria-disabled, not disabled)", async () => {
+    const user = userEvent.setup();
+    server.use(echoPatch());
+    await renderLoadedEditor();
+
+    await user.type(textArea(), "\nGo");
+    saveButton().focus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByText("CV saved")).toBeInTheDocument();
+
+    expect(saveButton()).not.toBeDisabled();
+    expect(saveButton()).toHaveAttribute("aria-disabled", "true");
+    expect(saveButton()).toHaveFocus();
+  });
+
+  it("sends nothing when the aria-disabled Save is pressed", async () => {
+    const user = userEvent.setup();
+    let patches = 0;
+    server.use(
+      http.patch(CV_URL, () => {
+        patches += 1;
+        return HttpResponse.json(savedCv);
+      }),
+    );
+    await renderLoadedEditor();
+
+    await user.click(saveButton());
+    saveButton().focus();
+    await user.keyboard("{Enter}");
+    // Enter in the name field would submit the form implicitly
+    await user.type(nameInput(), "{Enter}");
+
+    expect(patches).toBe(0);
   });
 });
 
@@ -158,7 +193,7 @@ describe("Save failures keep the draft", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(SAVE_FAILED);
     expect(screen.getByRole("alert").textContent).toBe(SAVE_FAILED);
     expect(textArea()).toHaveValue(`${savedCv.content}\nUnsaved`);
-    expect(saveButton()).toBeEnabled();
+    expect(saveButton()).not.toHaveAttribute("aria-disabled");
   });
 
   it("shows the save error when creating a CV fails", async () => {
@@ -198,7 +233,7 @@ describe("Save failures keep the draft", () => {
     expect(textArea()).toHaveValue(`${savedCv.content}\nMy edit`);
     expect(patches).toBe(1);
     // Still unsaved: Save stays active and leaving is still guarded
-    expect(saveButton()).toBeEnabled();
+    expect(saveButton()).not.toHaveAttribute("aria-disabled");
     expect(firesLeavePrompt()).toBe(true);
   });
 
@@ -339,7 +374,7 @@ describe("Leaving with unsaved changes", () => {
 
     await waitFor(() => expect(router.state.location.pathname).toBe("/cvs/cv-new/edit"));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(saveButton()).toBeDisabled();
+    expect(saveButton()).toHaveAttribute("aria-disabled", "true");
   });
 
   it("does not ask when the upload notice clears its router state (same-URL replace)", async () => {

@@ -194,7 +194,11 @@ export function CvEditorPage() {
         <p style={{ color: colors.textMuted, fontSize: "0.875rem" }}>Loading...</p>
       )}
 
-      {error && <p style={{ color: colors.error, fontSize: "0.875rem" }}>{error}</p>}
+      {error && (
+        <p role="alert" style={{ color: colors.error, fontSize: "0.875rem" }}>
+          {error}
+        </p>
+      )}
 
       {!isLoading && !error && (
         <CvTextEditor

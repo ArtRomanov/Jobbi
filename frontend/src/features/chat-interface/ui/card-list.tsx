@@ -20,11 +20,12 @@ export function CardList({ applicationId, cards, onCardUpdated }: CardListProps)
         gap: "0.5rem",
       }}
     >
-      {cards.map((card) => (
+      {cards.map((card, index) => (
         <CvChangeCard
           key={card.id}
           applicationId={applicationId}
           card={card}
+          number={index + 1}
           onCardUpdated={onCardUpdated}
         />
       ))}

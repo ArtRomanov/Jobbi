@@ -113,10 +113,36 @@ describe("CVs page — My CVs and Tailored for applications", () => {
     renderWithProviders(<CvsPage />);
 
     await screen.findByRole("region", { name: "Tailored for applications" });
-    const row = rowOf(mockCvs[2]!.name);
-    expect(within(row).getByRole("link", { name: "Edit" })).toHaveAttribute("href", "/cvs/cv-3/edit");
-    for (const name of ["Duplicate", "PDF", "Delete"]) {
+    const cvName = mockCvs[2]!.name;
+    const row = rowOf(cvName);
+    expect(within(row).getByRole("link", { name: `Edit ${cvName}` })).toHaveAttribute("href", "/cvs/cv-3/edit");
+    for (const name of [`Duplicate ${cvName}`, `Export PDF: ${cvName}`, `Delete ${cvName}`]) {
       expect(within(row).getByRole("button", { name })).toBeInTheDocument();
+    }
+  });
+
+  it("renders Edit as a single link (no button inside it) with short visible text", async () => {
+    renderWithProviders(<CvsPage />);
+
+    await screen.findByRole("region", { name: "My CVs" });
+    const row = rowOf("Software Engineer CV");
+    const edit = within(row).getByRole("link", { name: "Edit Software Engineer CV" });
+    expect(edit).toHaveTextContent(/^Edit$/);
+    expect(edit.querySelector("button")).toBeNull();
+    expect(within(row).getByRole("button", { name: "Export PDF: Software Engineer CV" })).toHaveTextContent(/^PDF$/);
+  });
+
+  it("gives every row action a unique accessible name", async () => {
+    renderWithProviders(<CvsPage />);
+
+    await screen.findByRole("region", { name: "My CVs" });
+    for (const label of ["Edit", "Duplicate", "Export PDF:", "Delete"]) {
+      const role = label === "Edit" ? "link" : "button";
+      const names = screen
+        .getAllByRole(role, { name: new RegExp(`^${label} `) })
+        .map((el) => el.getAttribute("aria-label"));
+      expect(names).toHaveLength(mockCvs.length);
+      expect(new Set(names).size).toBe(names.length);
     }
   });
 });

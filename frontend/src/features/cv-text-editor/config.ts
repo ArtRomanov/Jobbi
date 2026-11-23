@@ -4,6 +4,9 @@ export const CV_NAME_MAX_LENGTH = 255;
 
 export const CV_NAME_REQUIRED_MESSAGE = "Required";
 export const CV_FORMATTING_HINT = "# Heading · ## Section · **bold** · - list · [link](https://…)";
+/** What screen readers get instead of the symbols in `CV_FORMATTING_HINT`. */
+export const CV_FORMATTING_HINT_DESCRIPTION =
+  "Formatting: start a line with # for a heading, ## for a section, wrap text in two asterisks for bold, start a line with a dash for a list item, write links as text in square brackets followed by the address in parentheses.";
 export const CV_CONTENT_PLACEHOLDER =
   "Write your CV here, or upload a PDF/DOCX on the CVs page.";
 

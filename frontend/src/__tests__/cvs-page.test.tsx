@@ -2,7 +2,9 @@ import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CvsPage } from "@/pages/cvs/ui/cvs-page";
 import { downloadCvTextPdf } from "@/features/cv-pdf";
+import { http, HttpResponse } from "msw";
 import { mockCvs } from "./mocks/handlers";
+import { server } from "./setup";
 import { renderWithProviders } from "./utils";
 
 vi.mock("@/features/cv-pdf", () => ({ downloadCvTextPdf: vi.fn().mockResolvedValue(undefined) }));
@@ -12,6 +14,16 @@ beforeEach(() => {
 });
 
 describe("CvsPage", () => {
+  it("announces a load error as an alert", async () => {
+    server.use(
+      http.get("*/api/v1/cvs", () => HttpResponse.json({ detail: "Boom" }, { status: 500 })),
+    );
+    renderWithProviders(<CvsPage />);
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText("Software Engineer CV")).not.toBeInTheDocument();
+  });
+
   it("renders the CV list with CV names visible", async () => {
     renderWithProviders(<CvsPage />);
 
@@ -64,7 +76,7 @@ describe("CvsPage", () => {
       expect(screen.getByText("Software Engineer CV")).toBeInTheDocument();
     });
 
-    await user.click(screen.getAllByRole("button", { name: "PDF" })[0]!);
+    await user.click(screen.getByRole("button", { name: "Export PDF: Software Engineer CV" }));
 
     expect(downloadCvTextPdf).toHaveBeenCalledWith({
       name: "Software Engineer CV",

@@ -163,7 +163,11 @@ export function CvsPage() {
 
       {isLoading ? <p style={MUTED_TEXT_STYLE}>Loading...</p> : null}
 
-      {error ? <p style={{ color: colors.error, fontSize: "0.875rem" }}>{error}</p> : null}
+      {error ? (
+        <p role="alert" style={{ color: colors.error, fontSize: "0.875rem" }}>
+          {error}
+        </p>
+      ) : null}
 
       {isReady && cvs.length > 0 && base === null ? (
         <p role="note" style={{ ...MUTED_TEXT_STYLE, margin: "0 0 0.5rem" }}>
