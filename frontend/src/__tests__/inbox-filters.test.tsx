@@ -41,7 +41,10 @@ function serveSources(): void {
             display_name: "Acme",
           },
         ],
-        removed_sources: [{ key: "telegram:old_jobs", label: "@old_jobs" }],
+        removed_sources: [
+          { key: "telegram:old_jobs", label: "@old_jobs" },
+          { key: "tg_forward:c1234567890", label: "Secret Jobs" },
+        ],
       }),
     ),
   );
@@ -55,13 +58,13 @@ async function renderInbox() {
 }
 
 describe("Inbox filters", () => {
-  it("lists all sources, live sources and removed sources marked (removed)", async () => {
+  it("lists all sources, live sources, removed (removed) and forwarded (forwarded) sources", async () => {
     serveSources();
     recordListRequests();
     await renderInbox();
 
     const select = screen.getByRole("combobox", { name: "Source" });
-    await waitFor(() => expect(within(select).getAllByRole("option")).toHaveLength(4));
+    await waitFor(() => expect(within(select).getAllByRole("option")).toHaveLength(5));
     const options = within(select)
       .getAllByRole("option")
       .map((option) => [option.getAttribute("value"), option.textContent]);
@@ -70,6 +73,7 @@ describe("Inbox filters", () => {
       ["telegram:frontend_jobs", "@frontend_jobs"],
       ["greenhouse:acme", "Acme"],
       ["telegram:old_jobs", "@old_jobs (removed)"],
+      ["tg_forward:c1234567890", "Secret Jobs (forwarded)"],
     ]);
   });
 
@@ -91,7 +95,7 @@ describe("Inbox filters", () => {
     const requests = recordListRequests();
     const user = await renderInbox();
     const select = screen.getByRole("combobox", { name: "Source" });
-    await waitFor(() => expect(within(select).getAllByRole("option")).toHaveLength(4));
+    await waitFor(() => expect(within(select).getAllByRole("option")).toHaveLength(5));
 
     await user.selectOptions(select, "telegram:old_jobs");
     await waitFor(() => expect(requests).toHaveLength(2));

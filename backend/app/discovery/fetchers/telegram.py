@@ -23,6 +23,7 @@ __all__ = [
     "ReadFailureReason",
     "SourceReadError",
     "fetch_channel_posts",
+    "is_telegram_host",
     "parse_channel_page",
 ]
 
@@ -63,7 +64,7 @@ def _validate_channel(channel: str) -> str:
     return channel.lower()
 
 
-def _is_telegram_host(host: str) -> bool:
+def is_telegram_host(host: str) -> bool:
     return any(
         host == domain or host.endswith(f".{domain}") for domain in _TELEGRAM_HOSTS
     )
@@ -92,7 +93,7 @@ def _first_job_link(element: Tag) -> str | None:
         if parts.scheme.lower() not in ("http", "https"):
             continue
         host = (parts.hostname or "").lower()
-        if host and not _is_telegram_host(host):
+        if host and not is_telegram_host(host):
             return normalize_url(href)
     return None
 
