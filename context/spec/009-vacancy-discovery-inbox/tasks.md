@@ -76,7 +76,7 @@ Conventions for every slice:
 ---
 
 - [ ] **Slice 9: Final regression and gates**
-  - [ ] Full backend suite on 3.11 and 3.14, frontend suite, `tsc`, lint on changed files. **[Agent: qa-tester]**
-  - [ ] Accessibility pass on the Inbox page, Modal and ChipInput (keyboard only, screen-reader labels). **[Agent: react-code-reviewer]**
-  - [ ] `/pre-merge` and `/security-review` on the branch (SSRF patterns, prompt injection, XSS, per-user isolation). **[Agent: general-purpose]**
-  - [ ] Live check: real channel + Greenhouse board → Inbox fills with no bot burst → hourly alert → Add & tailor CV → Dismiss + Undo. **[Agent: qa-tester]**
+  - [x] Full backend suite on 3.11 and 3.14, frontend suite, `tsc`, lint on changed files. **[Agent: qa-tester]** _(2026-11-22: backend 1017 passed, frontend 275 passed, tsc clean, ruff clean)_
+  - [x] Accessibility pass on the Inbox page, Modal and ChipInput (keyboard only, screen-reader labels). **[Agent: react-code-reviewer]** _(fixes in 0c5d78f: per-card button names, heading order, focus rings, contrast)_
+  - [x] `/pre-merge` and `/security-review` on the branch (SSRF patterns, prompt injection, XSS, per-user isolation). **[Agent: general-purpose]** _(pre-merge BLOCK on cross-user cv_id fixed with all other findings in a7d528c; security-review: no vulnerabilities)_
+  - [ ] Live check: real channel + Greenhouse board → Inbox fills with no bot burst → hourly alert → Add & tailor CV → Dismiss + Undo. **[Agent: qa-tester]** _(pending: done together with the user after merge)_
