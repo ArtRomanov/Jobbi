@@ -58,7 +58,10 @@ def add_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("summary", handle_summary, filters=private))
     app.add_handler(CallbackQueryHandler(handle_status_callback, pattern=r"^status:"))
     app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND & private, handle_message)
+        MessageHandler(
+            (filters.TEXT | filters.CAPTION) & ~filters.COMMAND & private,
+            handle_message,
+        )
     )
 
 

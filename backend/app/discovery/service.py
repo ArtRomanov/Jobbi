@@ -29,6 +29,7 @@ from typing import Any, Self, TypeAlias
 import groq
 import httpx
 from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Bot
 
@@ -58,6 +59,7 @@ from app.models.vacancy_source import VacancySource
 __all__ = [
     "CARD_RETENTION",
     "EVAL_PAUSE_S",
+    "FORWARDED_KIND",
     "LOOKBACK",
     "MAX_EVAL_ATTEMPTS",
     "MAX_PAGES",
@@ -66,11 +68,14 @@ __all__ = [
     "CleanupReport",
     "Clock",
     "DiscoveryConfig",
+    "ForwardOutcome",
+    "ForwardedChannel",
     "RunReport",
     "check_all",
     "cleanup",
     "evaluate_pending",
     "run_initial_scans",
+    "store_forwarded_post",
 ]
 
 logger = logging.getLogger(__name__)
@@ -106,6 +111,9 @@ READ_ERROR_MESSAGES = {
     "unreachable": "Could not reach the source",
 }
 SUPPORTED_KINDS = frozenset({"telegram"}) | BOARD_KINDS
+# Card-source kind of posts the user forwarded to the bot. Not a
+# `VacancySource` kind: nothing is ever fetched for it.
+FORWARDED_KIND = "tg_forward"
 
 SessionFactory: TypeAlias = Callable[[], AsyncSession]
 # Returns the current time as naive UTC. Called per source and per AI batch,
@@ -215,7 +223,8 @@ async def run_initial_scans(
 ) -> RunReport:
     """First 7-day scan of every source whose first scan has not completed and
     is due (`next_initial_attempt_at` unset or passed), then evaluate the
-    pending posts of the users whose sources were scanned.
+    pending posts of the users whose sources were scanned or who forwarded a
+    post to the bot (so a forwarded post is rated within about a minute).
 
     First-scan cards are never alerted. Posts of those users that were found
     by an earlier hourly check and waited (daily cap, AI down) may be rated
@@ -224,7 +233,9 @@ async def run_initial_scans(
     config = config or DiscoveryConfig.from_settings()
     report = RunReport()
     sources = await _load_sources(session_factory, clock(), initial=True)
-    if not sources:
+    user_ids = {source.user_id for source in sources}
+    user_ids |= await _users_with_forwarded_pending(session_factory)
+    if not user_ids:
         return report
 
     async def work() -> None:
@@ -242,7 +253,7 @@ async def run_initial_scans(
             session_factory,
             groq_client,
             clock,
-            user_ids={source.user_id for source in sources},
+            user_ids=user_ids,
             config=config,
             sleep=sleep,
             report=report,
@@ -669,6 +680,111 @@ async def _store_posts(
                 )
             )
             report.posts_stored += 1
+
+
+class ForwardOutcome(Enum):
+    ADDED = auto()  # new pending card; rated by the next per-minute run
+    MERGED = auto()  # same job link as an existing card; source added to it
+    ALREADY_SEEN = auto()  # this post was found or forwarded before
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ForwardedChannel:
+    """Card-source identity of a channel a post was forwarded from.
+
+    `handle` is the channel's username (lowercased) or `c<internal id>` for a
+    private channel; `label` is the channel title shown on the card.
+    """
+
+    handle: str
+    label: str
+
+
+async def store_forwarded_post(
+    session_factory: SessionFactory,
+    user_id: str,
+    channel: ForwardedChannel,
+    post: RawPost,
+    now: datetime,
+) -> ForwardOutcome:
+    """Put a post the user forwarded to the bot into their Inbox as `pending`.
+
+    Unlike `_store_posts` there is no exclude-term filter (the user picked
+    this post by hand) and no alert (they already know about it). Dedup and
+    repost merging work as for watched sources.
+    """
+    try:
+        async with session_factory() as session, session.begin():
+            if await _already_seen(session, user_id, [post.external_key]):
+                return ForwardOutcome.ALREADY_SEEN
+            session.add(
+                VacancySeenKey(
+                    user_id=user_id, external_key=post.external_key, first_seen_at=now
+                )
+            )
+            if post.job_link is not None and (
+                target_id := await _merge_target(session, user_id, post.job_link)
+            ):
+                if not await _has_card_source(
+                    session, target_id, FORWARDED_KIND, channel.handle
+                ):
+                    session.add(
+                        VacancyCardSource(
+                            vacancy_id=target_id,
+                            source_id=None,
+                            source_kind=FORWARDED_KIND,
+                            source_handle=channel.handle,
+                            label=channel.label,
+                        )
+                    )
+                return ForwardOutcome.MERGED
+            vacancy_id = str(uuid.uuid4())
+            session.add(
+                Vacancy(
+                    id=vacancy_id,
+                    user_id=user_id,
+                    source_id=None,
+                    external_key=post.external_key,
+                    url=post.url,
+                    job_link=post.job_link,
+                    title=post.title,
+                    company=post.company,
+                    text=post.text,
+                    posted_at=post.posted_at,
+                    found_at=now,
+                    state="pending",
+                    from_initial_scan=False,
+                    alert_handled_at=now,
+                )
+            )
+            session.add(
+                VacancyCardSource(
+                    vacancy_id=vacancy_id,
+                    source_id=None,
+                    source_kind=FORWARDED_KIND,
+                    source_handle=channel.handle,
+                    label=channel.label,
+                )
+            )
+            return ForwardOutcome.ADDED
+    except IntegrityError:
+        # The same post forwarded twice at once: the other one won.
+        return ForwardOutcome.ALREADY_SEEN
+
+
+async def _users_with_forwarded_pending(session_factory: SessionFactory) -> set[str]:
+    """Users with a forwarded post waiting for its rating."""
+    async with session_factory() as session:
+        rows = await session.scalars(
+            select(Vacancy.user_id)
+            .join(VacancyCardSource, VacancyCardSource.vacancy_id == Vacancy.id)
+            .where(
+                Vacancy.state == "pending",
+                VacancyCardSource.source_kind == FORWARDED_KIND,
+            )
+            .distinct()
+        )
+        return set(rows.all())
 
 
 async def _merge_target(

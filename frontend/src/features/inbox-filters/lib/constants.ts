@@ -11,6 +11,10 @@ export const DEFAULT_INBOX_FILTERS: InboxFilterValues = {
 export const ALL_SOURCES_VALUE = "";
 export const ALL_SOURCES_LABEL = "All sources";
 export const REMOVED_SOURCE_SUFFIX = " (removed)";
+/** Channels the user forwarded posts from (not watched, so never "removed"). */
+export const FORWARDED_SOURCE_SUFFIX = " (forwarded)";
+/** Source-key prefix of posts forwarded to the bot (backend `FORWARDED_KIND`). */
+export const FORWARDED_SOURCE_KEY_PREFIX = "tg_forward:";
 
 export const STATE_OPTIONS: readonly SegmentedControlOption<InboxStateFilter>[] = [
   { value: "new", label: "New" },

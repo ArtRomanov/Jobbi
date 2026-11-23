@@ -3,9 +3,17 @@
 import re
 
 from sqlalchemy import delete, select
-from telegram import Chat, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    Chat,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    MessageOriginChannel,
+    Update,
+)
 from telegram.ext import ContextTypes
 
+from app.bot.handlers.inbox_forward import handle_channel_forward
+from app.bot.handlers.start import handle_code_verification
 from app.core.config import get_settings
 from app.core.constants import ApplicationStatus
 from app.core.database import async_session
@@ -13,7 +21,6 @@ from app.models.telegram_conversation import TelegramConversation
 from app.schemas.application import ApplicationCreate
 from app.services.application_service import create_application
 from app.services.telegram_service import get_link_by_chat
-from app.bot.handlers.start import handle_code_verification
 
 URL_PATTERN = re.compile(r"https?://\S+")
 
@@ -28,7 +35,9 @@ NOT_LINKED_MESSAGE = (
 STATUS_CALLBACK_PREFIX = "status:"
 
 PRIVATE_CHAT_ONLY_MESSAGE = "Jobbi only works in a private chat with the bot."
-UNKNOWN_STATUS_MESSAGE = "Sorry, I don't know that status. Please tap one of the buttons."
+UNKNOWN_STATUS_MESSAGE = (
+    "Sorry, I don't know that status. Please tap one of the buttons."
+)
 
 
 async def _get_conversation(db, chat_id: int) -> TelegramConversation | None:
@@ -38,9 +47,7 @@ async def _get_conversation(db, chat_id: int) -> TelegramConversation | None:
     return result.scalar_one_or_none()
 
 
-async def _save_conversation(
-    db, chat_id: int, step: str, context_data: dict
-) -> None:
+async def _save_conversation(db, chat_id: int, step: str, context_data: dict) -> None:
     existing = await _get_conversation(db, chat_id)
     if existing is None:
         conv = TelegramConversation(
@@ -81,12 +88,30 @@ def _status_keyboard() -> InlineKeyboardMarkup:
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle any non-command text message from the user."""
-    if update.effective_chat is None or update.message is None or update.message.text is None:
+    """Handle any non-command text or captioned message from the user.
+
+    A post forwarded from a channel goes to the Inbox (`inbox_forward`);
+    anything else with text starts or continues the tracker dialog.
+    """
+    message = update.message
+    if update.effective_chat is None or message is None:
+        return
+    chat_id = update.effective_chat.id
+
+    if isinstance(message.forward_origin, MessageOriginChannel):
+        async with async_session() as db:
+            link = await get_link_by_chat(db, chat_id)
+        if link is None:
+            await context.bot.send_message(chat_id=chat_id, text=NOT_LINKED_MESSAGE)
+            return
+        await handle_channel_forward(
+            update, context, link.user_id, message.forward_origin
+        )
         return
 
-    chat_id = update.effective_chat.id
-    text = update.message.text.strip()
+    if message.text is None:
+        return
+    text = message.text.strip()
 
     # Ensure the user is linked
     async with async_session() as db:
@@ -151,9 +176,7 @@ async def _handle_company(
     async with async_session() as db:
         await _save_conversation(db, chat_id, STEP_AWAITING_ROLE, data)
 
-    await context.bot.send_message(
-        chat_id=chat_id, text="What's the role/title?"
-    )
+    await context.bot.send_message(chat_id=chat_id, text="What's the role/title?")
 
 
 async def _handle_role(

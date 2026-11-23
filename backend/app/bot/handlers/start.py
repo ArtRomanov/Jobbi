@@ -20,14 +20,16 @@ START_MESSAGE = (
 )
 
 ALREADY_LINKED_MESSAGE = (
-    "✅ You're already connected! Forward a job posting to add it, "
+    "✅ You're already connected! Forward a channel post to add it to your "
+    "Inbox, send any other job posting to track it, "
     "or send /summary to see your pipeline."
 )
 
 LINK_SUCCESS_MESSAGE = (
     "🎉 You're connected!\n\n"
     "Now you can:\n"
-    "• Forward job postings to create applications\n"
+    "• Forward channel posts (even from private channels) to your Inbox\n"
+    "• Send or forward other job postings to create applications\n"
     "• Send /summary for an instant pipeline overview\n"
     "• Send /cancel to abort any in-progress conversation"
 )
