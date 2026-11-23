@@ -198,9 +198,9 @@ Conventions for every slice:
 ---
 
 - [ ] **Slice 8: Final regression and gates**
-  - [ ] Full backend suite on 3.11 and 3.14, frontend suite, `tsc`, ruff and lint on changed files. **[Agent: qa-tester]**
-  - [ ] Accessibility pass: editor (labels, tab order, the Edit/Preview tabs), the upload button states, the change card buttons. **[Agent: react-code-reviewer]**
-  - [ ] `/pre-merge` and `/security-review` on the branch. Focus: upload hardening, link XSS, prompt injection via CV text and tool calls, owner scoping, migration safety. **[Agent: general-purpose]**
+  - [x] Full backend suite on 3.11 and 3.14, frontend suite, `tsc`, ruff and lint on changed files. **[Agent: qa-tester]** _(2026-11-23: backend 1295 on 3.11/3.14, Vitest 493, tsc clean, vite build OK, ruff clean on changed lines; migrations up/down on an empty DB and a live-DB copy; API smoke via curl)_
+  - [x] Accessibility pass: editor (labels, tab order, the Edit/Preview tabs), the upload button states, the change card buttons. **[Agent: react-code-reviewer]** _(no P0/P1; P2/P3 fixed in PR #29)_
+  - [x] `/pre-merge` and `/security-review` on the branch. Focus: upload hardening, link XSS, prompt injection via CV text and tool calls, owner scoping, migration safety. **[Agent: general-purpose]** _(cold round: 8 findings incl. 1 HIGH [observed] card race and a PDF decompression bomb — all fixed with failing-first tests in PR #31; security review of every slice and of the fixes: no findings; report 011_premerge_2026-11-23.md, local)_
   - [ ] Live check with the user:
     - upload their real CV;
     - make it the base;
