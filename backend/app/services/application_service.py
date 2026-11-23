@@ -1,12 +1,14 @@
-from sqlalchemy import or_, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.pagination import paginate
 from app.models.application import Application, ApplicationStatusHistory
+from app.models.chat_message import ChatMessage
 from app.models.cv import Cv
 from app.models.vacancy import Vacancy
 from app.schemas.application import ApplicationCreate, ApplicationUpdate
+from app.services.chat_card_service import delete_application_cards
 from app.services.cv_service import CvNotFoundError
 
 
@@ -159,6 +161,11 @@ async def delete_application(
         update(Vacancy)
         .where(Vacancy.application_id == application.id)
         .values(application_id=None)
+    )
+    # Nor for the chat: its cards and messages go by hand.
+    await delete_application_cards(db, application.id)
+    await db.execute(
+        delete(ChatMessage).where(ChatMessage.application_id == application.id)
     )
     await db.delete(application)
     await db.commit()

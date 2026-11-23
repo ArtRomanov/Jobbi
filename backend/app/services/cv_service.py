@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.application import Application
 from app.models.cv import Cv
 from app.schemas.cv import CvCreate, CvUpdate
+from app.services.chat_card_service import mark_cv_cards_stale
 
 
 async def list_cvs(db: AsyncSession, user_id: str) -> list[dict]:
@@ -82,6 +83,8 @@ async def delete_cv(db: AsyncSession, user_id: str, cv_id: str) -> bool:
     result = await db.execute(select(Application).where(Application.cv_id == cv_id))
     for app in result.scalars().all():
         app.cv_id = None
+    # Cards keep `cv_id` without an FK: pending ones on this CV go stale.
+    await mark_cv_cards_stale(db, cv_id)
 
     await db.delete(cv)
     await db.commit()
