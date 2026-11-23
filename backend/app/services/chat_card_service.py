@@ -17,12 +17,15 @@ from app.models.application import Application
 from app.models.chat_change_card import ChatChangeCard
 from app.models.cv import Cv
 from app.schemas.cv import CV_CONTENT_MAX_CHARS
+from app.services import cv_service
 from app.services.chat_tools import CvEdit
 
 HISTORY_QUOTE_CHARS = 60
 
-# A version-guarded write that loses a race is retried this many times, from a
-# fresh read of the CV, before the Accept gives up.
+# The CV write is `cv_service.update_cv_content_if_version`. Both modules
+# import each other as modules (cv_service needs `mark_cv_cards_stale`), so
+# neither import order breaks. A guarded write that loses a race is retried
+# this many times, from a fresh read of the CV, before the Accept gives up.
 _ACCEPT_ATTEMPTS = 2
 
 
@@ -249,25 +252,6 @@ async def _mark_stale(db: AsyncSession, card: ChatChangeCard) -> None:
     await db.refresh(card)
 
 
-async def _write_cv_if_version(
-    db: AsyncSession, cv_id: str, expected_version: int, content: str
-) -> bool:
-    """Write `content` only if the CV is still at `expected_version`.
-
-    Bumps `version`. Does not commit. False when another write got there first.
-
-    Kept private here so it merges cleanly with the guarded update slice 3 adds
-    to `cv_service`; the two can be folded into one helper afterwards.
-    """
-    result = await db.execute(
-        update(Cv)
-        .where(Cv.id == cv_id, Cv.version == expected_version)
-        .values(content=content, version=expected_version + 1)
-        .execution_options(synchronize_session=False)
-    )
-    return result.rowcount == 1
-
-
 async def accept_card(
     db: AsyncSession, application: Application, card_id: str
 ) -> ChatChangeCard:
@@ -321,12 +305,21 @@ async def accept_card(
         if len(new_content) > CV_CONTENT_MAX_CHARS:
             raise CardTooLongError
 
-        if await _write_cv_if_version(db, card.cv_id, version, new_content):
-            card.state = "accepted"
-            card.decided_at = _utcnow()
-            await db.commit()
-            await db.refresh(card)
-            return card
+        try:
+            await cv_service.update_cv_content_if_version(
+                db, application.user_id, card.cv_id, version, content=new_content
+            )
+        except cv_service.CvVersionConflict:
+            continue  # Another write landed after our read: re-read and retry.
+        except cv_service.CvNotFoundError:
+            await _mark_stale(db, card)
+            raise CardStaleError from None
+        # Same transaction as the CV write: both land or neither does.
+        card.state = "accepted"
+        card.decided_at = _utcnow()
+        await db.commit()
+        await db.refresh(card)
+        return card
 
     await db.rollback()
     raise CardStaleError

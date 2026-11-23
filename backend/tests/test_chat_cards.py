@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.chat_change_card import ChatChangeCard
 from app.models.chat_message import ChatMessage
 from app.models.cv import Cv
+from app.services import cv_service
 from app.services.chat_tools import MALFORMED_CALL_NOTE, parse_propose_cv_edit
 
 APPS = "/api/v1/applications"
@@ -698,18 +699,16 @@ async def test_reject_changes_nothing(
 
 
 async def test_accept_retries_once_when_the_version_moved(
-    client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
+    client: httpx.AsyncClient, setup: dict[str, str]
 ) -> None:
     """A write landing between the read and the guarded update is retried."""
-    from app.services import chat_card_service
-
     (card,) = await _propose(client, setup, {"op": "remove", "before": "- jQuery"})
-    real_write = chat_card_service._write_cv_if_version
+    real_write = cv_service.update_cv_content_if_version
     attempts: list[int] = []
 
     async def _racing_write(
-        db: AsyncSession, cv_id: str, expected_version: int, content: str
-    ) -> bool:
+        db: AsyncSession, user_id: str, cv_id: str, expected_version: int, **kw: Any
+    ) -> Cv:
         attempts.append(expected_version)
         if len(attempts) == 1:
             # Another writer bumps the version (and edits elsewhere) first.
@@ -719,9 +718,9 @@ async def test_accept_retries_once_when_the_version_moved(
                 .values(content=Cv.content + "\nExtra", version=Cv.version + 1)
             )
             await db.commit()
-        return await real_write(db, cv_id, expected_version, content)
+        return await real_write(db, user_id, cv_id, expected_version, **kw)
 
-    with patch.object(chat_card_service, "_write_cv_if_version", _racing_write):
+    with patch.object(cv_service, "update_cv_content_if_version", _racing_write):
         resp = await _decide(client, setup, card["id"])
 
     assert resp.status_code == 200, resp.text
@@ -734,19 +733,41 @@ async def test_accept_retries_once_when_the_version_moved(
 async def test_accept_gives_up_after_losing_the_race_twice(
     client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
 ) -> None:
-    from app.services import chat_card_service
-
     (card,) = await _propose(client, setup, {"op": "remove", "before": "- jQuery"})
+    attempts: list[int] = []
 
-    async def _always_lose(*args: Any) -> bool:
-        return False
+    async def _always_lose(
+        db: AsyncSession, user_id: str, cv_id: str, expected_version: int, **kw: Any
+    ) -> Cv:
+        attempts.append(expected_version)
+        raise cv_service.CvVersionConflict(cv_id)
 
-    with patch.object(chat_card_service, "_write_cv_if_version", _always_lose):
+    with patch.object(cv_service, "update_cv_content_if_version", _always_lose):
         resp = await _decide(client, setup, card["id"])
 
     assert resp.status_code == 409
     assert resp.json()["detail"] == "CARD_STALE"
+    assert len(attempts) == 2
     assert await _card_state(db_session, card["id"]) == "pending"
+    assert (await _cv_content(client, setup))["content"] == CV_TEXT
+
+
+async def test_accept_when_cv_vanishes_before_the_write_is_stale(
+    client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
+) -> None:
+    (card,) = await _propose(client, setup, {"op": "remove", "before": "- jQuery"})
+
+    async def _gone(
+        db: AsyncSession, user_id: str, cv_id: str, expected_version: int, **kw: Any
+    ) -> Cv:
+        raise cv_service.CvNotFoundError(cv_id)
+
+    with patch.object(cv_service, "update_cv_content_if_version", _gone):
+        resp = await _decide(client, setup, card["id"])
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "CARD_STALE"
+    assert await _card_state(db_session, card["id"]) == "stale"
 
 
 # ---------------------------------------------------------------------------

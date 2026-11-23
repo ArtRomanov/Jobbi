@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.application import Application
 from app.models.cv import Cv
 from app.schemas.cv import CvCreate, CvUpdate
-from app.services.chat_card_service import mark_cv_cards_stale
+from app.services import chat_card_service
 
 
 class CvNotFoundError(Exception):
@@ -154,7 +154,7 @@ async def delete_cv(db: AsyncSession, user_id: str, cv_id: str) -> bool:
     for app in result.scalars().all():
         app.cv_id = None
     # Cards keep `cv_id` without an FK: pending ones on this CV go stale.
-    await mark_cv_cards_stale(db, cv_id)
+    await chat_card_service.mark_cv_cards_stale(db, cv_id)
 
     await db.delete(cv)
     await db.commit()
