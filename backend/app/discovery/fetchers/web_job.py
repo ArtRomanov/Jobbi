@@ -16,18 +16,17 @@ Order:
    else ``<body>``.
 
 HTML is parsed with lxml, which stops nesting at a fixed depth (~255), and
-converted to text in one linear pass. ``board_http.html_to_text`` is not used
-here: its cost grows with depth x size, so a hostile, deeply nested page (or
-JSON-LD description) could keep a worker busy for minutes.
+converted to text in one linear pass (``board_http.parse_html`` /
+``element_text`` / ``html_to_text``, shared with the board fetchers).
 
-Parsing never raises on bad input: a page it can't read gives empty text.
+Parsing never raises on bad input: a page it can't read gives empty text,
+and an unexpected failure (e.g. ``RecursionError``) gives an empty page.
 """
 
 import asyncio
 import datetime as dt
 import html as html_lib
 import json
-import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from itertools import islice
@@ -37,9 +36,15 @@ import httpx
 import structlog
 import trafilatura
 from lxml import etree
-from lxml import html as lxml_html
 
-from app.discovery.fetchers.board_http import cap_name, cap_text
+from app.discovery.fetchers.board_http import (
+    NOISE_TAGS,
+    cap_name,
+    cap_text,
+    element_text,
+    html_to_text,
+    parse_html,
+)
 from app.discovery.fetchers.safe_http import Resolver, fetch_html, system_resolver
 
 __all__ = ["JobPage", "fetch_job", "parse_job_page"]
@@ -53,18 +58,7 @@ _MAX_DATE_CHARS = 64
 # Real job pages have a few hundred to a few thousand elements; trafilatura
 # spends ~0.1 ms per element, so a bigger (likely hostile) page skips it.
 _MAX_EXTRACT_ELEMENTS = 30_000
-_NOISE_TAGS = ("script", "style", "noscript", "template", "svg", "iframe")
 _CONTENT_TAGS = ("main", "article", "body")
-# Elements that start and end a line of text; inline ones (<b>, <a>) don't.
-_BLOCK_TAGS = frozenset(
-    {
-        "p", "div", "li", "ul", "ol", "dl", "dt", "dd", "tr", "table",
-        "h1", "h2", "h3", "h4", "h5", "h6", "section", "article", "main",
-        "header", "footer", "aside", "nav", "blockquote", "pre", "form",
-        "fieldset", "figure", "figcaption", "address", "hr", "br",
-    }
-)  # fmt: skip
-_SPACES_RE = re.compile(r"[ \t ]+")  #   = non-breaking space
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,48 +82,6 @@ class _Posting:
     company: str | None
 
 
-def _parse_html(markup: str) -> lxml_html.HtmlElement | None:
-    """The document root, or None for an empty or unreadable document."""
-    parser = lxml_html.HTMLParser(
-        encoding="utf-8", remove_comments=True, remove_pis=True, no_network=True
-    )
-    try:
-        return lxml_html.document_fromstring(
-            markup.encode("utf-8", "replace"), parser=parser
-        )
-    except (etree.LxmlError, ValueError):
-        return None
-
-
-def _element_text(element: etree._Element) -> str:
-    """Plain text with one block element per line (one linear pass)."""
-    parts: list[str] = []
-    for event, node in etree.iterwalk(element, events=("start", "end")):
-        is_block = node.tag in _BLOCK_TAGS
-        if event == "start":
-            if is_block:
-                parts.append("\n")
-            if node.text:
-                parts.append(node.text)
-        else:
-            if is_block:
-                parts.append("\n")
-            if node.tail and node is not element:
-                parts.append(node.tail)
-    lines = (_SPACES_RE.sub(" ", line).strip() for line in "".join(parts).splitlines())
-    return "\n".join(line for line in lines if line)
-
-
-def _html_text(markup: str) -> str:
-    """Text of an HTML fragment such as a JSON-LD ``description``."""
-    root = _parse_html(markup)
-    if root is None:
-        return ""
-    etree.strip_elements(root, *_NOISE_TAGS, with_tail=False)
-    body = root.find("body")
-    return _element_text(body if body is not None else root)
-
-
 def _short(value: Any) -> str | None:
     """A non-empty single-line string cut to the name column, else None."""
     if not isinstance(value, str):
@@ -146,10 +98,12 @@ def _parse_date(value: Any) -> dt.datetime | None:
         return None
     try:
         parsed = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
+        if parsed.tzinfo is not None:
+            # 0001-01-01T00:00+01:00 / 9999-12-31T23:59-01:00 leave the
+            # datetime range when shifted to UTC: OverflowError.
+            parsed = parsed.astimezone(dt.UTC).replace(tzinfo=None)
+    except (ValueError, TypeError, OverflowError):
         return None
-    if parsed.tzinfo is not None:
-        parsed = parsed.astimezone(dt.UTC).replace(tzinfo=None)
     return parsed
 
 
@@ -190,7 +144,7 @@ def _description_text(value: Any) -> str:
         return ""
     if "<" not in value and "&lt;" in value:
         value = html_lib.unescape(value)  # HTML sent escaped once more
-    return _html_text(value)
+    return html_to_text(value)
 
 
 def _company(value: Any) -> str | None:
@@ -243,11 +197,11 @@ def _is_huge(root: etree._Element) -> bool:
 
 
 def _fallback_text(root: etree._Element) -> str:
-    etree.strip_elements(root, *_NOISE_TAGS, with_tail=False)
+    etree.strip_elements(root, *NOISE_TAGS, with_tail=False)
     for name in _CONTENT_TAGS:
         found = next(root.iter(name), None)
         if found is not None:
-            text = _element_text(found)
+            text = element_text(found)
             if text:
                 return text
     return ""
@@ -257,8 +211,20 @@ def parse_job_page(html: str, page_url: str) -> JobPage:
     """Text, date, title and company of one job page (pure, no network).
 
     ``page_url`` is the URL the page was fetched from (after redirects).
+    Never raises: a page that breaks the parser gives an empty ``JobPage``
+    (the caller then treats it like a page without text).
     """
-    root = _parse_html(html) if html.strip() else None
+    try:
+        return _parse_job_page(html, page_url)
+    # Hostile input in third-party parsers (lxml, json, trafilatura,
+    # datetime): any failure means "nothing readable", never a crashed run.
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("web_job_parse_failed", error=type(exc).__name__)
+        return _EMPTY
+
+
+def _parse_job_page(html: str, page_url: str) -> JobPage:
+    root = parse_html(html) if html.strip() else None
     if root is None:
         return _EMPTY
 

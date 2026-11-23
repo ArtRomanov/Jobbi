@@ -327,3 +327,24 @@ async def test_fetch_job_propagates_unsafe_url(guarded_client: httpx.AsyncClient
 
     with pytest.raises(UnsafeUrlError):
         await fetch_job(PAGE_URL, client=guarded_client, resolver=_private)
+
+
+@pytest.mark.parametrize(
+    "value", ["0001-01-01T00:00:00+01:00", "9999-12-31T23:59:59-01:00"]
+)
+def test_date_out_of_range_after_utc_shift_is_none(value: str) -> None:
+    page = parse_job_page(_ld(_posting(description="d", datePosted=value)), PAGE_URL)
+
+    assert page.posted_at is None
+    assert page.text == "d"
+
+
+def test_parse_job_page_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _boom(*args: Any, **kwargs: Any) -> None:
+        raise RecursionError("too deep")
+
+    monkeypatch.setattr(web_job, "_find_posting", _boom)
+
+    assert parse_job_page("<main><p>x</p></main>", PAGE_URL) == JobPage(
+        text="", posted_at=None, title=None, company=None
+    )

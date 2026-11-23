@@ -24,7 +24,7 @@ import logging
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 import httpx
 
@@ -178,9 +178,34 @@ async def _fetch_lever(
     cutoff: datetime,
     initial: bool,
 ) -> BoardFetch:
+    postings = await lever.list_postings(client, kind, company)
+    # Mapping converts description HTML to text (CPU work on remote input):
+    # run it in a worker thread, off the event loop.
+    return await asyncio.to_thread(
+        _lever_posts,
+        kind,
+        company,
+        postings,
+        known_keys,
+        now=now,
+        cutoff=cutoff,
+        initial=initial,
+    )
+
+
+def _lever_posts(
+    kind: str,
+    company: str,
+    postings: list[dict[str, Any]],
+    known_keys: Collection[str],
+    *,
+    now: datetime,
+    cutoff: datetime,
+    initial: bool,
+) -> BoardFetch:
     result = BoardFetch()
     handled: set[str] = set()
-    for posting in await lever.list_postings(client, kind, company):
+    for posting in postings:
         key = lever.posting_key(kind, company, posting)
         if key in known_keys or key in handled:
             continue
@@ -204,8 +229,29 @@ async def _fetch_teamtailor(
     cutoff: datetime,
     initial: bool,
 ) -> BoardFetch:
-    result = BoardFetch()
     feed = await teamtailor.fetch_feed(client, subdomain)
+    # Item descriptions are HTML -> text (CPU work): off the event loop.
+    return await asyncio.to_thread(
+        _teamtailor_posts,
+        subdomain,
+        feed,
+        known_keys,
+        now=now,
+        cutoff=cutoff,
+        initial=initial,
+    )
+
+
+def _teamtailor_posts(
+    subdomain: str,
+    feed: teamtailor.TeamtailorFeed,
+    known_keys: Collection[str],
+    *,
+    now: datetime,
+    cutoff: datetime,
+    initial: bool,
+) -> BoardFetch:
+    result = BoardFetch()
     for item in feed.items:  # already deduplicated by job id
         key = teamtailor.item_key(subdomain, item.job_id)
         if key in known_keys:

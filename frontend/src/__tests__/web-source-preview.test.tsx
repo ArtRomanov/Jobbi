@@ -378,6 +378,8 @@ describe("Web page source: add with preview", () => {
 
 describe("Web page source: ATS hint in the preview", () => {
   const BOARD_LINK = "https://job-boards.greenhouse.io/wrike";
+  const BOARD_TEXT = "Board: job-boards.greenhouse.io/wrike";
+  const ADD_BOARD_NAME = "Add the board job-boards.greenhouse.io/wrike";
   const HINT_TEXT =
     "This page uses Greenhouse — add the board instead for full job texts and dates";
 
@@ -405,7 +407,10 @@ describe("Web page source: ATS hint in the preview", () => {
     const preview = await openPreview(user);
 
     expect(within(preview).getByText(HINT_TEXT)).toBeInTheDocument();
-    expect(within(preview).getByRole("button", { name: "Add the board" })).toBeEnabled();
+    // The board is named as plain text, not a link
+    expect(within(preview).getByText(BOARD_TEXT)).toBeInTheDocument();
+    expect(within(preview).queryByRole("link", { name: /greenhouse/ })).not.toBeInTheDocument();
+    expect(within(preview).getByRole("button", { name: ADD_BOARD_NAME })).toBeEnabled();
     // The page itself can still be saved
     expect(within(preview).getByRole("button", { name: "Save" })).toBeEnabled();
   });
@@ -418,7 +423,8 @@ describe("Web page source: ATS hint in the preview", () => {
     const preview = await openPreview(user);
 
     expect(within(preview).queryByText(/This page uses/)).not.toBeInTheDocument();
-    expect(within(preview).queryByRole("button", { name: "Add the board" })).not.toBeInTheDocument();
+    expect(within(preview).queryByRole("button", { name: /^Add the board/ })).not.toBeInTheDocument();
+    expect(within(preview).queryByText(/^Board:/)).not.toBeInTheDocument();
   });
 
   it("'Add the board' adds the board, closes the preview, clears and focuses the input", async () => {
@@ -448,7 +454,7 @@ describe("Web page source: ATS hint in the preview", () => {
     await waitForList();
 
     const preview = await openPreview(user);
-    await user.click(within(preview).getByRole("button", { name: "Add the board" }));
+    await user.click(within(preview).getByRole("button", { name: ADD_BOARD_NAME }));
 
     expect(await screen.findByText("Wrike", OUTSIDE_SOURCE_FILTER)).toBeInTheDocument();
     expect(creates).toEqual([{ input: BOARD_LINK }]);
@@ -469,7 +475,7 @@ describe("Web page source: ATS hint in the preview", () => {
     await waitForList();
 
     const preview = await openPreview(user);
-    const button = within(preview).getByRole("button", { name: "Add the board" });
+    const button = within(preview).getByRole("button", { name: ADD_BOARD_NAME });
     await user.click(button);
 
     expect(await within(preview).findByRole("alert")).toHaveTextContent("Already in your sources");
@@ -513,7 +519,7 @@ describe("Web page source: ATS hint in the preview", () => {
       expect(within(preview).queryAllByRole("listitem")).toHaveLength(0);
       expect(within(preview).queryByRole("alert")).not.toBeInTheDocument();
       expect(within(preview).getByText(HINT_TEXT)).toBeInTheDocument();
-      expect(within(preview).getByRole("button", { name: "Add the board" })).toBeEnabled();
+      expect(within(preview).getByRole("button", { name: ADD_BOARD_NAME })).toBeEnabled();
       expect(within(preview).getByRole("button", { name: "Save" })).toBeDisabled();
       expect(within(preview).getByRole("button", { name: "Re-check" })).toBeEnabled();
     });
@@ -545,7 +551,7 @@ describe("Web page source: ATS hint in the preview", () => {
       await waitForList();
 
       const preview = await openZeroPreview(user);
-      await user.click(within(preview).getByRole("button", { name: "Add the board" }));
+      await user.click(within(preview).getByRole("button", { name: ADD_BOARD_NAME }));
 
       expect(await screen.findByText("Wrike", OUTSIDE_SOURCE_FILTER)).toBeInTheDocument();
       expect(creates).toEqual([{ input: BOARD_LINK }]);

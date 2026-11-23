@@ -499,3 +499,98 @@ def test_relative_link_on_a_board_host_counts() -> None:
             kind="teamtailor", input="https://acme.teamtailor.com", label="Teamtailor"
         )
     )
+
+
+# --- hostile input ------------------------------------------------------------
+
+PAGE = "https://example.com/careers"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param('<a href="http://[broken/jobs/1">Broken</a>', id="bad-ipv6-host"),
+        pytest.param('<a href="https://[::1/jobs/2">Broken</a>', id="unclosed-bracket"),
+        pytest.param('<a href="//[x]:99999/jobs/3">Port</a>', id="bad-port"),
+        pytest.param('<a href="/jobs/\ud800">Surrogate</a>', id="surrogate"),
+        pytest.param('<link rel="next" href="http://[broken">', id="bad-next"),
+        pytest.param("<div>" * 100_000 + "</div>" * 100_000, id="very-deep"),
+    ],
+)
+def test_hostile_links_do_not_raise(body: str) -> None:
+    html = f'<html><body>{body}<a href="/jobs/ok"><h3>Fine</h3></a></body></html>'
+
+    page = parse_listing(html, PAGE, None)
+
+    assert isinstance(page, ListingPage)
+
+
+def test_broken_link_is_skipped_and_others_kept() -> None:
+    html = (
+        '<a href="http://[broken/jobs/1">Broken</a>'
+        '<a href="/jobs/ok"><h3>Fine</h3></a>'
+    )
+
+    page = parse_listing(html, PAGE, None)
+
+    assert page.jobs == [ListingJob(url="https://example.com/jobs/ok", title="Fine")]
+
+
+def test_chrome_detection_still_skips_nested_nav_and_pager() -> None:
+    html = (
+        '<nav><div><ul><li><a href="/jobs/nav1">Nav job</a></li></ul></div></nav>'
+        '<div class="pagination"><span><a href="/jobs/p1">Pager job</a></span></div>'
+        '<a role="tab" href="/jobs/tab1">Tab</a>'
+        '<a class="pager" href="/jobs/self-pager">Self pager</a>'
+        '<main><a href="/jobs/real"><h3>Real</h3></a></main>'
+    )
+
+    page = parse_listing(html, PAGE, None)
+
+    assert [job.url for job in page.jobs] == ["https://example.com/jobs/real"]
+
+
+def test_page_over_the_element_cap_gives_no_jobs() -> None:
+    html = "<span></span>" * 210_000 + '<a href="/jobs/1"><h3>Job</h3></a>'
+
+    assert parse_listing(html, PAGE, None).jobs == []
+
+
+def _timed_parse(html: str) -> float:
+    import time
+
+    started = time.perf_counter()
+    parse_listing(html, PAGE, None)
+    return time.perf_counter() - started
+
+
+def test_deep_page_with_many_anchors_is_fast() -> None:
+    anchors = "".join(f'<a href="/jobs/{i}"><h3>Job {i}</h3></a>' for i in range(4_000))
+    html = "<div>" * 2_000 + anchors + "</div>" * 2_000
+
+    assert _timed_parse(html) < 1.5
+
+
+def test_flat_page_with_150k_anchors_is_fast() -> None:
+    html = '<a href="/jobs/1">x</a>' * 150_000
+
+    assert _timed_parse(html) < 5.0
+
+
+def test_nested_anchors_are_fast() -> None:
+    html = '<a href="/jobs/1">x' * 3_000 + "</a>" * 3_000
+
+    assert _timed_parse(html) < 1.5
+
+
+def test_parse_listing_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.discovery.fetchers import web_listing
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise RecursionError("too deep")
+
+    monkeypatch.setattr(web_listing, "_anchor_title", _boom)
+
+    page = parse_listing('<a href="/jobs/1"><h3>Job</h3></a>', PAGE, None)
+
+    assert page.jobs == []

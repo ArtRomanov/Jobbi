@@ -9,6 +9,7 @@ error), or when the total time budget is spent.
 
 import asyncio
 import hashlib
+import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
@@ -37,7 +38,8 @@ MAX_LISTING_PAGES = 5
 PAGE_PAUSE_SECONDS = 1.0
 
 SleepFn = Callable[[float], Awaitable[None]]
-StopFn = Callable[[list[ListingJob]], bool]
+# Sync (`def f(jobs) -> bool`) or async (`async def f(jobs) -> bool`).
+StopFn = Callable[[list[ListingJob]], bool | Awaitable[bool]]
 
 
 @dataclass(slots=True)
@@ -60,6 +62,15 @@ def _host(url: str) -> str:
     return (urlsplit(url).hostname or "").lower()
 
 
+async def _should_stop(stop_after: StopFn | None, page_jobs: list[ListingJob]) -> bool:
+    if stop_after is None:
+        return False
+    verdict = stop_after(page_jobs)
+    if inspect.isawaitable(verdict):
+        verdict = await verdict
+    return bool(verdict)
+
+
 async def read_listing(
     url: str,
     job_link_contains: str | None,
@@ -75,7 +86,12 @@ async def read_listing(
     """Read up to `max_pages` pages of the listing at `url`.
 
     `stop_after(page_jobs)` may end the read after a page (the worker stops at
-    a page that holds an already-seen job). Pages after the first that fail,
+    a page that holds an already-seen job). It gets the page's new jobs (never
+    empty) and returns a bool, either directly (`def`) or as an awaitable
+    (`async def`, e.g. a DB lookup), which is awaited; truthy means stop. It
+    is called once per page, after that page's jobs were added to the result;
+    an exception from it propagates. Each page is parsed in a worker thread
+    (`asyncio.to_thread`). Pages after the first that fail,
     redirect somewhere unsafe or do not fit the remaining time are simply not
     read; what was collected so far is returned.
 
@@ -117,13 +133,17 @@ async def read_listing(
                     raise
                 break
             result.pages_read += 1
-            listing = parse_listing(page.text, page.final_url, job_link_contains)
+            # Parsing is CPU work (a hostile page can take seconds): keep it
+            # off the event loop the API and the worker share.
+            listing = await asyncio.to_thread(
+                parse_listing, page.text, page.final_url, job_link_contains
+            )
             if result.pages_read == 1:
                 result.ats_hint = listing.ats_hint
             new_jobs = [job for job in listing.jobs if job.url not in seen_urls]
             seen_urls.update(job.url for job in new_jobs)
             result.jobs.extend(new_jobs)
-            if not new_jobs or (stop_after is not None and stop_after(new_jobs)):
+            if not new_jobs or await _should_stop(stop_after, new_jobs):
                 break
             candidate = listing.next_url
             if (

@@ -517,10 +517,17 @@ def _seen_keys(
 async def _get_owned_source(
     db: AsyncSession, user_id: str, source_id: str
 ) -> VacancySource:
+    """The user's source with its current column values.
+
+    `populate_existing` overwrites an object already in the session: sessions
+    keep objects after commit (`expire_on_commit=False`), so a plain re-select
+    after a network call would return the values read before it and miss a
+    lease, rename or edit saved meanwhile.
+    """
     result = await db.execute(
-        select(VacancySource).where(
-            VacancySource.id == source_id, VacancySource.user_id == user_id
-        )
+        select(VacancySource)
+        .where(VacancySource.id == source_id, VacancySource.user_id == user_id)
+        .execution_options(populate_existing=True)
     )
     source = result.scalar_one_or_none()
     if source is None:
@@ -745,6 +752,7 @@ async def _replace_source(
     after the live check (see `edit_source`)."""
     user_id = old.user_id
     old_id = old.id
+    revision = old.revision
     await _check_can_add(db, user_id, parsed, exclude_id=old_id)
     await db.commit()  # no transaction open during the live check
 
@@ -771,7 +779,8 @@ async def _replace_source(
         )
 
     current = await _get_owned_source(db, user_id, old_id)
-    if is_attempt_running(current):
+    if is_attempt_running(current) or current.revision != revision:
+        # A first scan started, or another edit was saved, during the check.
         await db.rollback()
         raise SourceBusyError
     await _check_can_add(db, user_id, parsed, exclude_id=old_id)

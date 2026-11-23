@@ -9,6 +9,7 @@ RSS never needs one, and that is where XML bombs (billion laughs) and external
 entities live.
 """
 
+import asyncio
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -177,7 +178,8 @@ async def fetch_feed(client: httpx.AsyncClient, subdomain: str) -> TeamtailorFee
         feed_url(subdomain),
         headers={"Accept": "application/rss+xml, application/xml;q=0.9"},
     )
-    return parse_feed(subdomain, body)
+    # Up to 5 MB of XML: parse it in a worker thread, off the event loop.
+    return await asyncio.to_thread(parse_feed, subdomain, body)
 
 
 async def fetch_board_name(client: httpx.AsyncClient, subdomain: str) -> str:

@@ -477,7 +477,15 @@ async def _load_sources(
         )
     else:
         stmt = stmt.where(VacancySource.initial_scan_completed_at.is_not(None))
-    stmt = stmt.order_by(VacancySource.created_at, VacancySource.id)
+    # Least recently checked first (never checked before all others), so a
+    # source left out by the time budget goes first in the next check.
+    # `IS NOT NULL` sorts False first on every backend (portable NULLS FIRST).
+    stmt = stmt.order_by(
+        VacancySource.last_checked_at.is_not(None),
+        VacancySource.last_checked_at,
+        VacancySource.created_at,
+        VacancySource.id,
+    )
     async with session_factory() as session:
         sources = (await session.scalars(stmt)).all()
         return [
@@ -629,22 +637,50 @@ async def _scan_source(
         )
         report.sources_failed += 1
         return
-    except ValueError:  # handle no longer passes validation
+    except ValueError:  # handle no longer passes validation (or bad data)
         logger.warning("Source %s has an invalid handle", source.id)
         await _record_read_failure(
             session_factory, source, READ_ERROR_MESSAGES["unreachable"], now, initial
         )
         report.sources_failed += 1
         return
-    await _store_posts(
-        session_factory,
-        source,
-        posts,
-        now,
-        report,
-        initial=initial,
-        seen_only_keys=seen_only_keys,
-    )
+    except Exception:
+        # Anything else (a parser bug on hostile content) is this source's
+        # problem only: the run goes on with the other sources.
+        logger.exception("Source %s failed unexpectedly", source.id)
+        await _record_failure_safely(session_factory, source, now, initial=initial)
+        report.sources_failed += 1
+        return
+    try:
+        await _store_posts(
+            session_factory,
+            source,
+            posts,
+            now,
+            report,
+            initial=initial,
+            seen_only_keys=seen_only_keys,
+        )
+    except Exception:
+        logger.exception("Source %s: storing its posts failed", source.id)
+        report.sources_failed += 1
+
+
+async def _record_failure_safely(
+    session_factory: SessionFactory,
+    source: _SourceRef,
+    now: datetime,
+    *,
+    initial: bool,
+) -> None:
+    """Record an `unreachable` read after an unexpected error; a failure of
+    the write itself is only logged, so it never stops the run."""
+    try:
+        await _record_read_failure(
+            session_factory, source, READ_ERROR_MESSAGES["unreachable"], now, initial
+        )
+    except Exception:
+        logger.exception("Could not record the failed read of %s", source.id)
 
 
 def _next_initial_attempt(now: datetime, failing_since: datetime | None) -> datetime:
@@ -999,48 +1035,82 @@ async def _check_web_sources(
                 logger.warning("Web budget spent: listings of later sources wait")
                 break
             started = monotonic()
-            await _list_web_source(
-                session_factory,
-                client,
-                source,
-                clock(),
-                report,
-                sleep=sleep,
-                resolver=resolver,
-                timeout_s=min(WEB_LISTING_TIMEOUT_S, remaining),
-            )
+            now = clock()
+            try:
+                await _list_web_source(
+                    session_factory,
+                    client,
+                    source,
+                    now,
+                    report,
+                    sleep=sleep,
+                    resolver=resolver,
+                    timeout_s=min(WEB_LISTING_TIMEOUT_S, remaining),
+                )
+            except Exception:
+                # E.g. a failed write after the read: this source only.
+                logger.exception("Web source %s listing failed unexpectedly", source.id)
+                report.sources_failed += 1
             durations[source.id] += monotonic() - started
-        for source in sources:
+        for source in await _by_longest_waiting_row(session_factory, sources):
             if monotonic() >= run_deadline:
                 logger.warning("Web budget spent: job pages of later sources wait")
                 break
             started = monotonic()
-            await _read_job_pages(
-                session_factory,
-                client,
-                source,
-                clock,
-                report,
-                sleep=sleep,
-                resolver=resolver,
-                monotonic=monotonic,
-                deadline=min(started + WEB_SOURCE_DETAIL_BUDGET_S, run_deadline),
-            )
+            try:
+                await _read_job_pages(
+                    session_factory,
+                    client,
+                    source,
+                    clock,
+                    report,
+                    sleep=sleep,
+                    resolver=resolver,
+                    monotonic=monotonic,
+                    deadline=min(started + WEB_SOURCE_DETAIL_BUDGET_S, run_deadline),
+                )
+            except Exception:
+                logger.exception(
+                    "Web source %s job pages failed unexpectedly", source.id
+                )
             durations[source.id] += monotonic() - started
     for source in sources:
         logger.info("Web source %s checked in %.1f s", source.id, durations[source.id])
 
 
-async def _web_keys(session_factory: SessionFactory, source: _SourceRef) -> set[str]:
-    """Every seen key of this web source (it lists each job only while open)."""
-    stmt = select(VacancySeenKey.external_key).where(
-        VacancySeenKey.user_id == source.user_id,
-        VacancySeenKey.external_key.startswith(
-            f"{_WEB_KEY_PREFIX}{source.id}/", autoescape=True
+async def _by_longest_waiting_row(
+    session_factory: SessionFactory, sources: Sequence[_SourceRef]
+) -> list[_SourceRef]:
+    """Sources for the detail step: the one whose oldest `needs_detail` row
+    waits longest first, sources with nothing waiting last.
+
+    Listing order alone would starve late sources: every listing that reads
+    fine sets `last_checked_at`, so the same sources would come first every
+    hour and the ones after the 40-minute budget would never get job pages.
+    """
+    ids = [source.id for source in sources]
+    oldest: dict[str, datetime] = {}
+    async with session_factory() as session:
+        for start in range(0, len(ids), _KEY_CHUNK):
+            rows = await session.execute(
+                select(Vacancy.source_id, func.min(Vacancy.found_at))
+                .where(
+                    Vacancy.source_id.in_(ids[start : start + _KEY_CHUNK]),
+                    Vacancy.state == "pending",
+                    Vacancy.needs_detail.is_(True),
+                )
+                .group_by(Vacancy.source_id)
+            )
+            oldest.update({source_id: found for source_id, found in rows.all()})
+    position = {source_id: index for index, source_id in enumerate(ids)}
+    return sorted(
+        sources,
+        key=lambda source: (
+            source.id not in oldest,
+            oldest.get(source.id) or datetime.min,
+            position[source.id],
         ),
     )
-    async with session_factory() as session:
-        return set((await session.scalars(stmt)).all())
 
 
 def _listing_post(source: _SourceRef, job: ListingJob, now: datetime) -> RawPost | None:
@@ -1074,13 +1144,19 @@ async def _list_web_source(
     """Read the listing (up to 5 pages, stopping after a page that holds a
     seen job) and store the new jobs as `pending` + `needs_detail`.
 
-    The seen keys are loaded before the read (a short read session), so the
-    stop rule needs no database access while pages are fetched.
+    After each page only that page's keys are looked up (a short read session
+    between two fetches, never during one), so the work does not grow with
+    the source's history. Seen jobs on a page read without the check (the
+    last one) are filtered out when stored.
     """
-    known = await _web_keys(session_factory, source)
+    known: set[str] = set()
 
-    def holds_seen_job(page_jobs: list[ListingJob]) -> bool:
-        return any(web_seen_key(source.id, job.url) in known for job in page_jobs)
+    async def holds_seen_job(page_jobs: list[ListingJob]) -> bool:
+        keys = [web_seen_key(source.id, job.url) for job in page_jobs]
+        async with session_factory() as session:
+            seen = await _already_seen(session, source.user_id, keys)
+        known.update(seen)
+        return bool(seen)
 
     reason: str | None = None
     jobs: list[ListingJob] = []
@@ -1102,6 +1178,10 @@ async def _list_web_source(
             reason = "unreachable"
         except PageFetchError as exc:
             logger.info("Web source %s listing failed: %s", source.id, exc.reason)
+            reason = "unreachable"
+        except Exception:
+            # E.g. a parser bug on a hostile page: a failed read of this source.
+            logger.exception("Web source %s listing failed unexpectedly", source.id)
             reason = "unreachable"
         else:
             jobs = listing.jobs
@@ -1200,6 +1280,13 @@ async def _read_job_pages(
             if not await _count_detail_failure(session_factory, source, row):
                 return _stop_edited(source)
             failures_in_row += 1
+        except Exception:
+            # E.g. a parser bug on a hostile page. Counted like a failed read
+            # (released after 3); this source's step stops for this check.
+            logger.exception("Web source %s: job page failed unexpectedly", source.id)
+            if not await _count_detail_failure(session_factory, source, row):
+                return _stop_edited(source)
+            return None
         else:
             failures_in_row = 0
             if not await _fill_detail(
@@ -1242,7 +1329,8 @@ async def _count_detail_failure(
     attempts = row.detail_attempts + 1
     values: dict[str, Any] = {"detail_attempts": attempts}
     if attempts >= WEB_DETAIL_MAX_ATTEMPTS:
-        values |= {"needs_detail": False, "text": row.title or ""}
+        # Never empty: a row without a listing title is rated by its link.
+        values |= {"needs_detail": False, "text": row.title or row.url}
     async with session_factory() as session, session.begin():
         if not await _revision_unchanged(session, source):
             return False

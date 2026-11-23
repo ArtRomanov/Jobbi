@@ -5,6 +5,7 @@ import pytest
 import respx
 
 from app.discovery.fetchers.safe_http import PageFetchError, UnsafeUrlError
+from app.discovery.fetchers.web_listing import ListingJob
 from app.discovery.web_scan import read_listing
 
 PUBLIC_IP = "93.184.216.34"
@@ -139,3 +140,30 @@ async def test_first_page_errors_are_raised() -> None:
         await _read()
     with pytest.raises(UnsafeUrlError):
         await _read("http://127.0.0.1/jobs")
+
+
+@respx.mock
+async def test_async_stop_after_is_awaited() -> None:
+    respx.get(f"https://{PUBLIC_IP}/jobs").mock(
+        side_effect=lambda request: httpx.Response(
+            200,
+            headers=HTML,
+            text=_page(
+                [f"p{request.url.params.get('page', '1')}"],
+                f"/jobs?page={int(request.url.params.get('page', '1')) + 1}",
+            ),
+        )
+    )
+    seen: list[str] = []
+
+    async def _stop(jobs: list[ListingJob]) -> bool:
+        seen.append(jobs[0].url)
+        return jobs[0].url.endswith("/p2")
+
+    result = await _read(stop_after=_stop)
+
+    assert result.pages_read == 2
+    assert seen == [
+        "https://example.com/vacancy/p1",
+        "https://example.com/vacancy/p2",
+    ]

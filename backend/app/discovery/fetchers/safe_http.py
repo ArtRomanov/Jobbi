@@ -13,6 +13,8 @@ not be steerable into the server's own network (SSRF). The rules:
 - redirects are followed by hand and every hop is checked again;
 - proxies from the environment are ignored, keep-alive is off (a pooled
   connection is keyed by IP and must not be reused for another TLS name);
+- no cookies are sent or kept (the jar would be keyed by the pinned IP and
+  shared across sites and users); ``Accept-Encoding: identity`` is sent;
 - total time, body size (decompressed) and content type are capped.
 """
 
@@ -42,6 +44,7 @@ __all__ = [
 
 USER_AGENT = "Mozilla/5.0 (compatible; Jobbi/1.0)"
 ACCEPT = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1"
+ACCEPT_ENCODING = "identity"
 DEFAULT_TIMEOUT_SECONDS = 15.0
 DEFAULT_MAX_BYTES = 5_000_000
 DEFAULT_MAX_REDIRECTS = 5
@@ -56,6 +59,8 @@ _NAT64_NETWORKS = (
     ipaddress.IPv6Network("64:ff9b::/96"),
     ipaddress.IPv6Network("64:ff9b:1::/48"),
 )
+# Deprecated site-local range; `is_global` reports it True on Python 3.14.
+_SITE_LOCAL_V6 = ipaddress.IPv6Network("fec0::/10")
 # `<meta charset=...>` / `content="text/html; charset=..."` near the page top.
 _META_CHARSET_RE = re.compile(
     rb"""<meta[^>]+charset\s*=\s*["']?([A-Za-z0-9_.:-]+)""", re.I
@@ -128,7 +133,7 @@ def _is_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     if isinstance(ip, ipaddress.IPv6Address):
         if ip.ipv4_mapped is not None:
             ip = ip.ipv4_mapped
-        elif any(ip in net for net in _NAT64_NETWORKS):
+        elif ip in _SITE_LOCAL_V6 or any(ip in net for net in _NAT64_NETWORKS):
             return True
         elif ip.sixtofour is not None:
             ip = ip.sixtofour
@@ -229,6 +234,9 @@ def _pinned_request(
         # httpcore passes this as `server_hostname` to the TLS handshake:
         # it is sent as SNI and the certificate is verified against it.
         extensions["sni_hostname"] = target.host
+    # The jar is keyed by the pinned IP, so a cookie set by one site would go
+    # to every other site (and user) on that IP: never send or keep any.
+    client.cookies.clear()
     return client.build_request(
         "GET",
         pinned_url,
@@ -236,6 +244,9 @@ def _pinned_request(
             "Host": f"{host_header}{port_suffix}",
             "User-Agent": USER_AGENT,
             "Accept": ACCEPT,
+            # Plain bodies only: a compressed one could inflate far past the
+            # size cap inside a single chunk before it is counted.
+            "Accept-Encoding": ACCEPT_ENCODING,
         },
         extensions=extensions,
         timeout=timeout_s,
@@ -303,6 +314,7 @@ async def _fetch(
             )
         finally:
             await response.aclose()
+            client.cookies.clear()  # drop whatever this hop set
     raise PageFetchError("unreachable")  # pragma: no cover - loop always exits
 
 

@@ -5,8 +5,10 @@ no test touches real DNS, and respx answers the pinned-IP requests.
 """
 
 import hashlib
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -22,6 +24,9 @@ from app.models.vacancy_seen_key import VacancySeenKey
 from app.models.vacancy_source import VacancySource
 from app.services import vacancy_source_service
 from app.services.vacancy_source_parsing import UNSAFE_LINK_MESSAGE
+from tests import conftest as root_conftest
+
+_real_session_local = root_conftest.TestSessionLocal
 
 URL = "/api/v1/vacancy-sources"
 PREVIEW_URL = f"{URL}/preview"
@@ -1419,3 +1424,196 @@ async def test_edit_another_users_source_is_404(
     assert not respx_mock.calls
     source = await _source_row(db_session, foreign)
     assert source is not None and source.url == GEEKJOB
+
+
+# --- edits racing the worker or another tab (pre-merge findings) --------------------
+
+SessionChange = Callable[[AsyncSession], Awaitable[None]]
+
+
+def _during_fetch(monkeypatch: pytest.MonkeyPatch, change: SessionChange) -> None:
+    """Run `change` in another session while the edit reads the new link."""
+    real_listing = vacancy_source_service.read_web_listing
+
+    async def listing(*args: Any, **kwargs: Any) -> Any:
+        result = await real_listing(*args, **kwargs)
+        async with _real_session_local() as other:
+            await change(other)
+        return result
+
+    async def name(*args: Any, **kwargs: Any) -> str:
+        async with _real_session_local() as other:
+            await change(other)
+        return "Durov jobs"
+
+    monkeypatch.setattr(vacancy_source_service, "read_web_listing", listing)
+    monkeypatch.setattr(vacancy_source_service, "_fetch_display_name", name)
+
+
+def _update_source(source_id: str, **values: Any) -> SessionChange:
+    async def change(other: AsyncSession) -> None:
+        source = await other.get(VacancySource, source_id)
+        assert source is not None
+        for column, value in values.items():
+            setattr(source, column, value)
+        await other.commit()
+
+    return change
+
+
+@pytest.mark.parametrize(
+    ("kind", "body"),
+    [
+        ("web", {"input": EXAMPLE_JOBS}),  # web edit in place
+        ("telegram", {"input": EXAMPLE_JOBS}),  # replace by a web page
+        ("web", {"input": "@durov_jobs"}),  # replace by a channel
+    ],
+)
+async def test_lease_taken_during_the_fetch_is_409(
+    client: httpx.AsyncClient,
+    token: str,
+    user_id: str,
+    respx_mock: respx.MockRouter,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    body: dict,
+) -> None:
+    _page(respx_mock, "/jobs", SMALL_LISTING)
+    if kind == "web":
+        source_id = await _insert_web(db_session, user_id, GEEKJOB)
+    else:
+        source_id = await _insert_telegram(db_session, user_id, "other_chan")
+    lease = datetime.now(UTC).replace(tzinfo=None)
+    _during_fetch(
+        monkeypatch, _update_source(source_id, initial_attempt_started_at=lease)
+    )
+
+    resp = await _patch(client, token, source_id, body)
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json() == {"detail": BUSY}
+    source = await _source_row(db_session, source_id)
+    assert source is not None and source.kind == kind
+    assert source.revision == 0
+    assert await _count(db_session, VacancySource) == 1
+
+
+async def test_replace_labels_old_cards_with_the_name_set_during_the_fetch(
+    client: httpx.AsyncClient,
+    token: str,
+    user_id: str,
+    respx_mock: respx.MockRouter,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _page(respx_mock, "/jobs", SMALL_LISTING)
+    old_id = await _insert_telegram(db_session, user_id, "other_chan")
+    card_id = await _add_pending(db_session, user_id, old_id, "k1", state="new")
+    _during_fetch(monkeypatch, _update_source(old_id, display_name="Renamed"))
+
+    resp = await _patch(client, token, old_id, {"input": EXAMPLE_JOBS})
+
+    assert resp.status_code == 200, resp.text
+    db_session.expire_all()
+    label = await db_session.scalar(
+        select(VacancyCardSource.label).where(VacancyCardSource.vacancy_id == card_id)
+    )
+    assert label == "Renamed"
+
+
+async def test_replace_refused_when_the_source_was_edited_during_the_fetch(
+    client: httpx.AsyncClient,
+    token: str,
+    user_id: str,
+    respx_mock: respx.MockRouter,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _page(respx_mock, "/jobs", SMALL_LISTING)
+    old_id = await _insert_telegram(db_session, user_id, "other_chan")
+    _during_fetch(monkeypatch, _update_source(old_id, revision=1))
+
+    resp = await _patch(client, token, old_id, {"input": EXAMPLE_JOBS})
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json() == {"detail": BUSY}
+    source = await _source_row(db_session, old_id)
+    assert source is not None and source.kind == "telegram"
+    assert await _count(db_session, VacancySource) == 1
+
+
+# --- no network while a transaction is open (API side) ------------------------------
+
+
+class _TrackingSessions:
+    """The app's session factory, remembering every session it made."""
+
+    def __init__(self) -> None:
+        self.sessions: list[AsyncSession] = []
+
+    def __call__(self) -> AsyncSession:
+        session = _real_session_local()
+        self.sessions.append(session)
+        return session
+
+    def open_transactions(self) -> int:
+        return sum(1 for s in self.sessions if s.in_transaction())
+
+
+@pytest.mark.parametrize(
+    ("action", "kind", "body"),
+    [
+        ("preview", None, {"input": EXAMPLE_JOBS}),
+        ("add", None, {"input": EXAMPLE_JOBS}),
+        ("add", None, {"input": "@durov_jobs"}),
+        ("edit", "web", {"job_link_contains": "/vacancy/"}),
+        ("edit", "telegram", {"input": EXAMPLE_JOBS}),
+        ("edit", "web", {"input": "@durov_jobs"}),
+    ],
+)
+async def test_no_network_call_while_a_transaction_is_open(
+    client: httpx.AsyncClient,
+    token: str,
+    user_id: str,
+    respx_mock: respx.MockRouter,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+    kind: str | None,
+    body: dict,
+) -> None:
+    _page(respx_mock, "/jobs", SMALL_LISTING)
+    _page(respx_mock, "/vacancies", SMALL_LISTING)
+    tracking = _TrackingSessions()
+    # The app's `get_db` override looks this name up on every request.
+    monkeypatch.setattr(root_conftest, "TestSessionLocal", tracking)
+    open_at_call: list[int] = []
+    real_listing = vacancy_source_service.read_web_listing
+
+    async def listing(*args: Any, **kwargs: Any) -> Any:
+        open_at_call.append(tracking.open_transactions())
+        return await real_listing(*args, **kwargs)
+
+    async def name(*args: Any, **kwargs: Any) -> str:
+        open_at_call.append(tracking.open_transactions())
+        return "Durov jobs"
+
+    monkeypatch.setattr(vacancy_source_service, "read_web_listing", listing)
+    monkeypatch.setattr(vacancy_source_service, "_fetch_display_name", name)
+
+    if action == "preview":
+        resp = await client.post(PREVIEW_URL, json=body, headers=_auth(token))
+    elif action == "add":
+        resp = await client.post(URL, json=body, headers=_auth(token))
+    else:
+        source_id = (
+            await _insert_web(db_session, user_id, GEEKJOB)
+            if kind == "web"
+            else await _insert_telegram(db_session, user_id, "other_chan")
+        )
+        resp = await _patch(client, token, source_id, body)
+
+    assert resp.status_code in (200, 201), resp.text
+    assert tracking.sessions, "the request used the tracked factory"
+    assert open_at_call and open_at_call == [0] * len(open_at_call)

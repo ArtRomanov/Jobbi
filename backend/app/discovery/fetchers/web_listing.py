@@ -39,21 +39,41 @@ page, on any host, is run through ``parse_source_input``; Greenhouse, Lever
 and Teamtailor boards count (Greenhouse embed links such as
 ``boards.greenhouse.io/embed/job_board?for=<token>`` give the ``for=`` token).
 The board linked most often wins (ties: the first seen). Nothing is fetched.
+
+Hostile pages (the URL is user-supplied): the work is linear in page size.
+Page chrome is found in one pass over all elements; titles look at no more
+than ``_MAX_TITLE_NODES`` nodes inside an anchor; only the first
+``_MAX_ANCHORS`` links (and ATS-hint tags) are looked at; a page with more
+than ``_MAX_ELEMENTS`` elements reads as having no jobs. ``parse_listing``
+never raises: a link that breaks URL parsing is skipped, and any other
+failure gives an empty ``ListingPage``. It is CPU work: async callers run
+it through ``asyncio.to_thread``.
 """
 
 import re
 from collections import Counter
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, unquote, urljoin, urlsplit
 
-from bs4 import BeautifulSoup, Tag
+import structlog
+from bs4 import BeautifulSoup, NavigableString, PageElement, Tag
+from bs4.element import CData
 
 from app.discovery.normalize import normalize_url
 from app.services.vacancy_source_parsing import SourceInputError, parse_source_input
 
 __all__ = ["AtsHint", "ListingJob", "ListingPage", "MAX_TITLE_CHARS", "parse_listing"]
 
+logger = structlog.get_logger()
+
 MAX_TITLE_CHARS = 255
+# Hostile-page limits (see the module docstring). Real listings have a few
+# hundred links and a few thousand elements.
+_MAX_ANCHORS = 5_000
+_MAX_ELEMENTS = 200_000
+_MAX_TITLE_NODES = 200  # a real job card has well under 100
+_DEFAULT_STRING_TYPES = frozenset({NavigableString, CData})
 
 _JOB_SEGMENT_RE = re.compile(
     r"^(?:jobs?|vacanc\w*|vakans\w*|positions?|openings?|careers?|roles?)$",
@@ -138,14 +158,16 @@ def _resolve(href: str | None, page_url: str, page_host: str) -> str | None:
     raw = href.strip()
     if not raw or raw.startswith("#") or raw.lower().startswith(_SKIP_SCHEMES):
         return None
-    url = normalize_url(urljoin(page_url, raw))
     try:
+        # `http://[broken` makes urljoin/urlsplit raise ValueError.
+        url = normalize_url(urljoin(page_url, raw))
         parts = urlsplit(url)
+        hostname = parts.hostname
     except ValueError:
         return None
-    if parts.scheme not in ("http", "https") or not parts.hostname:
+    if parts.scheme not in ("http", "https") or not hostname:
         return None
-    if not _same_site(parts.hostname, page_host):
+    if not _same_site(hostname, page_host):
         return None
     return url
 
@@ -170,8 +192,50 @@ def _is_title_like(tag: Tag) -> bool:
     return any(_TITLE_CLASS_RE.search(name) for name in classes)
 
 
+def _first_nodes(tag: Tag) -> Iterator[PageElement]:
+    """The first ``_MAX_TITLE_NODES`` descendants in document order.
+
+    Bounded for nested anchors. Not ``tag.descendants``: bs4 first walks to
+    the tag's deepest last descendant, which costs the full depth per call.
+    """
+    stack: list[Iterator[PageElement]] = [iter(tag.contents)]
+    count = 0
+    while stack:
+        node = next(stack[-1], None)
+        if node is None:
+            stack.pop()
+            continue
+        yield node
+        count += 1
+        if count >= _MAX_TITLE_NODES:
+            return
+        if isinstance(node, Tag):
+            stack.append(iter(node.contents))
+
+
 def _text(tag: Tag) -> str:
-    return " ".join(tag.get_text(" ").split())
+    """``get_text(" ")`` of the first nodes, whitespace collapsed."""
+    types = tag.interesting_string_types or _DEFAULT_STRING_TYPES
+    parts = [
+        str(node)
+        for node in _first_nodes(tag)
+        if isinstance(node, NavigableString)
+        and (type(node) is types if isinstance(types, type) else type(node) in types)
+    ]
+    return " ".join(" ".join(parts).split())
+
+
+def _inner_title_tag(anchor: Tag) -> Tag | None:
+    """The first heading inside the anchor, else the first title-like element."""
+    title_like: Tag | None = None
+    for node in _first_nodes(anchor):
+        if not isinstance(node, Tag):
+            continue
+        if node.name in _HEADINGS:
+            return node
+        if title_like is None and _is_title_like(node):
+            title_like = node
+    return title_like
 
 
 def _anchor_title(anchor: Tag) -> tuple[str, bool]:
@@ -180,8 +244,8 @@ def _anchor_title(anchor: Tag) -> tuple[str, bool]:
     A heading / ``*title*``-class element inside the anchor wins over the
     whole anchor text (cards often wrap company, tags and date in one link).
     """
-    inner = anchor.find(_HEADINGS) or anchor.find(_is_title_like)
-    if isinstance(inner, Tag) and (title := _text(inner)):
+    inner = _inner_title_tag(anchor)
+    if inner is not None and (title := _text(inner)):
         return title[:MAX_TITLE_CHARS], True
     title = _text(anchor)
     if not title:
@@ -202,13 +266,28 @@ def _is_pager(tag: Tag) -> bool:
     return any(_PAGER_RE.search(name) for name in names)
 
 
-def _in_page_chrome(anchor: Tag) -> bool:
+def _chrome_ids(elements: list[Tag]) -> set[int]:
+    """``id()`` of every element that is, or is inside, nav/header/footer/a pager.
+
+    One pass in document order (a parent always comes before its children),
+    so the cost is linear in the number of elements, whatever the depth.
+    """
+    chrome: set[int] = set()
+    for element in elements:
+        if (
+            element.name in _CHROME_TAGS
+            or id(element.parent) in chrome
+            or _is_pager(element)
+        ):
+            chrome.add(id(element))
+    return chrome
+
+
+def _in_page_chrome(anchor: Tag, chrome: set[int]) -> bool:
     """Inside navigation / header / footer / a pager, or a filter widget."""
     if str(anchor.get("role") or "").lower() in _WIDGET_ROLES:
         return True
-    if anchor.find_parent(_CHROME_TAGS) is not None:
-        return True
-    return _is_pager(anchor) or anchor.find_parent(_is_pager) is not None
+    return id(anchor) in chrome
 
 
 def _has_rel_next(tag: Tag) -> bool:
@@ -306,7 +385,7 @@ def _board_of(raw: str | None, page_url: str) -> tuple[str, str] | None:
 
 def _find_ats_hint(soup: BeautifulSoup, page_url: str) -> AtsHint | None:
     counts: Counter[tuple[str, str]] = Counter()
-    for tag in soup.find_all(["a", "iframe", "script"]):
+    for tag in soup.find_all(["a", "iframe", "script"], limit=_MAX_ANCHORS):
         if not isinstance(tag, Tag):
             continue
         attribute = "href" if tag.name == "a" else "src"
@@ -327,28 +406,70 @@ def parse_listing(
     the job board the page links to most (see the module docstring).
 
     ``page_url`` is the URL the page was fetched from (after redirects).
+    Never raises (see the module docstring).
     """
+    try:
+        return _parse_listing(html, page_url, job_link_contains)
+    # Hostile markup in a third-party parser (bs4, urllib): any failure
+    # means "nothing found on this page", never a crashed check run.
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("web_listing_parse_failed", error=type(exc).__name__)
+        return ListingPage()
+
+
+def _job_from_anchor(
+    anchor: Tag, chrome: set[int], page_url: str, page_host: str, pattern: str | None
+) -> tuple[str, str, bool] | None:
+    """``(url, title, is_marked)`` if the anchor is a job link, else None."""
+    if _in_page_chrome(anchor, chrome):
+        return None
+    url = _resolve(_attr(anchor, "href"), page_url, page_host)
+    if url is None or url == page_url:
+        return None
+    if pattern is not None:
+        if pattern not in url.lower():
+            return None
+    elif not _looks_like_job(url):
+        return None
+    title, is_marked = _anchor_title(anchor)
+    if title.isdigit():
+        return None  # a page number such as /vacancies/2
+    return url, title, is_marked
+
+
+def _parse_listing(
+    html: str, page_url: str, job_link_contains: str | None
+) -> ListingPage:
+    # Every element starts with "<": a cheap bound before parsing at all.
+    if html.count("<") > 2 * _MAX_ELEMENTS:
+        return ListingPage()
     page_url = normalize_url(page_url)
     page_host = (urlsplit(page_url).hostname or "").lower()
     pattern = (job_link_contains or "").strip().lower() or None
     soup = BeautifulSoup(html, "html.parser")
-    anchors = [a for a in soup.find_all("a", href=True) if isinstance(a, Tag)]
+    elements = [
+        e for e in soup.find_all(True, limit=_MAX_ELEMENTS + 1) if isinstance(e, Tag)
+    ]
+    if len(elements) > _MAX_ELEMENTS:
+        logger.info("web_listing_too_many_elements")
+        return ListingPage()
+    chrome = _chrome_ids(elements)
+    anchors = [
+        a
+        for a in soup.find_all("a", href=True, limit=_MAX_ANCHORS)
+        if isinstance(a, Tag)
+    ]
 
     found: dict[str, tuple[str, bool]] = {}  # url -> (title, is_marked)
     for anchor in anchors:
-        if _in_page_chrome(anchor):
+        try:
+            job = _job_from_anchor(anchor, chrome, page_url, page_host, pattern)
+        except (ValueError, TypeError, RecursionError) as exc:
+            logger.info("web_listing_anchor_skipped", error=type(exc).__name__)
             continue
-        url = _resolve(_attr(anchor, "href"), page_url, page_host)
-        if url is None or url == page_url:
+        if job is None:
             continue
-        if pattern is not None:
-            if pattern not in url.lower():
-                continue
-        elif not _looks_like_job(url):
-            continue
-        title, is_marked = _anchor_title(anchor)
-        if title.isdigit():
-            continue  # a page number such as /vacancies/2
+        url, title, is_marked = job
         known_title, known_marked = found.get(url, ("", False))
         if (not known_title and title) or (is_marked and not known_marked):
             found[url] = (title, is_marked)
@@ -364,8 +485,14 @@ def parse_listing(
             title = (segments[-1] if segments else url)[:MAX_TITLE_CHARS]
         jobs.append(ListingJob(url=url, title=title))
 
-    return ListingPage(
-        jobs=jobs,
-        next_url=_find_next(soup, anchors, page_url, page_host),
-        ats_hint=_find_ats_hint(soup, page_url),
-    )
+    next_url: str | None = None
+    ats_hint: AtsHint | None = None
+    try:
+        next_url = _find_next(soup, anchors, page_url, page_host)
+    except (ValueError, TypeError, RecursionError) as exc:
+        logger.info("web_listing_next_failed", error=type(exc).__name__)
+    try:
+        ats_hint = _find_ats_hint(soup, page_url)
+    except (ValueError, TypeError, RecursionError) as exc:
+        logger.info("web_listing_hint_failed", error=type(exc).__name__)
+    return ListingPage(jobs=jobs, next_url=next_url, ats_hint=ats_hint)

@@ -63,7 +63,7 @@ Conventions for every slice:
 ---
 
 - [ ] **Slice 7: Gates and live check**
-  - [ ] `/pre-merge` gate on the branch (claims audit across API, worker and UI; hostile input incl. SSRF payloads; fault injection: slow site, 403, redirect loop, huge page). **[Agent: general-purpose]**
+  - [x] `/pre-merge` gate on the branch (claims audit across API, worker and UI; hostile input incl. SSRF payloads; fault injection: slow site, 403, redirect loop, huge page). **[Agent: general-purpose]** _(2026-11-23: first verdict BLOCK — 4 HIGH observed (bad href / out-of-range date abort the whole hourly run; quadratic listing parser and html_to_text block the event loop), 3 MEDIUM, 7 LOW; all fixed test-first, re-verified, re-run verdict MERGE. Report: `010_premerge_2026-11-23.md` (untracked, repo root))_
   - [ ] `/security-review` of the branch (SSRF guard, XML parsing, scraped text rendering). Fix findings. **[Agent: general-purpose]**
   - [x] Update `features/manage-sources/CLAUDE.md`, `.env.example` unchanged check, README section on web sources (what works, JS sites unsupported, sort by newest). **[Agent: general-purpose]**
   - [ ] Live check from functional spec 2.5: ostrovok with/without pattern, geekjob search end-to-end within 2 hours of a real posting, edit filter, edit Telegram channel, localhost refused, Teamtailor board. Mark spec Status. **[Agent: qa-tester]**

@@ -71,6 +71,8 @@ async def client() -> AsyncGenerator[httpx.AsyncClient, None]:
         "fe80::1",
         "fc00::1",
         "ff02::1",
+        "fec0::1",  # site-local (deprecated); `is_global` misses it on 3.14
+        "feff::1",
         "::ffff:127.0.0.1",  # IPv4-mapped loopback
         "::ffff:10.0.0.1",
         "64:ff9b::7f00:1",  # NAT64 of 127.0.0.1
@@ -811,3 +813,50 @@ async def test_tls_certificate_for_another_name_is_refused(
     assert exc_info.value.reason == "unreachable"
     assert isinstance(exc_info.value.__cause__, httpx.ConnectError)
     assert seen_sni == ["jobs.example.test"]
+
+
+# --- cookies and compression ----------------------------------------------------
+
+
+@respx.mock
+async def test_cookies_are_not_kept_between_requests(client: httpx.AsyncClient) -> None:
+    resolver = resolver_for(
+        {"a.example.com": [PUBLIC_IP], "b.example.com": [PUBLIC_IP]}
+    )
+    route = respx.get(f"https://{PUBLIC_IP}/").mock(
+        side_effect=[
+            httpx.Response(
+                200, headers={**HTML, "set-cookie": "sid=secret; Path=/"}, text="a"
+            ),
+            httpx.Response(200, headers=HTML, text="b"),
+        ]
+    )
+
+    await fetch_html("https://a.example.com/", client=client, resolver=resolver)
+    await fetch_html("https://b.example.com/", client=client, resolver=resolver)
+
+    assert "cookie" not in route.calls[1].request.headers
+    assert not client.cookies
+
+
+@respx.mock
+async def test_cookies_are_not_sent_on_a_redirect_hop(
+    client: httpx.AsyncClient,
+) -> None:
+    respx.get(f"https://{PUBLIC_IP}/a").respond(
+        302, headers={"location": "/b", "set-cookie": "sid=secret; Path=/"}
+    )
+    hop = respx.get(f"https://{PUBLIC_IP}/b").respond(200, headers=HTML, text="ok")
+
+    await fetch_html("https://jobs.example.com/a", client=client, resolver=PUBLIC)
+
+    assert "cookie" not in hop.calls.last.request.headers
+
+
+@respx.mock
+async def test_asks_for_an_uncompressed_body(client: httpx.AsyncClient) -> None:
+    route = respx.get(f"https://{PUBLIC_IP}/").respond(200, headers=HTML, text="x")
+
+    await fetch_html("https://jobs.example.com/", client=client, resolver=PUBLIC)
+
+    assert route.calls.last.request.headers["accept-encoding"] == "identity"

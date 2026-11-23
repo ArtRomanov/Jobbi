@@ -1,11 +1,20 @@
-"""Shared HTTP and text helpers for the Greenhouse / Lever / Teamtailor fetchers."""
+"""Shared HTTP and text helpers for the Greenhouse / Lever / Teamtailor fetchers.
 
-import html
+``html_to_text`` is also used by ``web_job``. It parses with lxml (which
+stops at a fixed nesting depth, ~255 levels; a deeper document reads as
+empty) and builds the text in one linear pass, so a hostile description
+(30 000 sibling blocks, thousands of nesting levels, megabytes of markup)
+costs time proportional to its size. It is CPU work: async callers run it
+through ``asyncio.to_thread``.
+"""
+
 import json
 import re
 from typing import Any
 
 import httpx
+from lxml import etree
+from lxml import html as lxml_html
 
 from app.discovery.fetchers.errors import BoardReadError
 from app.discovery.normalize import normalize_url
@@ -26,25 +35,17 @@ MAX_LOGGED_ID_CHARS = 64
 # Anything else (slashes, dots, encoded chars) cannot be a real board.
 _HANDLE_RE = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 
-_TAG_RE = re.compile(r"<[^>]+>")
-_BLOCK_TAG_RE = re.compile(
-    r"</?(?:p|div|br|li|ul|ol|h[1-6]|tr|table)\b[^>]*>", re.IGNORECASE
-)
-_BLOCK_TAGS = [
-    "p",
-    "div",
-    "li",
-    "ul",
-    "ol",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "tr",
-    "table",
-]
+# Elements that start and end a line of text; inline ones (<b>, <a>) don't.
+BLOCK_TAGS = frozenset(
+    {
+        "p", "div", "li", "ul", "ol", "dl", "dt", "dd", "tr", "table",
+        "h1", "h2", "h3", "h4", "h5", "h6", "section", "article", "main",
+        "header", "footer", "aside", "nav", "blockquote", "pre", "form",
+        "fieldset", "figure", "figcaption", "address", "hr", "br",
+    }
+)  # fmt: skip
+# Elements whose content is never visible text.
+NOISE_TAGS = ("script", "style", "noscript", "template", "svg", "iframe")
 _SPACES_RE = re.compile(r"[ \t\u00a0]+")  # \u00a0 = non-breaking space
 
 
@@ -123,23 +124,52 @@ async def get_json(
         raise BoardReadError("unreachable") from exc
 
 
-def html_to_text(markup: str) -> str:
-    """Convert an HTML fragment to plain text with one block per line."""
+def parse_html(markup: str) -> lxml_html.HtmlElement | None:
+    """The document root, or None for an empty or unreadable document."""
+    parser = lxml_html.HTMLParser(
+        encoding="utf-8", remove_comments=True, remove_pis=True, no_network=True
+    )
     try:
-        from bs4 import BeautifulSoup
-    except ImportError:
-        text = html.unescape(_TAG_RE.sub("", _BLOCK_TAG_RE.sub("\n", markup)))
-    else:
-        soup = BeautifulSoup(markup, "html.parser")
-        # Line breaks only around block elements, so inline tags such as
-        # <strong> stay inside their sentence.
-        for tag in soup.find_all(_BLOCK_TAGS):
-            tag.insert_after("\n")
-        for br in soup.find_all("br"):
-            br.replace_with("\n")
-        text = soup.get_text()
-    lines = (_SPACES_RE.sub(" ", line).strip() for line in text.splitlines())
+        return lxml_html.document_fromstring(
+            markup.encode("utf-8", "replace"), parser=parser
+        )
+    except (etree.LxmlError, ValueError):
+        return None
+
+
+def element_text(element: etree._Element) -> str:
+    """Plain text with one block element per line (one linear pass)."""
+    parts: list[str] = []
+    for event, node in etree.iterwalk(element, events=("start", "end")):
+        is_block = node.tag in BLOCK_TAGS
+        if event == "start":
+            if is_block:
+                parts.append("\n")
+            if node.text:
+                parts.append(node.text)
+        else:
+            if is_block:
+                parts.append("\n")
+            if node.tail and node is not element:
+                parts.append(node.tail)
+    lines = (_SPACES_RE.sub(" ", line).strip() for line in "".join(parts).splitlines())
     return "\n".join(line for line in lines if line)
+
+
+def html_to_text(markup: str) -> str:
+    """Convert an HTML fragment to plain text with one block per line.
+
+    Entities are decoded, script/style-like elements dropped; markup lxml
+    cannot read gives "". Linear in the size of ``markup``.
+    """
+    if not markup.strip():
+        return ""
+    root = parse_html(markup)
+    if root is None:
+        return ""
+    etree.strip_elements(root, *NOISE_TAGS, with_tail=False)
+    body = root.find("body")
+    return element_text(body if body is not None else root)
 
 
 def cap_text(text: str) -> str:

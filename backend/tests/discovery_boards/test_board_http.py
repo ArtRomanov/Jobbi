@@ -138,3 +138,47 @@ def test_html_to_text_without_bs4(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
     assert text.splitlines() == ["We ship & test", "One", "Two"]
+
+
+def _timed_text(markup: str) -> tuple[str, float]:
+    import time
+
+    started = time.perf_counter()
+    text = html_to_text(markup)
+    return text, time.perf_counter() - started
+
+
+def test_html_to_text_many_flat_blocks_is_linear() -> None:
+    text, seconds = _timed_text("<p>row</p>" * 30_000)
+
+    assert seconds < 1.5
+    assert text.splitlines()[:2] == ["row", "row"]
+
+
+def test_html_to_text_deep_nesting_is_fast() -> None:
+    _, seconds = _timed_text("<div>" * 5_000 + "deep" + "</div>" * 5_000)
+
+    assert seconds < 1.5
+
+
+def test_html_to_text_two_megabytes_flat_is_fast() -> None:
+    _, seconds = _timed_text("<p>a</p>" * (2_000_000 // 8))
+
+    assert seconds < 5.0
+
+
+@pytest.mark.parametrize(
+    "markup",
+    ["", "   ", "plain text", "<<<>>>", "\x00<p>\ud800x</p>", "<br><br/>a<br>b"],
+)
+def test_html_to_text_odd_input(markup: str) -> None:
+    assert isinstance(html_to_text(markup), str)
+
+
+def test_html_to_text_br_and_inline() -> None:
+    assert html_to_text("a<br>b <em>c</em><div>d</div>e").splitlines() == [
+        "a",
+        "b c",
+        "d",
+        "e",
+    ]

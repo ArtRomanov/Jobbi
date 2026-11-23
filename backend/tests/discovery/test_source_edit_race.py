@@ -266,13 +266,16 @@ async def test_lease_is_cleared_when_the_fetch_raises(
 
     respx_mock.get(CHANNEL_URL).mock(side_effect=boom)
 
-    with pytest.raises(RuntimeError):
-        await run_initial_scans(
-            factory, http, ai, at(NOW), config=CONFIG, sleep=sleep
-        )
+    # An unexpected error is this source's failed attempt, not the run's end.
+    report = await run_initial_scans(
+        factory, http, ai, at(NOW), config=CONFIG, sleep=sleep
+    )
 
+    assert report.sources_failed == 1
     source = await get_source(db, source_id)
     assert source.initial_attempt_started_at is None
+    assert source.last_error == "Could not reach the source"
+    assert source.next_initial_attempt_at is not None
 
 
 async def test_source_deleted_during_the_attempt_does_not_crash(
