@@ -48,7 +48,6 @@ from app.discovery.evaluator import (
 )
 from app.discovery.fetchers.errors import BoardReadError
 from app.discovery.fetchers.telegram import SourceReadError, fetch_channel_posts
-from app.discovery.prefilter import excluded
 from app.discovery.types import RawPost
 from app.models.user import User
 from app.models.vacancy import Vacancy, VacancyCardSource
@@ -150,7 +149,6 @@ class RunReport:
     sources_read: int = 0
     sources_failed: int = 0
     posts_stored: int = 0
-    posts_excluded: int = 0
     # Reposts added as a source to an existing card (at store or after rating).
     posts_merged: int = 0
     ai_calls: int = 0
@@ -617,14 +615,6 @@ async def _store_posts(
         if not posts and not seen_only_keys:
             return
 
-        exclude_terms: list[str] = (
-            await session.scalar(
-                select(VacancySearchSettings.exclude_terms).where(
-                    VacancySearchSettings.user_id == source.user_id
-                )
-            )
-            or []
-        )
         keys = [post.external_key for post in posts] + list(seen_only_keys)
         seen = await _already_seen(session, source.user_id, keys)
         for key in seen_only_keys:
@@ -648,9 +638,6 @@ async def _store_posts(
                     first_seen_at=now,
                 )
             )
-            if excluded(post.title, post.text, exclude_terms):
-                report.posts_excluded += 1
-                continue
             # A repost of a job already on a card: add this source to that card
             # (no AI call; the card keeps the first post's date, fit and text).
             if post.job_link is not None and (
@@ -718,9 +705,8 @@ async def store_forwarded_post(
 ) -> ForwardOutcome:
     """Put a post the user forwarded to the bot into their Inbox as `pending`.
 
-    Unlike `_store_posts` there is no exclude-term filter (the user picked
-    this post by hand) and no alert (they already know about it). Dedup and
-    repost merging work as for watched sources.
+    Unlike `_store_posts` there is no alert (the user already knows about
+    it). Dedup and repost merging work as for watched sources.
     """
     try:
         async with session_factory() as session, session.begin():
@@ -1453,14 +1439,13 @@ async def cleanup(session_factory: SessionFactory, clock: Clock) -> CleanupRepor
 
 def _log_report(name: str, report: RunReport) -> None:
     logger.info(
-        "Discovery %s: sources read=%d failed=%d, posts stored=%d excluded=%d "
+        "Discovery %s: sources read=%d failed=%d, posts stored=%d "
         "merged=%d, AI calls=%d evaluated=%d matches=%d rejected=%d, "
         "users at daily cap=%d, alerts sent=%d",
         name,
         report.sources_read,
         report.sources_failed,
         report.posts_stored,
-        report.posts_excluded,
         report.posts_merged,
         report.ai_calls,
         report.posts_evaluated,

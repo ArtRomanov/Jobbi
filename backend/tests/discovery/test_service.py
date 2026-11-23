@@ -449,9 +449,10 @@ class TestInitialScan:
                 == 1
             )
 
-    async def test_exclude_words_record_key_without_card(
+    async def test_exclude_words_are_not_applied(
         self, factory, db, channel, http, ai, sleep
     ) -> None:
+        # Exclude words are switched off (spec 012): stored, never filtered on.
         user_id = await make_user(db, exclude=["java"])
         await make_source(db, user_id)
         channel.add(10, "MATCH Senior Java engineer")
@@ -459,12 +460,18 @@ class TestInitialScan:
 
         await run_initial_scans(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep)
 
-        assert [r.external_key for r in await vacancies(db)] == [f"tg:{CHANNEL}/11"]
+        assert [r.external_key for r in await vacancies(db)] == [
+            f"tg:{CHANNEL}/10",
+            f"tg:{CHANNEL}/11",
+        ]
         assert await seen_keys(db) == {
-            f"tg:{CHANNEL}/10": None,
+            f"tg:{CHANNEL}/10": NOW,
             f"tg:{CHANNEL}/11": NOW,
         }
-        assert ai.posts_sent == ["MATCH JavaScript developer"]
+        assert ai.posts_sent == [
+            "MATCH Senior Java engineer",
+            "MATCH JavaScript developer",
+        ]
 
     async def test_readded_source_skips_posts_seen_before(
         self, factory, db, channel, http, ai, sleep
@@ -1381,7 +1388,7 @@ async def test_no_http_or_groq_call_while_a_transaction_is_open(
     )
     lever_board.mount(respx_mock)
     lever_board.add("a", "lever news", NOW - timedelta(days=1))
-    user_id = await make_user(db, exclude=["spam"])
+    user_id = await make_user(db)
     await link_telegram(db, user_id)
     await make_source(db, user_id)
     await make_source(db, user_id, handle="second_channel", scanned=True)
@@ -1404,7 +1411,7 @@ async def test_no_http_or_groq_call_while_a_transaction_is_open(
         )
         await session.commit()
     for n in range(1, 13):
-        stub.add(n, "MATCH" if n % 3 else "spam MATCH")
+        stub.add(n, "MATCH" if n % 3 else "not a match")
 
     await run_initial_scans(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep)
     stub.add(20, "MATCH new")
