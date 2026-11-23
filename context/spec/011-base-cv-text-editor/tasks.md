@@ -53,9 +53,9 @@ Conventions for every slice:
 
 ---
 
-- [ ] **Slice 3: The editor never loses work**
-  - [ ] Backend: `PATCH /cvs/{id}` requires `version`. A stale version returns 409 `{"detail":"CV_CHANGED"}`, implemented as `UPDATE … WHERE id AND version`. Tests, including two concurrent saves. **[Agent: python-backend]**
-  - [ ] Frontend:
+- [x] **Slice 3: The editor never loses work**
+  - [x] Backend: `PATCH /cvs/{id}` requires `version`. A stale version returns 409 `{"detail":"CV_CHANGED"}`, implemented as `UPDATE … WHERE id AND version`. Tests, including two concurrent saves. **[Agent: python-backend]**
+  - [x] Frontend:
     - "Save" is active only when the name or text changed;
     - a counter appears above 18 000 characters;
     - a name of only spaces shows "Required";
@@ -64,7 +64,7 @@ Conventions for every slice:
     - `useUnsavedChangesGuard` (`useBlocker` + `beforeunload`) shows "Leave"/"Stay".
 
     Tests. **[Agent: typescript-frontend]**
-  - [ ] Verify: open the same CV in two tabs and save in both, so the second save gets the message. Edit, then click another nav item to get the prompt. Reload to get the browser prompt. The Save button is disabled while there are no changes. **[Agent: qa-tester]**
+  - [x] Verify: open the same CV in two tabs and save in both, so the second save gets the message. Edit, then click another nav item to get the prompt. Reload to get the browser prompt. The Save button is disabled while there are no changes. **[Agent: qa-tester]** _(2026-11-23: PR #26 — concurrent saves on a file-backed SQLite end [200, 409]; guard tested for link, Back, Enter/Escape = Stay, no prompt after save, create→edit and upload notice; backend 1135 on 3.11/3.14, Vitest 414; review no P0/P1. Two-tab and reload prompt in a real browser pending the live check)_
 
 ---
 
