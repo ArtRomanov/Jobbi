@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from app.discovery.evaluator import (
+    BATCH_CHAR_BUDGET,
     BATCH_SIZE,
     MAX_POST_CHARS,
     MAX_REASON_CHARS,
@@ -15,8 +16,10 @@ from app.discovery.evaluator import (
     EvaluationRateLimitedError,
     EvaluationTransportError,
     Fit,
+    batch_take,
     build_messages,
     evaluate_batch,
+    is_cut,
     parse_response,
 )
 from app.discovery.types import RawPost
@@ -93,6 +96,48 @@ def status_error(
 
 
 # --- build_messages -------------------------------------------------------------
+
+
+def sized(*lengths: int) -> list[RawPost]:
+    return [make_post(n, "x" * length) for n, length in enumerate(lengths, 1)]
+
+
+class TestWindowAndBatches:
+    def test_window_is_3000_and_budget_7500(self) -> None:
+        assert MAX_POST_CHARS == 3_000
+        assert BATCH_CHAR_BUDGET == 7_500
+        assert BATCH_SIZE == 5
+
+    def test_is_cut_only_above_the_window(self) -> None:
+        assert not is_cut(make_post(1, "x" * MAX_POST_CHARS))
+        assert is_cut(make_post(1, "x" * (MAX_POST_CHARS + 1)))
+
+    def test_no_posts(self) -> None:
+        assert batch_take([]) == 0
+
+    def test_short_posts_stop_at_batch_size(self) -> None:
+        assert batch_take(sized(*[100] * 8)) == BATCH_SIZE
+
+    def test_fewer_short_posts_than_batch_size(self) -> None:
+        assert batch_take(sized(100, 200)) == 2
+
+    def test_budget_reached_exactly_is_allowed(self) -> None:
+        assert batch_take(sized(3_000, 3_000, 1_500, 10)) == 3
+
+    def test_post_over_the_remainder_starts_the_next_batch(self) -> None:
+        # 3 000 + 3 000 = 6 000; a 1 501-char post would make 7 501.
+        assert batch_take(sized(3_000, 3_000, 1_501)) == 2
+
+    def test_long_posts_count_only_their_window(self) -> None:
+        # Two 10 000-char posts are 2 x 3 000 = 6 000 of windowed text.
+        assert batch_take(sized(10_000, 10_000, 1_500)) == 3
+        assert batch_take(sized(10_000, 10_000, 10_000)) == 2
+
+    def test_one_post_is_always_allowed(self) -> None:
+        assert batch_take(sized(50_000)) == 1
+
+    def test_five_1500_char_posts_fit_one_batch(self) -> None:
+        assert batch_take(sized(*[1_500] * 6)) == BATCH_SIZE
 
 
 class TestBuildMessages:

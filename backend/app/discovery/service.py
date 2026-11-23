@@ -39,16 +39,18 @@ from app.discovery.alerts import send_run_alerts
 from app.discovery.board_scan import BOARD_KINDS, board_key_prefix, fetch_board
 from app.discovery.evaluator import (
     BATCH_SIZE,
+    MAX_POST_CHARS,
     BatchEvaluation,
     EvaluationFormatError,
     EvaluationRateLimitedError,
     EvaluationTransportError,
     PostVerdict,
+    batch_take,
     evaluate_batch,
+    is_cut,
 )
 from app.discovery.fetchers.errors import BoardReadError
 from app.discovery.fetchers.telegram import SourceReadError, fetch_channel_posts
-from app.discovery.prefilter import excluded
 from app.discovery.types import RawPost
 from app.models.user import User
 from app.models.vacancy import Vacancy, VacancyCardSource
@@ -150,11 +152,12 @@ class RunReport:
     sources_read: int = 0
     sources_failed: int = 0
     posts_stored: int = 0
-    posts_excluded: int = 0
     # Reposts added as a source to an existing card (at store or after rating).
     posts_merged: int = 0
     ai_calls: int = 0
     posts_evaluated: int = 0
+    # Evaluated posts longer than the AI window (their end was not read).
+    posts_cut: int = 0
     matches: int = 0
     rejected: int = 0
     users_capped: set[str] = field(default_factory=set)
@@ -617,14 +620,6 @@ async def _store_posts(
         if not posts and not seen_only_keys:
             return
 
-        exclude_terms: list[str] = (
-            await session.scalar(
-                select(VacancySearchSettings.exclude_terms).where(
-                    VacancySearchSettings.user_id == source.user_id
-                )
-            )
-            or []
-        )
         keys = [post.external_key for post in posts] + list(seen_only_keys)
         seen = await _already_seen(session, source.user_id, keys)
         for key in seen_only_keys:
@@ -648,9 +643,6 @@ async def _store_posts(
                     first_seen_at=now,
                 )
             )
-            if excluded(post.title, post.text, exclude_terms):
-                report.posts_excluded += 1
-                continue
             # A repost of a job already on a card: add this source to that card
             # (no AI call; the card keeps the first post's date, fit and text).
             if post.job_link is not None and (
@@ -718,9 +710,8 @@ async def store_forwarded_post(
 ) -> ForwardOutcome:
     """Put a post the user forwarded to the bot into their Inbox as `pending`.
 
-    Unlike `_store_posts` there is no exclude-term filter (the user picked
-    this post by hand) and no alert (they already know about it). Dedup and
-    repost merging work as for watched sources.
+    Unlike `_store_posts` there is no alert (the user already knows about
+    it). Dedup and repost merging work as for watched sources.
     """
     try:
         async with session_factory() as session, session.begin():
@@ -1078,6 +1069,11 @@ async def _next_batch(
             return None
         if remaining <= 0:
             return _CapReached(local_date=local_date)
+        # Size-based batch: the leading posts whose windowed text fits the
+        # character budget (always at least one).
+        posts = [_raw_post(row) for row in rows]
+        take = batch_take(posts)
+        rows, posts = rows[:take], posts[:take]
         forwarded_ids = set(
             (
                 await session.scalars(
@@ -1096,19 +1092,23 @@ async def _next_batch(
                     vacancy_id=row.id,
                     eval_attempts=row.eval_attempts,
                     forwarded=row.id in forwarded_ids,
-                    post=RawPost(
-                        external_key=row.external_key,
-                        url=row.url,
-                        job_link=row.job_link,
-                        title=row.title,
-                        company=row.company,
-                        text=row.text,
-                        posted_at=row.posted_at,
-                    ),
+                    post=post,
                 )
-                for row in rows
+                for row, post in zip(rows, posts, strict=True)
             ],
         )
+
+
+def _raw_post(row: Vacancy) -> RawPost:
+    return RawPost(
+        external_key=row.external_key,
+        url=row.url,
+        job_link=row.job_link,
+        title=row.title,
+        company=row.company,
+        text=row.text,
+        posted_at=row.posted_at,
+    )
 
 
 class _UserEvaluation:
@@ -1239,6 +1239,7 @@ async def _apply_evaluation(
     counted; after MAX_EVAL_ATTEMPTS it is treated as rejected.
     """
     evaluated_keys: list[str] = []
+    cut_keys: list[str] = []
     new_ids: list[str] = []
     async with session_factory() as session, session.begin():
         for row in rows:
@@ -1246,7 +1247,10 @@ async def _apply_evaluation(
             if verdict is None:
                 await _count_failed_attempt(session, row, report)
                 continue
-            evaluated_keys.append(row.post.external_key)
+            if is_cut(row.post):
+                cut_keys.append(row.post.external_key)
+            else:
+                evaluated_keys.append(row.post.external_key)
             if verdict.match and verdict.fit is not None:
                 report.matches += 1
                 # A repost whose card appeared after this post was stored
@@ -1286,22 +1290,35 @@ async def _apply_evaluation(
                 )
             else:
                 await _delete_pending(session, row.vacancy_id)
-        if evaluated_keys:
-            await session.execute(
-                update(VacancySeenKey)
-                .where(
-                    VacancySeenKey.user_id == user_id,
-                    VacancySeenKey.external_key.in_(evaluated_keys),
+        for keys, values in (
+            (evaluated_keys, {"evaluated_at": now}),
+            (cut_keys, {"evaluated_at": now, "cut_for_ai": True}),
+        ):
+            if keys:
+                await session.execute(
+                    update(VacancySeenKey)
+                    .where(
+                        VacancySeenKey.user_id == user_id,
+                        VacancySeenKey.external_key.in_(keys),
+                    )
+                    .values(**values)
                 )
-                .values(evaluated_at=now)
-            )
         # The AI answered, so it is reachable (even if an item was malformed).
         await session.execute(
             update(VacancySearchSettings)
             .where(VacancySearchSettings.user_id == user_id)
             .values(ai_failing_since=None)
         )
-    report.posts_evaluated += len(evaluated_keys)
+    report.posts_evaluated += len(evaluated_keys) + len(cut_keys)
+    report.posts_cut += len(cut_keys)
+    lengths = {row.post.external_key: len(row.post.text) for row in rows}
+    for key in cut_keys:
+        logger.warning(
+            "Post %s is %d characters long; the AI read only the first %d",
+            key,
+            lengths[key],
+            MAX_POST_CHARS,
+        )
     # After the commit: only cards that really became `new` are alerted.
     report.new_card_ids.setdefault(user_id, []).extend(new_ids)
 
@@ -1453,17 +1470,17 @@ async def cleanup(session_factory: SessionFactory, clock: Clock) -> CleanupRepor
 
 def _log_report(name: str, report: RunReport) -> None:
     logger.info(
-        "Discovery %s: sources read=%d failed=%d, posts stored=%d excluded=%d "
-        "merged=%d, AI calls=%d evaluated=%d matches=%d rejected=%d, "
+        "Discovery %s: sources read=%d failed=%d, posts stored=%d "
+        "merged=%d, AI calls=%d evaluated=%d cut=%d matches=%d rejected=%d, "
         "users at daily cap=%d, alerts sent=%d",
         name,
         report.sources_read,
         report.sources_failed,
         report.posts_stored,
-        report.posts_excluded,
         report.posts_merged,
         report.ai_calls,
         report.posts_evaluated,
+        report.posts_cut,
         report.matches,
         report.rejected,
         len(report.users_capped),

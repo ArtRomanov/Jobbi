@@ -506,9 +506,10 @@ class TestLever:
         assert row.url == "https://jobs.eu.lever.co/acme/b"
         assert set(await seen_keys(db)) == {"lever_eu:acme/a", "lever_eu:acme/b"}
 
-    async def test_exclude_words_apply_to_board_jobs(
+    async def test_exclude_words_do_not_apply_to_board_jobs(
         self, factory, db, lever_board, http, ai, sleep
     ) -> None:
+        # Exclude words are switched off (spec 012).
         user_id = await make_user(db, description=None, exclude=["java"])
         await make_board(db, user_id, "lever", "acme-labs", "Acme Labs")
         lever_board.add("a", "Senior Java engineer", RECENT, title="Java Dev")
@@ -518,9 +519,12 @@ class TestLever:
             factory, http, ai, at(NOW), config=CONFIG, sleep=sleep
         )
 
-        assert [r.external_key for r in await vacancies(db)] == ["lever:acme-labs/b"]
+        assert sorted(r.external_key for r in await vacancies(db)) == [
+            "lever:acme-labs/a",
+            "lever:acme-labs/b",
+        ]
         assert set(await seen_keys(db)) == {"lever:acme-labs/a", "lever:acme-labs/b"}
-        assert report.posts_excluded == 1
+        assert report.posts_stored == 2
 
 
 # --- invariant -------------------------------------------------------------------
