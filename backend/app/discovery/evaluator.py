@@ -294,8 +294,10 @@ class PostVerdict(BaseModel):
     Spec 012: `vacancy_count >= 2` marks a digest. Then only `vacancies` (the
     matching ones, already range-checked and capped at MAX_DIGEST_VACANCIES by
     `parse_response`) is used, and the top-level match/fit are ignored. With
-    `vacancy_count` <= 1 or missing, the top-level fields work as before.
-    `vacancy_count` is clamped to 0..MAX_VACANCY_COUNT.
+    `vacancy_count` <= 1 or missing, the top-level fields work as before,
+    unless `parse_response` finds two or more valid listed `vacancies` (then
+    the count is raised to their number). `vacancy_count` is clamped to
+    0..MAX_VACANCY_COUNT.
     """
 
     model_config = ConfigDict(extra="ignore", frozen=True)
@@ -532,6 +534,21 @@ def _digest_items(
     return tuple(kept[:MAX_DIGEST_VACANCIES])
 
 
+def _listed_digest_items(
+    key: str, raw_items: object, line_count: int | None
+) -> tuple[VacancyItem, ...] | None:
+    """The valid items of a post answered with `vacancy_count` missing or 1,
+    when there are at least two of them (by `_digest_items` rules); else None.
+
+    Two distinct matching positions make the post a digest whatever count the
+    model wrote; one listed position is not enough to override the count.
+    """
+    if not isinstance(raw_items, list) or len(raw_items) < 2:
+        return None
+    items = _digest_items(key, raw_items, line_count)
+    return items if items is not None and len(items) >= 2 else None
+
+
 def _verdict(
     key: str, item: dict[str, Any], line_count: int | None, *, digest_ok: bool = True
 ) -> PostVerdict:
@@ -547,11 +564,21 @@ def _verdict(
     fields = {name: value for name, value in item.items() if name != "vacancies"}
     # Top-level match/fit are not read for a digest, so they cannot fail it.
     head = PostVerdict.model_validate(fields | {"match": False, "fit": None})
+    items: tuple[VacancyItem, ...] | None = None
+    if digest_ok and head.vacancy_count in (None, 1):
+        items = _listed_digest_items(key, item.get("vacancies"), line_count)
+        if items is not None:
+            # The model listed several positions but left the count out (seen
+            # live 2026-11-23 on gpt-oss-20b) or set it to 1: the list wins.
+            head = head.model_copy(
+                update={"vacancy_count": max(head.vacancy_count or 0, len(items))}
+            )
     if not head.is_digest:
         return PostVerdict.model_validate(fields).model_copy(update={"key": key})
     if not digest_ok:
         return _single_verdict(key, item, fields, line_count)
-    items = _digest_items(key, item.get("vacancies"), line_count)
+    if items is None:
+        items = _digest_items(key, item.get("vacancies"), line_count)
     if items is None:
         raise ValueError("digest without a valid vacancy")
     # Top-level match/fit/company/title are not used for a digest; they are

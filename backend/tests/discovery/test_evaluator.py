@@ -600,6 +600,61 @@ class TestDigests:
         assert results["p1"].vacancies == ()
         assert results["p1"].match is True and results["p1"].fit is Fit.MEDIUM
 
+    @pytest.mark.parametrize("count", [None, 1], ids=["count-missing", "count-1"])
+    def test_two_listed_positions_make_a_digest(self, count: int | None) -> None:
+        """Live 2026-11-23: gpt-oss left vacancy_count out but listed the
+        matching positions; the listed items are the digest."""
+        fields = verdict("p1", vacancies=[item([3, 5]), item([9, 11], fit="low")])
+        if count is not None:
+            fields["vacancy_count"] = count
+        else:
+            fields.pop("vacancy_count", None)
+        raw = response_json(fields)
+
+        results, missing = parse_response(raw, ["p1"], {"p1": 16})
+
+        result = results["p1"]
+        assert missing == []
+        assert result.is_digest and result.vacancy_count == 2
+        assert [(v.lines, v.fit) for v in result.vacancies] == [
+            ((3, 5), Fit.HIGH),
+            ((9, 11), Fit.LOW),
+        ]
+        assert result.match is True and result.fit is None
+
+    @pytest.mark.parametrize(
+        "listed",
+        [
+            [item([3, 5])],
+            [item([3, 5]), item([0, 2])],
+            [item([3, 5]), item([4, 6])],
+            [item([3, 5]), item([7, 8], match=False, fit=None)],
+        ],
+        ids=["one-item", "one-valid", "overlap", "one-matching"],
+    )
+    def test_fewer_than_two_valid_positions_stay_a_single_post(
+        self, listed: list[Any]
+    ) -> None:
+        raw = response_json(verdict("p1", vacancies=listed))
+
+        results, missing = parse_response(raw, ["p1"], {"p1": 16})
+
+        assert missing == []
+        assert not results["p1"].is_digest and results["p1"].vacancies == ()
+        assert results["p1"].fit is Fit.MEDIUM
+
+    async def test_board_post_with_listed_positions_stays_a_single_post(
+        self,
+    ) -> None:
+        raw = response_json(verdict("p1", vacancies=[item([1, 2]), item([3, 4])]))
+        client = FakeGroq(raw)
+
+        batch = await evaluate_batch(client, MODEL, DESCRIPTION, {}, [board_post(1)])  # type: ignore[arg-type]
+
+        single = batch.results["gh:acme/1"]
+        assert not single.is_digest and single.vacancies == ()
+        assert (single.match, single.fit) == (True, Fit.MEDIUM)
+
     def test_single_post_rules_unchanged_for_missing_fit(self) -> None:
         raw = response_json(verdict("p1", vacancy_count=1, fit=None))
 

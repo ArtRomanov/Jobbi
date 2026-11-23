@@ -8,7 +8,9 @@ Usage (from backend/; the key is never printed):
     set -a; . ../.env; set +a; python scripts/smoke_evaluator.py
     python scripts/smoke_evaluator.py --env-file ../.env
 Env: GROQ_API_KEY (required, from the environment or --env-file),
-GROQ_DISCOVERY_MODEL (default openai/gpt-oss-20b), SMOKE_PAUSE_S (default 30).
+GROQ_DISCOVERY_MODEL (default openai/gpt-oss-20b), SMOKE_PAUSE_S (default 30),
+SMOKE_DUMP=1 (print the raw JSON answer of every call), SMOKE_SCENARIOS
+(comma-separated 1-based scenario numbers to run, default all; 7,8 = digests).
 """
 
 import asyncio
@@ -332,7 +334,8 @@ SCENARIOS = [
 
 def _post(scenario_no: int, case_no: int, text: str) -> RawPost:
     return RawPost(
-        external_key=f"smoke:{scenario_no}/{case_no}",
+        # "tg:" so the posts may be digests (see `can_be_digest`).
+        external_key=f"tg:smoke/{scenario_no}/{case_no}",
         url=f"https://t.me/smoke/{scenario_no}{case_no}",
         job_link=None,
         title=None,
@@ -354,14 +357,17 @@ class _RecordingClient:
     """Passes calls to the Groq client and keeps the last completion, for the
     finish reason and the token split that `evaluate_batch` does not return."""
 
-    def __init__(self, client: groq.AsyncGroq) -> None:
+    def __init__(self, client: groq.AsyncGroq, *, dump: bool = False) -> None:
         self._client = client
+        self._dump = dump
         self.last: Any = None
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
 
     async def _create(self, **kwargs: Any) -> Any:
         self.last = None
         self.last = await self._client.chat.completions.create(**kwargs)
+        if self._dump and self.last.choices:
+            print(f"  RAW: {self.last.choices[0].message.content}")
         return self.last
 
     def summary(self) -> str:
@@ -400,12 +406,18 @@ async def main() -> int:
         return 2
     model = os.environ.get("GROQ_DISCOVERY_MODEL", DEFAULT_MODEL)
     pause = float(os.environ.get("SMOKE_PAUSE_S", "30"))
-    client = _RecordingClient(groq.AsyncGroq(api_key=api_key, max_retries=0))
+    dump = os.environ.get("SMOKE_DUMP") == "1"
+    client = _RecordingClient(groq.AsyncGroq(api_key=api_key, max_retries=0), dump=dump)
+    only = {int(n) for n in os.environ.get("SMOKE_SCENARIOS", "").split(",") if n}
+    first = True
 
     rows: list[tuple[str, str, str, str, str, bool]] = []
     for scenario_no, scenario in enumerate(SCENARIOS, start=1):
-        if scenario_no > 1:
+        if only and scenario_no not in only:
+            continue
+        if not first:
             await asyncio.sleep(pause)
+        first = False
         posts = [
             _post(scenario_no, n, case.text) for n, case in enumerate(scenario.cases)
         ]
