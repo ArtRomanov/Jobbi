@@ -1,7 +1,8 @@
 """Live smoke test of the discovery evaluator against the real Groq model.
 
-Runs the reference cases of functional spec 009, section 2.2, and prints a pass
-table plus token usage per call. Not a pytest test: it costs real quota.
+Runs the reference cases of functional spec 009, section 2.2, and the digest
+cases of spec 012, section 2.1, and prints a pass table plus token usage and
+finish reason per call. Not a pytest test: it costs real quota.
 
 Usage (from backend/; the key is never printed):
     set -a; . ../.env; set +a; python scripts/smoke_evaluator.py
@@ -13,9 +14,12 @@ GROQ_DISCOVERY_MODEL (default openai/gpt-oss-20b), SMOKE_PAUSE_S (default 30).
 import asyncio
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import groq
 
@@ -23,19 +27,79 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.discovery.evaluator import (
     EvaluationError,
+    EvaluationRateLimitedError,
     Fit,
+    PostVerdict,
     evaluate_batch,
 )
 from app.discovery.types import RawPost
 
 DEFAULT_MODEL = "openai/gpt-oss-20b"
+RATE_LIMIT_WAIT_S = 65
+
+Check = Callable[[PostVerdict], bool]
 
 
 @dataclass(frozen=True, slots=True)
 class Case:
+    """A single post (`shown`, `fit`), or any post judged by `check`."""
+
     text: str
-    shown: bool
-    fit: Fit | None
+    shown: bool = False
+    fit: Fit | None = None
+    check: Check | None = None
+    expected: str | None = None
+
+    def passes(self, verdict: PostVerdict) -> bool:
+        if self.check is not None:
+            return self.check(verdict)
+        if verdict.is_digest:
+            return False
+        return verdict.match == self.shown and (
+            not self.shown or verdict.fit == self.fit
+        )
+
+    def describe(self) -> str:
+        if self.expected is not None:
+            return self.expected
+        return f"shown, {self.fit}" if self.shown else "not shown"
+
+
+Block = tuple[int, int, Fit | None]
+
+
+def digest_with(*blocks: Block) -> Check:
+    """A digest whose items are exactly one per block: each item's range lies
+    inside its block (first..last line) and has the block's fit (None = any)."""
+
+    def check(verdict: PostVerdict) -> bool:
+        if not verdict.is_digest or len(verdict.vacancies) != len(blocks):
+            return False
+        return all(
+            first <= item.lines[0] and item.lines[1] <= last and fit in (None, item.fit)
+            for item, (first, last, fit) in zip(verdict.vacancies, blocks)
+        )
+
+    return check
+
+
+def nothing_shown(verdict: PostVerdict) -> bool:
+    return not verdict.vacancies and not (not verdict.is_digest and verdict.match)
+
+
+def not_a_digest(verdict: PostVerdict) -> bool:
+    return not verdict.is_digest
+
+
+def digest_items_within(first: int, last: int) -> Check:
+    """Not a digest (rated as one post), or a digest listing only lines first..last."""
+
+    def check(verdict: PostVerdict) -> bool:
+        return all(
+            first <= v.lines[0] and v.lines[1] <= last for v in verdict.vacancies
+        )
+
+    return check
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +110,89 @@ class Scenario:
 
 
 WELLDIN_FULL_POST = "📑 Вакансия Senior Frontend Developer\n\nот $5 000 в месяц · Удалённо из любой страны · Полная занятость\n\n💎 Welldin ищет Senior Frontend Developer для работающего AI-продукта в сфере найма на рынках США и Европы. Предстоит взять на себя фронтенд и определять архитектуру продукта: развивать SPA на React и TypeScript, выбирать стратегию рендеринга, строить модульную архитектуру, создавать интерфейсы с обновлениями в реальном времени, интегрировать внешние API, контролировать производительность и размер бандла, покрывать бизнес-логику тестами. Прямая работа с основателями, минимум бюрократии.\n\n🧩 Требования: От 5 лет опыта во фронтенде, уверенное владение React и TypeScript; понимание event loop, рендеринга и профилирования в браузере; опыт с SSR/SSG, Redux, локальным состоянием и кешированием серверных данных; знание WebSockets, SSE, CORS и браузерной сетевой части; работа со сборщиками webpack, Vite, esbuild или rollup; опыт юнит-тестирования бизнес-логики; умение аргументировать и продвигать технические решения. Плюсом будут микрофронтенды или монорепо, работа с видео и аудио в браузере, разговорный английский и опыт в стартапе на ранней стадии.\n\n\n⚠️ Если работодатель просит войти в их систему через iCloud/Google, прислать код, запустить код/ПО - это мошенники. Обязательно пишите в поддержку."
+
+
+def _lines(*lines: str) -> str:
+    return "\n".join(lines)
+
+
+# Spec 012 §2.1 reference digest: (1) and (3) match, (2) and (4) do not.
+REFERENCE_DIGEST = _lines(
+    "Remote and relocation jobs, 22 Nov",  # L1
+    "",
+    "1) Senior React Developer, remote, €5000",  # L3
+    "Acme Corp, React + TypeScript, full-time",
+    "",
+    "2) Senior Java backend engineer, remote",  # L6
+    "Globex, Spring Boot, microservices",
+    "",
+    "3) Frontend developer (Vue), office in Berlin",  # L9
+    "Initech, Vue 3 and Pinia",
+    "",
+    "4) Product designer, remote",  # L12
+    "Umbrella, Figma, design systems",
+    "",
+    "#jobs #remote",  # L15
+    "Post a vacancy: @jobs_admin",
+)
+NON_IT_DIGEST = _lines(
+    "Jobs of the week",
+    "",
+    "1. Sales manager, Berlin, €3000",
+    "2. Customer support agent (German), remote",
+    "3. Logistics coordinator, Hamburg warehouse",
+    "4. Account executive, B2B sales, remote",
+    "5. Support team lead, Lisbon office",
+    "6. Truck dispatcher, logistics, remote",
+    "",
+    "Apply: @hr_jobs_bot",
+)
+LINK_ONLY_DIGEST = (
+    "8 vacancies from OZON 🚀\n"
+    "Frontend, backend, QA and analytics roles in Moscow and remote.\n"
+    "All vacancies: https://job.ozon.ru/vacancy/"
+)
+# Real post (2026-11-18, "Digital nomads. Work from anywhere"): a list of job
+# categories with counts; the jobs themselves sit behind links.
+DIGITAL_NOMADS_DIGEST = _lines(
+    "100% remote jobs",
+    "18 Nov 07:00 — 19 Nov 07:00 (UTC)",
+    "",
+    "——Non-IT——",
+    "Languages, Translation - 2",
+    "",
+    "Account Management - 7",
+    "Finance & Accounting - 2",
+    "Marketplace Management - 3",
+    "Recruitment / Talent Acquisition  - 3",
+    "Sales & Customer Support - 16",
+    "Transportation, Logistics & Shipping - 2",
+    "",
+    "PR and Marketing, Media Buying - 6",
+    "PR and Marketing, Target Ad - 6",
+    "",
+    "——IT——",
+    "AI, AI Engineering - 2",
+    "",
+    "Back-end, Java - 6",
+    "Back-end, Python - 2",
+    "",
+    "Front-end, Angular - 2",
+    "Front-end, React - 3",
+    "",
+    "IT, DevOps - 2",
+    "IT, Product management - 3",
+    "IT, QA - 2",
+    "IT, QA of software - 2",
+    "IT, SAP - 2",
+    "",
+    "Mobile, Swift (iOS) - 2",
+    "",
+    "",
+    "———",
+    "Tired of hunting for remote jobs and applying yourself?",
+    "Hire an assistant — turnkey remote job search.",
+)
 
 SCENARIOS = [
     Scenario(
@@ -150,6 +297,36 @@ SCENARIOS = [
             ),
         ],
     ),
+    # Spec 012 §2.1 reference digests.
+    Scenario(
+        description="Senior frontend, React, remote, from 4000 €",
+        profile={},
+        cases=[
+            Case(
+                REFERENCE_DIGEST,
+                check=digest_with((3, 5, Fit.HIGH), (9, 11, Fit.LOW)),
+                expected="digest: (1) L3-5 high, (3) L9-11 low",
+            ),
+            Case(NON_IT_DIGEST, check=nothing_shown, expected="nothing shown"),
+            Case(LINK_ONLY_DIGEST, check=not_a_digest, expected="not a digest"),
+        ],
+    ),
+    # The real digest with the seeker's real description: only the front-end
+    # category lines (L23 Angular, L24 React) may become cards, if any.
+    Scenario(
+        description=(
+            "Senior / Middle Frontend developer, Full-stack developer, React, "
+            "Nest js, Node js, Next js, Yerevan, remote/hybrid/on-site"
+        ),
+        profile={},
+        cases=[
+            Case(
+                DIGITAL_NOMADS_DIGEST,
+                check=digest_items_within(23, 24),
+                expected="one post, or items only in L23-24",
+            ),
+        ],
+    ),
 ]
 
 
@@ -173,6 +350,47 @@ def _key_from_env_file(path: Path) -> str | None:
     return None
 
 
+class _RecordingClient:
+    """Passes calls to the Groq client and keeps the last completion, for the
+    finish reason and the token split that `evaluate_batch` does not return."""
+
+    def __init__(self, client: groq.AsyncGroq) -> None:
+        self._client = client
+        self.last: Any = None
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+
+    async def _create(self, **kwargs: Any) -> Any:
+        self.last = None
+        self.last = await self._client.chat.completions.create(**kwargs)
+        return self.last
+
+    def summary(self) -> str:
+        if self.last is None:
+            return "no completion"
+        usage = self.last.usage
+        finish = self.last.choices[0].finish_reason if self.last.choices else None
+        return (
+            f"prompt={usage.prompt_tokens} completion={usage.completion_tokens} "
+            f"total={usage.total_tokens} finish_reason={finish}"
+        )
+
+
+def _got(verdict: PostVerdict) -> str:
+    if verdict.is_digest:
+        items = ", ".join(
+            f"L{v.lines[0]}-{v.lines[1]} {v.fit} ({v.title or '?'})"
+            for v in verdict.vacancies
+        )
+        return f"digest of {verdict.vacancy_count}: {items or 'none listed'}"
+    shown = f"shown, {verdict.fit}" if verdict.match else "not shown"
+    return f"{shown} (count {verdict.vacancy_count})"
+
+
+def _short(text: str, limit: int = 70) -> str:
+    flat = text.replace("\n", " / ").replace("|", "/")
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
+
+
 async def main() -> int:
     api_key = os.environ.get("GROQ_API_KEY")
     if "--env-file" in sys.argv:
@@ -182,7 +400,7 @@ async def main() -> int:
         return 2
     model = os.environ.get("GROQ_DISCOVERY_MODEL", DEFAULT_MODEL)
     pause = float(os.environ.get("SMOKE_PAUSE_S", "30"))
-    client = groq.AsyncGroq(api_key=api_key, max_retries=0)
+    client = _RecordingClient(groq.AsyncGroq(api_key=api_key, max_retries=0))
 
     rows: list[tuple[str, str, str, str, str, bool]] = []
     for scenario_no, scenario in enumerate(SCENARIOS, start=1):
@@ -191,49 +409,57 @@ async def main() -> int:
         posts = [
             _post(scenario_no, n, case.text) for n, case in enumerate(scenario.cases)
         ]
-        try:
-            batch = await evaluate_batch(
-                client, model, scenario.description, scenario.profile, posts
-            )
-        except EvaluationError as exc:
-            print(f"[{scenario.description}] evaluation failed: {exc!r}")
+        batch = None
+        for attempt in (1, 2):
+            try:
+                batch = await evaluate_batch(
+                    client,  # type: ignore[arg-type]
+                    model,
+                    scenario.description,
+                    scenario.profile,
+                    posts,
+                )
+                break
+            except EvaluationRateLimitedError as exc:
+                print(f"[{scenario.description}] {exc!r}; waiting {RATE_LIMIT_WAIT_S}s")
+                if attempt == 2:
+                    break
+                await asyncio.sleep(RATE_LIMIT_WAIT_S)
+            except EvaluationError as exc:
+                print(f"[{scenario.description}] evaluation failed: {exc!r}")
+                print(f"  {client.summary()}")
+                break
+        if batch is None:
             for case in scenario.cases:
                 rows.append(
                     (
                         scenario.description,
-                        case.text,
-                        _expected(case),
+                        _short(case.text),
+                        case.describe(),
                         "ERROR",
                         "",
                         False,
                     )
                 )
             continue
-        print(f"[{scenario.description}] total_tokens={batch.total_tokens}")
+        print(f"[{scenario_no}: {scenario.description}] {client.summary()}")
         for post, case in zip(posts, scenario.cases):
             verdict = batch.results.get(post.external_key)
             if verdict is None:
-                rows.append(
-                    (
-                        scenario.description,
-                        case.text,
-                        _expected(case),
-                        "MISSING",
-                        "",
-                        False,
+                got, reason, ok = "MISSING", "", False
+            else:
+                got, reason, ok = _got(verdict), verdict.reason, case.passes(verdict)
+                for item in verdict.vacancies:
+                    print(
+                        f"    L{item.lines[0]}-{item.lines[1]} {item.fit}: {item.reason}"
                     )
-                )
-                continue
-            shown = verdict.match
-            got = f"shown, {verdict.fit}" if shown else "not shown"
-            ok = shown == case.shown and (not shown or verdict.fit == case.fit)
             rows.append(
                 (
                     scenario.description,
-                    case.text,
-                    _expected(case),
+                    _short(case.text),
+                    case.describe(),
                     got,
-                    verdict.reason,
+                    reason,
                     ok,
                 )
             )
@@ -248,10 +474,6 @@ async def main() -> int:
     passed = sum(row[-1] for row in rows)
     print(f"\n{passed}/{len(rows)} passed (model {model})")
     return 0 if passed == len(rows) else 1
-
-
-def _expected(case: Case) -> str:
-    return f"shown, {case.fit}" if case.shown else "not shown"
 
 
 if __name__ == "__main__":

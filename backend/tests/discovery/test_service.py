@@ -49,6 +49,12 @@ DESCRIPTION = "Senior frontend, React, remote"
 CONFIG = DiscoveryConfig(model="test-model", daily_limit=150)
 GROQ_REQUEST = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
 _POST_RE = re.compile(r"<<<POST (p\d+)>>>\n(.*?)\n<<<END \1>>>", re.DOTALL)
+_LINE_NO_RE = re.compile(r"^L\d+: ?", re.MULTILINE)
+
+
+def _sent_posts(content: str) -> list[tuple[str, str]]:
+    """(prompt key, post text) per fenced post, without the "Ln: " line numbers."""
+    return [(key, _LINE_NO_RE.sub("", body)) for key, body in _POST_RE.findall(content)]
 
 
 # --- infrastructure --------------------------------------------------------------
@@ -192,7 +198,7 @@ class FakeGroq:
     async def _create(self, **kwargs: Any) -> SimpleNamespace:
         if self.factory is not None and self.factory.open_transactions():
             self.violations += 1
-        posts = _POST_RE.findall(kwargs["messages"][1]["content"])
+        posts = _sent_posts(kwargs["messages"][1]["content"])
         self.calls.append([text for _, text in posts])
         if self.errors:
             raise self.errors.pop(0)
