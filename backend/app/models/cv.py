@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, ForeignKey, String, Text, func
+from sqlalchemy import JSON, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -22,6 +22,15 @@ class Cv(Base):
         index=True,
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    content: Mapped[str] = mapped_column(
+        Text, nullable=False, default="", server_default=""
+    )
+    # Optimistic-concurrency token: bumped on every name or content write.
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
+    # Legacy structured form fields (spec 003). Not read or written by app code
+    # since spec 011; kept for one release as the rollback path.
     personal_info: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     work_experience: Mapped[list | None] = mapped_column(JSON, nullable=True)

@@ -1,5 +1,9 @@
 import httpx
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.cv import Cv
+from app.services.cv_service import build_cv_copy
 
 BASE_URL = "/api/v1/cvs"
 APP_URL = "/api/v1/applications"
@@ -55,9 +59,7 @@ async def _create_app(
 # ---------------------------------------------------------------------------
 
 
-async def test_create_cv(
-    client: httpx.AsyncClient, registered_user: dict
-) -> None:
+async def test_create_cv(client: httpx.AsyncClient, registered_user: dict) -> None:
     token = registered_user["access_token"]
     data = await _create_cv(client, token, name="Software Engineer CV")
 
@@ -68,57 +70,27 @@ async def test_create_cv(
     assert data["linked_applications_count"] == 0
 
 
-async def test_create_cv_with_all_sections(
+async def test_create_cv_with_content(
     client: httpx.AsyncClient, registered_user: dict
 ) -> None:
     token = registered_user["access_token"]
-    payload = {
-        "name": "Full CV",
-        "personal_info": {
-            "full_name": "John Doe",
-            "email": "john@example.com",
-            "phone": "+1234567890",
-            "location": "Berlin, Germany",
-            "linkedin_url": "https://linkedin.com/in/johndoe",
-        },
-        "summary": "Experienced engineer.",
-        "work_experience": [
-            {
-                "company": "TechCorp",
-                "role": "Senior Dev",
-                "start_date": "2020-01",
-                "end_date": "2023-06",
-                "is_current": False,
-                "description": "Built stuff.",
-            }
-        ],
-        "education": [
-            {
-                "institution": "MIT",
-                "degree": "B.S.",
-                "field_of_study": "Computer Science",
-                "start_year": "2016",
-                "end_year": "2020",
-                "description": "Focus on AI.",
-            }
-        ],
-        "skills": "Python, FastAPI, SQLAlchemy",
-        "languages": "English, German",
-    }
-    resp = await client.post(BASE_URL, json=payload, headers=_auth_header(token))
-    assert resp.status_code == 201
-    data = resp.json()
+    content = "# John Doe\njohn@example.com\n\n## Skills\nPython, FastAPI"
+
+    data = await _create_cv(client, token, name="  Full CV  ", content=content)
 
     assert data["name"] == "Full CV"
-    assert data["personal_info"]["full_name"] == "John Doe"
-    assert data["personal_info"]["linkedin_url"] == "https://linkedin.com/in/johndoe"
-    assert data["summary"] == "Experienced engineer."
-    assert len(data["work_experience"]) == 1
-    assert data["work_experience"][0]["company"] == "TechCorp"
-    assert len(data["education"]) == 1
-    assert data["education"][0]["institution"] == "MIT"
-    assert data["skills"] == "Python, FastAPI, SQLAlchemy"
-    assert data["languages"] == "English, German"
+    assert data["content"] == content
+    assert data["version"] == 1
+    assert "personal_info" not in data
+
+
+async def test_create_cv_content_defaults_to_empty(
+    client: httpx.AsyncClient, registered_user: dict
+) -> None:
+    data = await _create_cv(client, registered_user["access_token"])
+
+    assert data["content"] == ""
+    assert data["version"] == 1
 
 
 async def test_create_cv_missing_name(
@@ -126,14 +98,12 @@ async def test_create_cv_missing_name(
 ) -> None:
     token = registered_user["access_token"]
     resp = await client.post(
-        BASE_URL, json={"summary": "No name"}, headers=_auth_header(token)
+        BASE_URL, json={"content": "No name"}, headers=_auth_header(token)
     )
     assert resp.status_code == 422
 
 
-async def test_list_cvs(
-    client: httpx.AsyncClient, registered_user: dict
-) -> None:
+async def test_list_cvs(client: httpx.AsyncClient, registered_user: dict) -> None:
     token = registered_user["access_token"]
     await _create_cv(client, token, name="CV One")
     await _create_cv(client, token, name="CV Two")
@@ -145,9 +115,7 @@ async def test_list_cvs(
     assert len(data) == 2
 
 
-async def test_get_cv(
-    client: httpx.AsyncClient, registered_user: dict
-) -> None:
+async def test_get_cv(client: httpx.AsyncClient, registered_user: dict) -> None:
     token = registered_user["access_token"]
     created = await _create_cv(client, token, name="Detail CV")
     cv_id = created["id"]
@@ -161,27 +129,87 @@ async def test_get_cv(
     assert "updated_at" in data
 
 
-async def test_update_cv(
-    client: httpx.AsyncClient, registered_user: dict
-) -> None:
+async def test_update_cv(client: httpx.AsyncClient, registered_user: dict) -> None:
     token = registered_user["access_token"]
     created = await _create_cv(client, token, name="Old Name")
     cv_id = created["id"]
 
     resp = await client.patch(
         f"{BASE_URL}/{cv_id}",
-        json={"name": "New Name", "skills": "Rust, Go"},
+        json={"name": "New Name", "content": "## Skills\nRust, Go", "version": 1},
         headers=_auth_header(token),
     )
     assert resp.status_code == 200
     data = resp.json()
     assert data["name"] == "New Name"
-    assert data["skills"] == "Rust, Go"
+    assert data["content"] == "## Skills\nRust, Go"
+    assert data["version"] == 2
 
 
-async def test_delete_cv(
+@pytest.mark.parametrize(
+    "body",
+    [{"name": "Renamed"}, {"content": "New text"}],
+    ids=["name", "content"],
+)
+async def test_update_bumps_version_by_one_per_change(
+    client: httpx.AsyncClient, registered_user: dict, body: dict
+) -> None:
+    token = registered_user["access_token"]
+    cv = await _create_cv(client, token, name="CV", content="Old text")
+    url = f"{BASE_URL}/{cv['id']}"
+
+    first = await client.patch(
+        url, json={**body, "version": 1}, headers=_auth_header(token)
+    )
+    again = await client.patch(
+        url, json={"name": "Second", "version": 2}, headers=_auth_header(token)
+    )
+
+    assert first.json()["version"] == 2
+    assert again.json()["version"] == 3
+    stored = await client.get(url, headers=_auth_header(token))
+    assert stored.json()["version"] == 3
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"version": 1},
+        {"name": "CV", "content": "Text", "version": 1},
+        {"name": None, "content": None, "version": 1},
+    ],
+    ids=["nothing", "same-values", "nulls"],
+)
+async def test_update_without_a_change_keeps_version(
+    client: httpx.AsyncClient, registered_user: dict, body: dict
+) -> None:
+    token = registered_user["access_token"]
+    cv = await _create_cv(client, token, name="CV", content="Text")
+
+    resp = await client.patch(
+        f"{BASE_URL}/{cv['id']}", json=body, headers=_auth_header(token)
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["version"] == 1
+    assert resp.json()["name"] == "CV"
+    assert resp.json()["content"] == "Text"
+
+
+async def test_update_requires_version(
     client: httpx.AsyncClient, registered_user: dict
 ) -> None:
+    token = registered_user["access_token"]
+    cv = await _create_cv(client, token)
+
+    resp = await client.patch(
+        f"{BASE_URL}/{cv['id']}", json={"name": "X"}, headers=_auth_header(token)
+    )
+
+    assert resp.status_code == 422
+
+
+async def test_delete_cv(client: httpx.AsyncClient, registered_user: dict) -> None:
     token = registered_user["access_token"]
     created = await _create_cv(client, token, name="To Delete")
     cv_id = created["id"]
@@ -195,12 +223,10 @@ async def test_delete_cv(
     assert resp.status_code == 404
 
 
-async def test_duplicate_cv(
-    client: httpx.AsyncClient, registered_user: dict
-) -> None:
+async def test_duplicate_cv(client: httpx.AsyncClient, registered_user: dict) -> None:
     token = registered_user["access_token"]
     original = await _create_cv(
-        client, token, name="Original", skills="Python", languages="English"
+        client, token, name="Original", content="## Skills\nPython"
     )
     cv_id = original["id"]
 
@@ -211,8 +237,8 @@ async def test_duplicate_cv(
     data = resp.json()
     assert data["name"] == "Original (copy)"
     assert data["id"] != original["id"]
-    assert data["skills"] == "Python"
-    assert data["languages"] == "English"
+    assert data["content"] == "## Skills\nPython"
+    assert data["version"] == 1
 
 
 async def test_duplicate_cv_custom_name(
@@ -233,54 +259,101 @@ async def test_duplicate_cv_custom_name(
 
 
 # ---------------------------------------------------------------------------
-# JSON Validation Tests
+# Validation Tests
 # ---------------------------------------------------------------------------
 
 
-async def test_create_cv_with_work_experience(
+async def test_content_up_to_20000_chars_is_accepted(
     client: httpx.AsyncClient, registered_user: dict
 ) -> None:
     token = registered_user["access_token"]
-    payload = {
-        "name": "Work CV",
-        "work_experience": [
-            {"company": "AlphaCo", "role": "Dev", "is_current": True},
-            {"company": "BetaCo", "role": "Intern", "start_date": "2019-06"},
-        ],
-    }
-    resp = await client.post(BASE_URL, json=payload, headers=_auth_header(token))
-    assert resp.status_code == 201
-    data = resp.json()
-    assert len(data["work_experience"]) == 2
-    assert data["work_experience"][0]["company"] == "AlphaCo"
-    assert data["work_experience"][0]["is_current"] is True
-    assert data["work_experience"][1]["company"] == "BetaCo"
+    content = "a" * 19_999 + "\n"
+
+    data = await _create_cv(client, token, content=content)
+    resp = await client.patch(
+        f"{BASE_URL}/{data['id']}",
+        json={"content": "b" * 20_000, "version": 1},
+        headers=_auth_header(token),
+    )
+
+    assert len(data["content"]) == 20_000
+    assert resp.status_code == 200
 
 
-async def test_create_cv_with_education(
+async def test_content_over_20000_chars_is_rejected(
     client: httpx.AsyncClient, registered_user: dict
 ) -> None:
     token = registered_user["access_token"]
-    payload = {
-        "name": "Edu CV",
-        "education": [
-            {
-                "institution": "Stanford",
-                "degree": "M.S.",
-                "field_of_study": "AI",
-            },
-            {
-                "institution": "Harvard",
-                "degree": "B.A.",
-            },
-        ],
-    }
-    resp = await client.post(BASE_URL, json=payload, headers=_auth_header(token))
-    assert resp.status_code == 201
-    data = resp.json()
-    assert len(data["education"]) == 2
-    assert data["education"][0]["institution"] == "Stanford"
-    assert data["education"][1]["institution"] == "Harvard"
+    cv = await _create_cv(client, token, content="Keep me")
+
+    create = await client.post(
+        BASE_URL,
+        json={"name": "Too long", "content": "a" * 20_001},
+        headers=_auth_header(token),
+    )
+    update = await client.patch(
+        f"{BASE_URL}/{cv['id']}",
+        json={"content": "a" * 20_001, "version": 1},
+        headers=_auth_header(token),
+    )
+
+    assert create.status_code == 422
+    assert update.status_code == 422
+    stored = await client.get(f"{BASE_URL}/{cv['id']}", headers=_auth_header(token))
+    assert stored.json()["content"] == "Keep me"
+
+
+@pytest.mark.parametrize("name", ["", "   ", "\t\n "])
+async def test_empty_or_whitespace_name_is_rejected(
+    client: httpx.AsyncClient, registered_user: dict, name: str
+) -> None:
+    token = registered_user["access_token"]
+    cv = await _create_cv(client, token)
+
+    create = await client.post(
+        BASE_URL, json={"name": name}, headers=_auth_header(token)
+    )
+    update = await client.patch(
+        f"{BASE_URL}/{cv['id']}",
+        json={"name": name, "version": 1},
+        headers=_auth_header(token),
+    )
+
+    assert create.status_code == 422
+    assert update.status_code == 422
+
+
+async def test_name_limit_is_255_chars(
+    client: httpx.AsyncClient, registered_user: dict
+) -> None:
+    token = registered_user["access_token"]
+
+    ok = await client.post(
+        BASE_URL, json={"name": "n" * 255}, headers=_auth_header(token)
+    )
+    too_long = await client.post(
+        BASE_URL, json={"name": "n" * 256}, headers=_auth_header(token)
+    )
+
+    assert ok.status_code == 201
+    assert too_long.status_code == 422
+
+
+async def test_build_cv_copy_copies_content(
+    registered_user: dict, db_session: AsyncSession
+) -> None:
+    user_id = registered_user["user"]["id"]
+    original = Cv(user_id=user_id, name="Base", content="## Summary\nHello", version=4)
+    db_session.add(original)
+    await db_session.commit()
+
+    copy = await build_cv_copy(db_session, user_id, original.id, "Copy")
+    await db_session.commit()
+
+    assert copy.id != original.id
+    assert copy.name == "Copy"
+    assert copy.content == "## Summary\nHello"
+    assert copy.version == 1
 
 
 # ---------------------------------------------------------------------------
@@ -347,15 +420,11 @@ async def test_delete_cv_sets_null_on_applications(
     )
 
     # Delete the CV
-    resp = await client.delete(
-        f"{BASE_URL}/{cv['id']}", headers=_auth_header(token)
-    )
+    resp = await client.delete(f"{BASE_URL}/{cv['id']}", headers=_auth_header(token))
     assert resp.status_code == 200
 
     # Application should now have cv_id = null
-    resp = await client.get(
-        f"{APP_URL}/{app['id']}", headers=_auth_header(token)
-    )
+    resp = await client.get(f"{APP_URL}/{app['id']}", headers=_auth_header(token))
     assert resp.status_code == 200
     data = resp.json()
     assert data["cv_id"] is None
@@ -405,9 +474,7 @@ async def test_cannot_access_other_users_cv(
     user_b = await _register_user(client, email="userb@example.com")
     token_b = user_b["access_token"]
 
-    resp = await client.get(
-        f"{BASE_URL}/{cv['id']}", headers=_auth_header(token_b)
-    )
+    resp = await client.get(f"{BASE_URL}/{cv['id']}", headers=_auth_header(token_b))
     assert resp.status_code == 404
 
 
@@ -420,13 +487,9 @@ async def test_cannot_delete_other_users_cv(
     user_b = await _register_user(client, email="userb@example.com")
     token_b = user_b["access_token"]
 
-    resp = await client.delete(
-        f"{BASE_URL}/{cv['id']}", headers=_auth_header(token_b)
-    )
+    resp = await client.delete(f"{BASE_URL}/{cv['id']}", headers=_auth_header(token_b))
     assert resp.status_code == 404
 
     # Verify it still exists for user A
-    resp = await client.get(
-        f"{BASE_URL}/{cv['id']}", headers=_auth_header(token_a)
-    )
+    resp = await client.get(f"{BASE_URL}/{cv['id']}", headers=_auth_header(token_a))
     assert resp.status_code == 200

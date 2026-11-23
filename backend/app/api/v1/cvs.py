@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, get_db
 from app.core.exceptions import not_found
+from app.models.cv import Cv
 from app.models.user import User
 from app.schemas.cv import CvCreate, CvDuplicateRequest, CvRead, CvUpdate
 from app.services.cv_service import (
@@ -19,17 +20,13 @@ from app.services.cv_service import (
 router = APIRouter(prefix="/cvs", tags=["cvs"])
 
 
-def _cv_to_read(cv, linked_count: int = 0) -> CvRead:
+def _cv_to_read(cv: Cv, linked_count: int = 0) -> CvRead:
     """Convert a Cv model to CvRead schema with linked application count."""
     return CvRead(
         id=cv.id,
         name=cv.name,
-        personal_info=cv.personal_info,
-        summary=cv.summary,
-        work_experience=cv.work_experience,
-        education=cv.education,
-        skills=cv.skills,
-        languages=cv.languages,
+        content=cv.content,
+        version=cv.version,
         linked_applications_count=linked_count,
         created_at=cv.created_at,
         updated_at=cv.updated_at,
@@ -92,7 +89,9 @@ async def delete_user_cv(
     return {"message": "CV deleted."}
 
 
-@router.post("/{cv_id}/duplicate", response_model=CvRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{cv_id}/duplicate", response_model=CvRead, status_code=status.HTTP_201_CREATED
+)
 async def duplicate_user_cv(
     cv_id: str,
     body: CvDuplicateRequest,

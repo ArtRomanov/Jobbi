@@ -48,46 +48,6 @@ def _application_lines(application: Application) -> list[str]:
     return lines
 
 
-def _cv_lines(cv: Cv) -> list[str]:
-    lines = [f"- CV name: {cv.name}"]
-
-    if cv.personal_info:
-        name = cv.personal_info.get("full_name", "")
-        if name:
-            lines.append(f"- Name: {name}")
-
-    if cv.summary:
-        lines.append(f"- Summary: {cv.summary}")
-
-    if cv.work_experience:
-        lines.append("- Work Experience:")
-        for exp in cv.work_experience:
-            end = "Present" if exp.get("is_current") else exp.get("end_date", "")
-            lines.append(
-                f"  - {exp.get('role', '')} at {exp.get('company', '')} "
-                f"({exp.get('start_date', '')} — {end})"
-            )
-            if exp.get("description"):
-                lines.append(f"    {exp['description']}")
-
-    if cv.education:
-        lines.append("- Education:")
-        for edu in cv.education:
-            lines.append(
-                f"  - {edu.get('degree', '')} in {edu.get('field_of_study', '')} "
-                f"at {edu.get('institution', '')} "
-                f"({edu.get('start_year', '')} — {edu.get('end_year', '')})"
-            )
-
-    if cv.skills:
-        lines.append(f"- Skills: {cv.skills}")
-
-    if cv.languages:
-        lines.append(f"- Languages: {cv.languages}")
-
-    return lines
-
-
 def build_system_prompt(application: Application, cv: Cv | None) -> str:
     """Build a system prompt from application and optional CV context.
 
@@ -105,8 +65,8 @@ def build_system_prompt(application: Application, cv: Cv | None) -> str:
 
     if cv:
         parts.append("")
-        parts.append("**Candidate's CV:**")
-        parts.append(fence("CV", "\n".join(_cv_lines(cv))))
+        parts.append("**Candidate's CV (Markdown text):**")
+        parts.append(fence("CV", cv.content))
 
     return "\n".join(parts)
 

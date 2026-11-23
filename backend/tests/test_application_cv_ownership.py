@@ -10,7 +10,7 @@ from app.models.cv import Cv
 from app.services.chat_service import get_application_context
 
 BASE_URL = "/api/v1/applications"
-FOREIGN_SECRET = "Top-secret summary of user B"
+FOREIGN_SECRET = "Top-secret CV text of user B"
 
 
 def _auth(token: str) -> dict[str, str]:
@@ -18,7 +18,7 @@ def _auth(token: str) -> dict[str, str]:
 
 
 async def _make_cv(db: AsyncSession, user_id: str, name: str) -> Cv:
-    cv = Cv(user_id=user_id, name=name, summary=FOREIGN_SECRET)
+    cv = Cv(user_id=user_id, name=name, content=FOREIGN_SECRET)
     db.add(cv)
     await db.commit()
     return cv

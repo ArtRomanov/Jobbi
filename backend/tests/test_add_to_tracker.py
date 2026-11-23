@@ -60,12 +60,7 @@ async def _make_cv(db: AsyncSession, user_id: str, name: str = "Base CV") -> Cv:
     cv = Cv(
         user_id=user_id,
         name=name,
-        personal_info={"full_name": "Jane Doe", "email": "jane@example.com"},
-        summary="Frontend engineer",
-        work_experience=[{"company": "Old Co", "role": "Dev", "is_current": False}],
-        education=[{"institution": "Uni"}],
-        skills="React, TypeScript",
-        languages="English",
+        content="# Jane Doe\njane@example.com\n\n## Summary\nFrontend engineer",
     )
     db.add(cv)
     await db.commit()
@@ -374,15 +369,8 @@ class TestAddAndTailorCv:
         copy = await db_session.get(Cv, body["cv_id"])
         assert copy.user_id == user_id
         assert copy.name == "Main CV — Acme Frontend Engineer"
-        for field in (
-            "personal_info",
-            "summary",
-            "work_experience",
-            "education",
-            "skills",
-            "languages",
-        ):
-            assert getattr(copy, field) == getattr(base, field)
+        assert copy.content == base.content
+        assert copy.version == 1
         application = await db_session.get(Application, body["application_id"])
         assert application.cv_id == copy.id
         assert (await _card(db_session, card.id)).application_id == application.id
@@ -538,7 +526,7 @@ class TestBuilders:
         base = await _make_cv(db_session, user.id)
 
         copy = await cv_service.build_cv_copy(db_session, user.id, base.id, "Copy")
-        assert (copy.name, copy.summary) == ("Copy", "Frontend engineer")
+        assert (copy.name, copy.content) == ("Copy", base.content)
         await db_session.rollback()
 
         assert await _count(db_session, Cv) == 1
