@@ -6,11 +6,18 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 
-VACANCY_SOURCE_KINDS = ("telegram", "greenhouse", "lever", "lever_eu")
+VACANCY_SOURCE_KINDS = (
+    "telegram",
+    "greenhouse",
+    "lever",
+    "lever_eu",
+    "teamtailor",
+    "web",
+)
 
 
 class VacancySource(Base):
-    """A watched Telegram channel or company job board.
+    """A watched Telegram channel, company job board or web listing page.
 
     ON DELETE CASCADE is declared for documentation and PostgreSQL; SQLite does
     not enforce it here (no PRAGMA foreign_keys), so delete paths must clear
@@ -24,6 +31,12 @@ class VacancySource(Base):
             "kind",
             "handle",
             name="uq_vacancy_sources_user_id_kind_handle",
+        ),
+        # NULL url_hash (non-web kinds) never collides on SQLite or PostgreSQL.
+        UniqueConstraint(
+            "user_id",
+            "url_hash",
+            name="uq_vacancy_sources_user_id_url_hash",
         ),
     )
 
@@ -40,8 +53,16 @@ class VacancySource(Base):
     )
     # One of VACANCY_SOURCE_KINDS.
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
-    # Channel / board token / company slug, stored lowercased.
+    # Channel / board token / company slug, stored lowercased. For `web` the
+    # handle is the source's own id: stable across link edits, so
+    # vacancy_card_sources.source_handle and the ?source= key stay valid.
     handle: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Web only: normalized listing URL that is fetched.
+    url: Mapped[str | None] = mapped_column(String(2048))
+    # Web only: sha256 hex of `url`; backs the per-user duplicate check.
+    url_hash: Mapped[str | None] = mapped_column(String(64))
+    # Web only: optional substring a job link must contain.
+    job_link_contains: Mapped[str | None] = mapped_column(String(100))
     display_name: Mapped[str] = mapped_column(String(255), nullable=False)
     initial_scan_completed_at: Mapped[datetime | None] = mapped_column()
     next_initial_attempt_at: Mapped[datetime | None] = mapped_column()

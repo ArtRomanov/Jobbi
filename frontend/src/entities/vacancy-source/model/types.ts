@@ -3,7 +3,7 @@ import type { components } from "@/shared/api";
 /** One watched source (Telegram channel or company job board). */
 export type VacancySource = components["schemas"]["VacancySourceRead"];
 
-/** Where a source comes from: "telegram" | "greenhouse" | "lever" | "lever_eu". */
+/** Where a source comes from: "telegram" | "greenhouse" | "lever" | "lever_eu" | "teamtailor". */
 export type VacancySourceKind = VacancySource["kind"];
 
 /** A source of existing cards that matches no live source: `{key, label}` (shown "(removed)"). */

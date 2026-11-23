@@ -1,6 +1,6 @@
 # Manage Sources Feature
 
-Inbox "Sources" panel (`SourcesPanel`): add a Telegram channel by `@name` / `t.me/name`, list watched sources with "Scanning…" / "Unavailable" + reason, remove a source (no confirm), and the "What are you looking for?" form (search description + exclude words).
+Inbox "Sources" panel (`SourcesPanel`): add a Telegram channel (`@name` / `t.me/name`) or a Greenhouse / Lever / Teamtailor board link (kind labels in `SOURCE_KIND_LABELS`), list watched sources with "Scanning…" / "Unavailable" + reason, remove a source (no confirm), and the "What are you looking for?" form (search description + exclude words).
 
 - State lives in `model/use-manage-sources.ts`. Add errors are shown inline under the input (`getErrorMessage` — the backend's 400/409 `detail` text is user-facing); remove errors go to a toast.
 - The add form stays disabled until the initial list loads, so a late GET can't overwrite a just-added source.

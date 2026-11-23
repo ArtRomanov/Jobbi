@@ -12,22 +12,25 @@ Supported inputs:
   standard API host, so the region is not stored).
 - Lever: `jobs.lever.co/<company>` -> `lever`, `jobs.eu.lever.co/<company>` ->
   `lever_eu` (Lever keeps a company's data in one region).
+- Teamtailor: `<sub>.teamtailor.com[/any path]` -> `teamtailor`, handle `<sub>`;
+  only `https://<sub>.teamtailor.com/jobs.rss` is ever requested.
 
 Which error text an unrecognised input gets (`_invalid_input_message`):
-- it mentions `greenhouse.io` or `lever.co`, or it is an http(s) URL whose
-  host does not look like Telegram -> BOARD_INVALID_INPUT_MESSAGE;
-- anything else (`@name`, bare words, t.me look-alikes) ->
-  INVALID_INPUT_MESSAGE (the Telegram hint).
+- its parsed host is, or ends with, `.greenhouse.io`, `.lever.co` or
+  `.teamtailor.com` -> BOARD_INVALID_INPUT_MESSAGE (a host check, not a
+  substring search, so `clever.com/careers` is not taken for a Lever link);
+- anything else -> INVALID_INPUT_MESSAGE (the Telegram hint).
 """
 
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 MAX_INPUT_LENGTH = 200
 
 INVALID_INPUT_MESSAGE = "Enter a Telegram channel as @name or a t.me/name link"
-BOARD_INVALID_INPUT_MESSAGE = "Not a Greenhouse or Lever job board link"
+BOARD_INVALID_INPUT_MESSAGE = "Not a Greenhouse, Lever or Teamtailor job board link"
 
 # Telegram usernames: 5-32 letters, digits or underscores.
 _TELEGRAM_HANDLE = r"[A-Za-z0-9_]{5,32}"
@@ -74,9 +77,22 @@ _LEVER_LINK = re.compile(
     re.IGNORECASE | re.ASCII,
 )
 
-_BOARD_DOMAIN_HINT = re.compile(r"greenhouse\.io|lever\.co", re.IGNORECASE)
-_HTTP_URL = re.compile(r"https?://(?P<host>[^/?#]*)", re.IGNORECASE)
-_TELEGRAM_HOST_HINT = re.compile(r"t\.me|telegram", re.IGNORECASE)
+# `<sub>.teamtailor.com`: one DNS label (no dots, no dash at either end), then
+# the exact host, then an optional path and simple query. With fullmatch there
+# is no room for userinfo, ports, extra subdomains or `.teamtailor.com.evil.com`.
+_TEAMTAILOR_LINK = re.compile(
+    r"(?:https?://)?"
+    r"(?P<handle>[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)"
+    r"\.teamtailor\.com"
+    r"(?:/[A-Za-z0-9_.~%/-]{0,500})?"
+    rf"{_SIMPLE_QUERY}",
+    re.IGNORECASE | re.ASCII,
+)
+# Teamtailor's own service hosts, not company boards.
+_TEAMTAILOR_RESERVED = frozenset({"www", "app", "api"})
+
+_BOARD_HOST_SUFFIXES = (".greenhouse.io", ".lever.co", ".teamtailor.com")
+_HAS_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://")
 
 
 class SourceInputError(ValueError):
@@ -118,19 +134,43 @@ def _parse_lever(text: str) -> ParsedSource | None:
     return ParsedSource(kind=kind, handle=match["handle"].lower())
 
 
+def _parse_teamtailor(text: str) -> ParsedSource | None:
+    match = _TEAMTAILOR_LINK.fullmatch(text)
+    if match is None:
+        return None
+    handle = match["handle"].lower()
+    if handle in _TEAMTAILOR_RESERVED:
+        return None
+    return ParsedSource(kind="teamtailor", handle=handle)
+
+
 _PARSERS: tuple[Callable[[str], ParsedSource | None], ...] = (
     _parse_telegram,
     _parse_greenhouse,
     _parse_lever,
+    _parse_teamtailor,
 )
+
+
+def _input_host(text: str) -> str | None:
+    """The lowercased host the input names (with or without a scheme), if any."""
+    try:
+        has_netloc = _HAS_SCHEME.match(text) or text.startswith("//")
+        parts = urlsplit(text if has_netloc else f"//{text}")
+    except ValueError:
+        return None
+    return parts.hostname
+
+
+def _is_board_host(host: str | None) -> bool:
+    if not host:
+        return False
+    return f".{host.rstrip('.')}".endswith(_BOARD_HOST_SUFFIXES)
 
 
 def _invalid_input_message(text: str) -> str:
     """Pick the hint for unrecognised input (rule in the module docstring)."""
-    if _BOARD_DOMAIN_HINT.search(text):
-        return BOARD_INVALID_INPUT_MESSAGE
-    url = _HTTP_URL.match(text)
-    if url is not None and not _TELEGRAM_HOST_HINT.search(url["host"]):
+    if _is_board_host(_input_host(text)):
         return BOARD_INVALID_INPUT_MESSAGE
     return INVALID_INPUT_MESSAGE
 

@@ -6,6 +6,7 @@ export const SOURCE_KIND_LABELS: Record<VacancySourceKind, string> = {
   greenhouse: "Greenhouse",
   lever: "Lever",
   lever_eu: "Lever",
+  teamtailor: "Teamtailor",
 };
 
 export const SCANNING_LABEL = "Scanning…";
@@ -21,7 +22,8 @@ export const AI_UNAVAILABLE_NOTICE =
   "Vacancy search is temporarily unavailable — new posts will be checked when it's back";
 export const LOAD_ERROR_MESSAGE = "Could not load your sources.";
 export const NO_SOURCES_MESSAGE = "You are not watching any sources yet.";
-export const SOURCE_INPUT_PLACEHOLDER = "@channel or t.me/channel";
+export const SOURCE_INPUT_PLACEHOLDER =
+  "@channel, t.me/channel, or a Greenhouse, Lever or Teamtailor board link";
 
 export const DESCRIPTION_MAX_LENGTH = 500;
 export const EXCLUDE_MAX_ITEMS = 50;

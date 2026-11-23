@@ -1,10 +1,11 @@
-"""respx stubs for the Greenhouse and Lever public APIs, shared by worker tests."""
+"""respx stubs for the Greenhouse, Lever and Teamtailor feeds, shared by worker tests."""
 
 import html
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from email.utils import format_datetime
 
 import httpx
 import respx
@@ -149,4 +150,58 @@ class LeverBoard:
                 }
                 for posting_id, (title, text, created) in items
             ],
+        )
+
+
+@dataclass
+class TeamtailorBoard:
+    """Serves `https://<sub>.teamtailor.com/jobs.rss`.
+
+    `jobs[id] = (title, text, pubDate or None)`.
+    """
+
+    subdomain: str = "acme"
+    name: str = "Acme AB"
+    jobs: dict[int, tuple[str, str, datetime | None]] = field(default_factory=dict)
+    status: int = 200
+    requests: int = 0
+    on_request: Hook | None = None
+
+    def add(
+        self, job_id: int, text: str, published: datetime | None, title: str = "Dev"
+    ) -> None:
+        self.jobs[job_id] = (title, text, published)
+
+    @property
+    def url(self) -> str:
+        return f"https://{self.subdomain}.teamtailor.com/jobs.rss"
+
+    def mount(self, router: respx.MockRouter) -> None:
+        router.get(self.url).mock(side_effect=self._feed)
+
+    def _feed(self, request: httpx.Request) -> httpx.Response:
+        if self.on_request is not None:
+            self.on_request(request)
+        self.requests += 1
+        if self.status != 200:
+            return httpx.Response(self.status)
+        items = "".join(
+            "<item>"
+            f"<title>{html.escape(title)}</title>"
+            f"<link>https://{self.subdomain}.teamtailor.com/jobs/{job_id}-dev</link>"
+            + (
+                f"<pubDate>{format_datetime(published.replace(tzinfo=UTC))}</pubDate>"
+                if published
+                else ""
+            )
+            + f"<description>{html.escape(f'<p>{text}</p>')}</description>"
+            "</item>"
+            for job_id, (title, text, published) in self.jobs.items()
+        )
+        body = (
+            '<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel>'
+            f"<title>{html.escape(self.name)}</title>{items}</channel></rss>"
+        )
+        return httpx.Response(
+            200, content=body.encode(), headers={"Content-Type": "application/rss+xml"}
         )

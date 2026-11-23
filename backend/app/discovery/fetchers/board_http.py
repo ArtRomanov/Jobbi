@@ -1,4 +1,4 @@
-"""Shared HTTP and text helpers for the Greenhouse / Lever board fetchers."""
+"""Shared HTTP and text helpers for the Greenhouse / Lever / Teamtailor fetchers."""
 
 import html
 import json
@@ -59,23 +59,23 @@ def check_handle(handle: str) -> str:
     return handle
 
 
-async def get_json(
+async def get_bytes(
     client: httpx.AsyncClient,
     url: str,
     *,
     params: dict[str, str | int] | None = None,
     headers: dict[str, str] | None = None,
-) -> Any:
-    """GET ``url`` and return the parsed JSON body.
+) -> bytes:
+    """GET ``url`` and return the raw body (decompressed, at most 5 MB).
 
     Redirects are not followed, so the request never leaves the fixed host.
 
     Raises:
         BoardReadError: ``not_found`` on 404; ``unreachable`` on any other
-            non-200 status, transport error/timeout, body over the size cap
-            (after decompression) or invalid JSON.
+            non-200 status, transport error/timeout or a body over the size
+            cap (after decompression).
     """
-    request_headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    request_headers = {"User-Agent": USER_AGENT}
     if headers:
         request_headers.update(headers)
     try:
@@ -98,6 +98,25 @@ async def get_json(
                     raise BoardReadError("unreachable")
     except httpx.HTTPError as exc:
         raise BoardReadError("unreachable") from exc
+    return bytes(body)
+
+
+async def get_json(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    params: dict[str, str | int] | None = None,
+    headers: dict[str, str] | None = None,
+) -> Any:
+    """GET ``url`` and return the parsed JSON body.
+
+    Raises:
+        BoardReadError: as ``get_bytes``; also ``unreachable`` on invalid JSON.
+    """
+    request_headers = {"Accept": "application/json"}
+    if headers:
+        request_headers.update(headers)
+    body = await get_bytes(client, url, params=params, headers=request_headers)
     try:
         return json.loads(body)
     except ValueError as exc:

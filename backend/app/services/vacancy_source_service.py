@@ -1,4 +1,4 @@
-"""Watched sources (Telegram channels, Greenhouse / Lever boards) for discovery.
+"""Watched sources (Telegram channels, Greenhouse / Lever / Teamtailor boards).
 
 Invariant: no network I/O inside a database transaction. `add_source` ends
 the read transaction before the live check and writes in a short one after.
@@ -17,6 +17,7 @@ from app.models.vacancy_source import VacancySource
 from app.services.vacancy_source_check import (
     check_lever_board,
     fetch_greenhouse_board_name,
+    fetch_teamtailor_board_name,
     fetch_telegram_channel_title,
 )
 from app.services.vacancy_source_parsing import ParsedSource, parse_source_input
@@ -209,6 +210,8 @@ async def _fetch_display_name(parsed: ParsedSource) -> str:
             return await fetch_greenhouse_board_name(parsed.handle)
         case "lever" | "lever_eu":
             return await check_lever_board(parsed.kind, parsed.handle)
+        case "teamtailor":
+            return await fetch_teamtailor_board_name(parsed.handle)
         case _:  # pragma: no cover - the parser yields only the kinds above
             raise NotImplementedError(parsed.kind)
 

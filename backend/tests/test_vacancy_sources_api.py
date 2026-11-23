@@ -347,8 +347,12 @@ async def test_total_timeout_budget(
         ("t.me.evil.com/durov_jobs", INVALID_INPUT_MESSAGE),
         ("javascript:alert(1)", INVALID_INPUT_MESSAGE),
         ("@abc", INVALID_INPUT_MESSAGE),
-        ("https://evil.com/durov_jobs", BOARD_INVALID_INPUT_MESSAGE),
-        ("https://jobs.lever.co.evil.com/acme", BOARD_INVALID_INPUT_MESSAGE),
+        ("https://evil.com/durov_jobs", INVALID_INPUT_MESSAGE),
+        ("https://jobs.lever.co.evil.com/acme", INVALID_INPUT_MESSAGE),
+        ("https://x.teamtailor.com.evil.com/jobs", INVALID_INPUT_MESSAGE),
+        ("https://clever.com/careers", INVALID_INPUT_MESSAGE),
+        ("https://jobs.lever.co/acme/admin", BOARD_INVALID_INPUT_MESSAGE),
+        ("https://x.teamtailor.com:8443/jobs", BOARD_INVALID_INPUT_MESSAGE),
     ],
 )
 async def test_invalid_input_makes_no_network_call(

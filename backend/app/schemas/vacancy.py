@@ -4,7 +4,9 @@ from pydantic import BaseModel, Field, StringConstraints
 
 from app.schemas.telegram import UtcDatetime
 
-SourceKind = Literal["telegram", "greenhouse", "lever", "lever_eu"]
+SourceKind = Literal[
+    "telegram", "greenhouse", "lever", "lever_eu", "teamtailor", "web"
+]
 
 
 class VacancySourceCreate(BaseModel):

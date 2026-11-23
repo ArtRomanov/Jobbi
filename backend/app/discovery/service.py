@@ -8,7 +8,8 @@ database transaction is open. Every step is either
 Functions never hold an ORM object across a network call; they copy what they
 need into the frozen dataclasses below.
 
-Sources: Telegram channels and Greenhouse / Lever boards (`board_scan`).
+Sources: Telegram channels and Greenhouse / Lever / Teamtailor boards
+(`board_scan`).
 
 Reposts (same `job_link` as a user's `new`/`seen`/`dismissed` card) merge into
 that card as an extra `vacancy_card_sources` row. Mostly at store time, before

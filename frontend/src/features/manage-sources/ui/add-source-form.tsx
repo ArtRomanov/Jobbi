@@ -37,7 +37,7 @@ export function AddSourceForm({
       <div style={{ flex: 1 }}>
         <FormInput
           ref={inputRef}
-          label="Add a Telegram channel"
+          label="Add a channel, job board or page"
           placeholder={SOURCE_INPUT_PLACEHOLDER}
           autoComplete="off"
           spellCheck={false}

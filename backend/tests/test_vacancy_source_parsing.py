@@ -175,13 +175,6 @@ def test_lever_eu_forms_accepted(raw: str) -> None:
     "raw",
     [
         # Look-alike hosts
-        "jobs.lever.co.evil.com/acme",
-        "https://jobs.lever.co.evil.com/acme",
-        "https://jobs.eu.lever.co.evil.com/acme",
-        "https://boards.greenhouse.io.evil.com/acme",
-        "https://evil.com/jobs.lever.co/acme",
-        "evil.com/boards.greenhouse.io/acme",
-        "https://evil.com/?u=jobs.lever.co/acme",
         "https://eviljobs.lever.co/acme",
         "https://xboards.greenhouse.io/acme",
         # Other subdomains / hosts of the same companies
@@ -195,7 +188,6 @@ def test_lever_eu_forms_accepted(raw: str) -> None:
         "https://greenhouse.io/acme",
         # Userinfo and ports
         "https://user@jobs.lever.co/acme",
-        "https://jobs.lever.co@evil.com/acme",
         "https://boards.greenhouse.io:8443/acme",
         "https://jobs.lever.co:443/acme",
         # Schemes
@@ -221,13 +213,7 @@ def test_lever_eu_forms_accepted(raw: str) -> None:
         "https://jobs.lever.co/ac me",
         "https://jobs.lever.co/ac\nme",
         "https://jobs.lever.co/\u212acme",  # Kelvin sign
-        "https://jobs.lever.c\u043e/acme",  # Cyrillic o in the host
         "https://boards.greenhouse.io/\u0430cme",  # Cyrillic a in the token
-        # Not boards at all
-        "https://evil.com/durov_jobs",
-        "https://example.com/careers",
-        "http://localhost:8000/admin",
-        "https://169.254.169.254/latest/meta-data",
     ],
 )
 def test_hostile_or_unknown_board_links_rejected(raw: str) -> None:
@@ -237,13 +223,44 @@ def test_hostile_or_unknown_board_links_rejected(raw: str) -> None:
 
 
 @pytest.mark.parametrize(
+    "raw",
+    [
+        "jobs.lever.co.evil.com/acme",
+        "https://jobs.lever.co.evil.com/acme",
+        "https://jobs.eu.lever.co.evil.com/acme",
+        "https://boards.greenhouse.io.evil.com/acme",
+        "https://evil.com/jobs.lever.co/acme",
+        "evil.com/boards.greenhouse.io/acme",
+        "https://evil.com/?u=jobs.lever.co/acme",
+        "https://jobs.lever.co@evil.com/acme",
+        "https://jobs.lever.c\u043e/acme",  # Cyrillic o in the host
+        "https://evil.com/durov_jobs",
+        "https://example.com/careers",
+        "http://localhost:8000/admin",
+        "https://169.254.169.254/latest/meta-data",
+    ],
+)
+def test_board_lookalikes_on_other_hosts_get_no_board_hint(raw: str) -> None:
+    # The board hint follows the parsed host, not a substring of the text.
+    with pytest.raises(SourceInputError) as exc_info:
+        parse_source_input(raw)
+    assert exc_info.value.message == INVALID_INPUT_MESSAGE
+
+
+@pytest.mark.parametrize(
     ("raw", "message"),
     [
-        # Mentions a board domain -> board hint, wherever it appears.
-        ("jobs.lever.co.evil.com/acme", BOARD_INVALID_INPUT_MESSAGE),
+        # The parsed host is a board domain -> board hint.
         ("boards.greenhouse.io/", BOARD_INVALID_INPUT_MESSAGE),
-        # An http(s) URL on a host that does not look like Telegram -> board hint.
-        ("https://example.com/x", BOARD_INVALID_INPUT_MESSAGE),
+        ("x.teamtailor.com:443", BOARD_INVALID_INPUT_MESSAGE),
+        # A board domain elsewhere in the text, or another host -> no board hint.
+        ("jobs.lever.co.evil.com/acme", INVALID_INPUT_MESSAGE),
+        ("https://example.com/x", INVALID_INPUT_MESSAGE),
+        ("clever.com/careers", INVALID_INPUT_MESSAGE),
+        ("https://clever.com/careers", INVALID_INPUT_MESSAGE),
+        ("https://www.clever.co/jobs", INVALID_INPUT_MESSAGE),
+        ("notgreenhouse.io/acme", INVALID_INPUT_MESSAGE),
+        ("myteamtailor.com/jobs", INVALID_INPUT_MESSAGE),
         # Telegram-looking input -> Telegram hint.
         ("@abc", INVALID_INPUT_MESSAGE),
         ("t.me/abc", INVALID_INPUT_MESSAGE),
@@ -265,3 +282,99 @@ def test_error_hint_follows_what_the_input_looks_like(raw: str, message: str) ->
 def test_bare_word_is_still_a_telegram_channel() -> None:
     # A bare word is never guessed to be a board.
     assert parse_source_input("acmelabs").kind == "telegram"
+
+
+# --- Teamtailor boards -------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "approvalmax.teamtailor.com",
+        "approvalmax.teamtailor.com/",
+        "https://approvalmax.teamtailor.com",
+        "http://approvalmax.teamtailor.com/jobs",
+        "https://ApprovalMax.teamtailor.com/jobs",
+        "HTTPS://APPROVALMAX.TEAMTAILOR.COM/JOBS",
+        "https://approvalmax.teamtailor.com/jobs/8683780-director-of-product",
+        "https://approvalmax.teamtailor.com/jobs.rss",
+        "https://approvalmax.teamtailor.com/jobs?department=sales&loc=1",
+        "  https://approvalmax.teamtailor.com/jobs  ",
+    ],
+)
+def test_teamtailor_forms_accepted(raw: str) -> None:
+    assert parse_source_input(raw) == ParsedSource(
+        kind="teamtailor", handle="approvalmax"
+    )
+
+
+@pytest.mark.parametrize("sub", ["a", "a1", "acme-labs", "1acme", "x" * 63])
+def test_teamtailor_subdomain_bounds_accepted(sub: str) -> None:
+    parsed = parse_source_input(f"https://{sub}.teamtailor.com/jobs")
+    assert parsed == ParsedSource(kind="teamtailor", handle=sub)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        # Board host, but not a usable board reference -> board hint.
+        "teamtailor.com",
+        "https://teamtailor.com/jobs",
+        "https://www.teamtailor.com/en",
+        "https://app.teamtailor.com/companies/1",
+        "https://api.teamtailor.com/v1/jobs",
+        "https://a.b.teamtailor.com/jobs",
+        "https://-acme.teamtailor.com",
+        "https://acme-.teamtailor.com",
+        "https://acme_labs.teamtailor.com",
+        "https://" + "x" * 64 + ".teamtailor.com",
+        "a@x.teamtailor.com",
+        "https://a@x.teamtailor.com/jobs",
+        "https://x.teamtailor.com:443/jobs",
+        "x.teamtailor.com:8080",
+        "https://x.teamtailor.com.:443/jobs",
+        "ftp://x.teamtailor.com/jobs",
+        "javascript://x.teamtailor.com/jobs",
+        "//x.teamtailor.com/jobs",
+        "https://x.teamtailor.com/jobs#frag",
+        "https://x.teamtailor.com/jo bs",
+        "https://x.teamtailor.com/<script>",
+        "https://K.teamtailor.com/jobs",  # Kelvin sign
+        "https://x.teamtailor.com/" + "a" * 501,
+    ],
+)
+def test_teamtailor_bad_links_get_board_hint(raw: str) -> None:
+    with pytest.raises(SourceInputError) as exc_info:
+        parse_source_input(raw)
+    assert exc_info.value.message == BOARD_INVALID_INPUT_MESSAGE
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "teamtailor.com.evil.com",
+        "https://teamtailor.com.evil.com/jobs",
+        "evil.com/teamtailor.com",
+        "https://evil.com/x.teamtailor.com",
+        "x.teamtailor.com.evil.com",
+        "https://x.teamtailor.com.evil.com/jobs",
+        "https://x.teamtailor.com@evil.com/jobs",
+        "https://evil.com/?u=x.teamtailor.com",
+        "https://xteamtailor.com/jobs",
+        "https://x.teamtailor.co/jobs",
+        "https://x.teamtailor.com-evil.com/jobs",
+        "https://x.teamtai1or.com/jobs",
+        "https://x.teamtailоr.com/jobs",  # Cyrillic o in the host
+        "https://аcme.teamtailor.com.evil.com/jobs",  # Cyrillic a
+    ],
+)
+def test_teamtailor_lookalikes_rejected_without_board_hint(raw: str) -> None:
+    with pytest.raises(SourceInputError) as exc_info:
+        parse_source_input(raw)
+    assert exc_info.value.message == INVALID_INPUT_MESSAGE
+
+
+def test_teamtailor_unicode_subdomain_is_not_a_board() -> None:
+    # A non-ASCII subdomain never becomes a handle (the host still gets the hint).
+    with pytest.raises(SourceInputError):
+        parse_source_input("https://аcme.teamtailor.com/jobs")

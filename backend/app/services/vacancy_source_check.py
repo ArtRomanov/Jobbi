@@ -10,7 +10,7 @@ import httpx
 import structlog
 from bs4 import BeautifulSoup
 
-from app.discovery.fetchers import greenhouse, lever
+from app.discovery.fetchers import greenhouse, lever, teamtailor
 from app.discovery.fetchers.errors import BoardReadError
 
 logger = structlog.get_logger()
@@ -166,3 +166,26 @@ async def check_lever_board(kind: str, company: str) -> str:
         )
         raise BoardUnreadableError from exc
     return lever.display_name_from_slug(company)[:MAX_DISPLAY_NAME_LENGTH]
+
+
+async def fetch_teamtailor_board_name(subdomain: str) -> str:
+    """Check that the Teamtailor feed is readable and return the company name.
+
+    Raises:
+        BoardUnreadableError: unknown board (404), network error, timeout, a
+            malformed or untitled feed, or the 10 s total budget ran out.
+    """
+    try:
+        async with (
+            asyncio.timeout(CHECK_TIMEOUT_SECONDS),
+            httpx.AsyncClient(timeout=CHECK_TIMEOUT_SECONDS) as client,
+        ):
+            name = await teamtailor.fetch_board_name(client, subdomain)
+    except (TimeoutError, BoardReadError) as exc:
+        logger.warning(
+            "teamtailor_board_check_failed",
+            subdomain=subdomain,
+            error=getattr(exc, "reason", type(exc).__name__),
+        )
+        raise BoardUnreadableError from exc
+    return name[:MAX_DISPLAY_NAME_LENGTH]
