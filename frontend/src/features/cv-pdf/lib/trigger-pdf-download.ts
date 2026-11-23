@@ -1,3 +1,7 @@
+// Some browsers start reading the blob only after click() returns; revoking
+// the object URL right away can cancel the download.
+const REVOKE_DELAY_MS = 1000;
+
 /** Saves a PDF blob in the browser under `fileName`. */
 export function triggerPdfDownload(blob: Blob, fileName: string): void {
   const url = URL.createObjectURL(blob);
@@ -7,5 +11,5 @@ export function triggerPdfDownload(blob: Blob, fileName: string): void {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  setTimeout(() => URL.revokeObjectURL(url), REVOKE_DELAY_MS);
 }

@@ -36,6 +36,36 @@ function stripTrailingNewlines(raw: string): string {
   return raw.replace(/\n+$/, "");
 }
 
+const NAMED_ENTITIES: Readonly<Record<string, string>> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+};
+const ENTITY_PATTERN = /&(?:#(\d{1,7})|#[xX]([0-9a-fA-F]{1,6})|(amp|lt|gt|quot));/g;
+
+function decodeCodePoint(codePoint: number, original: string): string {
+  const isValid =
+    codePoint > 0 &&
+    codePoint <= 0x10ffff &&
+    !(codePoint >= 0xd800 && codePoint <= 0xdfff);
+  return isValid ? String.fromCodePoint(codePoint) : original;
+}
+
+/**
+ * Decodes only the basic HTML entities (&amp; &lt; &gt; &quot;, &#NN; and
+ * &#xNN;) for DISPLAY text. Never applied to link targets: hrefs are checked
+ * by `isSafeCvLinkUrl` exactly as typed, so "&#106;avascript:" stays unsafe.
+ */
+function decodeBasicEntities(text: string): string {
+  if (!text.includes("&")) return text;
+  return text.replace(ENTITY_PATTERN, (match, dec?: string, hex?: string, name?: string) => {
+    if (dec !== undefined) return decodeCodePoint(Number.parseInt(dec, 10), match);
+    if (hex !== undefined) return decodeCodePoint(Number.parseInt(hex, 16), match);
+    return (name !== undefined && NAMED_ENTITIES[name]) || match;
+  });
+}
+
 function isHeadingLevel(depth: number): depth is CvHeadingLevel {
   return depth === 1 || depth === 2 || depth === 3;
 }
@@ -60,7 +90,7 @@ function walkInline(tokens: readonly Token[]): CvInline[] {
         if (text.tokens && text.tokens.length > 0) {
           for (const child of walkInline(text.tokens)) pushInline(out, child);
         } else {
-          pushInline(out, { kind: "text", text: text.text });
+          pushInline(out, { kind: "text", text: decodeBasicEntities(text.text) });
         }
         break;
       }
@@ -135,6 +165,9 @@ function walkBlocks(tokens: readonly Token[]): CvBlock[] {
   for (const token of tokens) {
     switch (token.type) {
       case "space":
+      // Reference definitions ("[1]: https://…") only feed reference-style
+      // links; like in rendered Markdown they are not printed themselves.
+      case "def":
         break;
       case "heading": {
         const heading = token as Tokens.Heading;

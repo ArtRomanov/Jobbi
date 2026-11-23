@@ -190,4 +190,64 @@ describe("parseCvMarkdown", () => {
       },
     ]);
   });
+
+  it.each([
+    "[x](&#106;avascript:alert(1))",
+    "[x](&#x6A;avascript:alert(1))",
+    "[x](java&#x73;cript:alert(1))",
+    "[x](javascript&colon;alert(1))",
+    "[x](&#100;ata:text/html,hi)",
+  ])("keeps entity-encoded unsafe scheme %j as plain text", (markdown) => {
+    expect(parseCvMarkdown(markdown)).toEqual([{ kind: "paragraph", children: [text(markdown)] }]);
+  });
+
+  it("resolves reference-style links and does not print their definitions", () => {
+    expect(parseCvMarkdown("See [my site][1].\n\n[1]: https://jane.dev")).toEqual([
+      {
+        kind: "paragraph",
+        children: [
+          text("See "),
+          { kind: "link", href: "https://jane.dev", children: [text("my site")] },
+          text("."),
+        ],
+      },
+    ]);
+  });
+
+  it("keeps a reference-style link with an unsafe definition as plain text", () => {
+    expect(parseCvMarkdown("[click][x]\n\n[x]: javascript:alert(1)")).toEqual([
+      { kind: "paragraph", children: [text("[click][x]")] },
+    ]);
+  });
+
+  it("parses <https://…> and <mailto:…> autolinks", () => {
+    expect(parseCvMarkdown("<https://jane.dev/cv> <mailto:jane@example.com>")).toEqual([
+      {
+        kind: "paragraph",
+        children: [
+          { kind: "link", href: "https://jane.dev/cv", children: [text("https://jane.dev/cv")] },
+          text(" "),
+          { kind: "link", href: "mailto:jane@example.com", children: [text("mailto:jane@example.com")] },
+        ],
+      },
+    ]);
+  });
+
+  it("decodes basic HTML entities in displayed text", () => {
+    expect(parseCvMarkdown("R&amp;D &lt;team&gt; &quot;Q&quot; &#39;s&#39; &#1046; &#x416;")).toEqual([
+      { kind: "paragraph", children: [text(`R&D <team> "Q" 's' Ж Ж`)] },
+    ]);
+  });
+
+  it("leaves named entities other than the basic ones as typed", () => {
+    expect(parseCvMarkdown("&nbsp; &copy; &#99999999;")).toEqual([
+      { kind: "paragraph", children: [text("&nbsp; &copy; &#99999999;")] },
+    ]);
+  });
+
+  it("shows invalid numeric code points as the replacement character (CommonMark)", () => {
+    expect(parseCvMarkdown("&#0; &#xD800;")).toEqual([
+      { kind: "paragraph", children: [text("\uFFFD \uFFFD")] },
+    ]);
+  });
 });
