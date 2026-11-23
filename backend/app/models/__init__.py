@@ -1,5 +1,6 @@
 from app.core.database import Base
 from app.models.application import Application, ApplicationStatusHistory
+from app.models.chat_change_card import ChatChangeCard
 from app.models.chat_message import ChatMessage
 from app.models.cv import Cv
 from app.models.password_reset import PasswordResetToken
@@ -16,6 +17,7 @@ __all__ = [
     "Application",
     "ApplicationStatusHistory",
     "Base",
+    "ChatChangeCard",
     "ChatMessage",
     "Cv",
     "PasswordResetToken",

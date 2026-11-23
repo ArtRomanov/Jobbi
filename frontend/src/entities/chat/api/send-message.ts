@@ -1,18 +1,46 @@
+import { parseCardsEvent } from "../lib/is-change-card";
+import type { ChangeCard } from "../model/types";
+
 const baseUrl =
   import.meta.env.VITE_API_URL ?? "http://localhost:8000";
+
+export interface ChatStreamHandlers {
+  onToken: (text: string) => void;
+  /** CV change cards of the reply, sent after the text and before `done`. */
+  onCards: (cards: ChangeCard[]) => void;
+  onDone: () => void;
+  onError: (detail: string) => void;
+}
+
+/**
+ * The backend JSON-encodes frame payloads: `token` is `{"text": "..."}`,
+ * `error` is `{"detail": "..."}`. Falls back to the raw data for a plain frame.
+ */
+function readField(data: string, key: "text" | "detail"): string {
+  try {
+    const parsed: unknown = JSON.parse(data);
+    if (typeof parsed === "object" && parsed !== null && key in parsed) {
+      const value = (parsed as Record<string, unknown>)[key];
+      if (typeof value === "string") return value;
+    }
+  } catch {
+    // Not JSON: use the data as is
+  }
+  return data;
+}
 
 /**
  * Send a chat message and consume the SSE streaming response.
  *
  * Uses raw fetch() instead of apiClient because the response is an SSE stream,
  * not JSON. Each SSE frame has an `event:` line and a `data:` line.
+ * Events: `token` (`{"text"}`), `cards` (JSON `ChangeCard[]`, always sent
+ * before `done`, possibly `[]`), `done`, `error` (`{"detail"}`).
  */
 export function sendChatMessage(
   applicationId: string,
   content: string,
-  onToken: (text: string) => void,
-  onDone: () => void,
-  onError: (detail: string) => void,
+  { onToken, onCards, onDone, onError }: ChatStreamHandlers,
 ): AbortController {
   const controller = new AbortController();
 
@@ -73,13 +101,16 @@ export function sendChatMessage(
 
           switch (eventType) {
             case "token":
-              onToken(data);
+              onToken(readField(data, "text"));
+              break;
+            case "cards":
+              onCards(parseCardsEvent(data));
               break;
             case "done":
               onDone();
               return;
             case "error":
-              onError(data || "Stream error");
+              onError(readField(data, "detail") || "Stream error");
               return;
           }
         }

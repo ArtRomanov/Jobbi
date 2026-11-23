@@ -1,18 +1,23 @@
-import { useEffect, useRef } from "react";
-import type { ChatMessage } from "@/entities/chat";
+import { Fragment, useEffect, useRef } from "react";
+import type { ChangeCard, ChatMessage } from "@/entities/chat";
 import { colors } from "@/shared/ui";
+import { CardList } from "./card-list";
 import { MessageBubble } from "./message-bubble";
 
 interface ChatWindowProps {
+  applicationId: string;
   messages: ChatMessage[];
   streamingContent: string | null;
   isLoading: boolean;
+  onCardUpdated: (card: ChangeCard) => void;
 }
 
 export function ChatWindow({
+  applicationId,
   messages,
   streamingContent,
   isLoading,
+  onCardUpdated,
 }: ChatWindowProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -66,20 +71,25 @@ export function ChatWindow({
       )}
 
       {messages.map((msg) => (
-        <MessageBubble
-          key={msg.id}
-          role={msg.role as "user" | "assistant"}
-          content={msg.content}
-          createdAt={msg.created_at}
-        />
+        <Fragment key={msg.id}>
+          {/* A reply can be only a tool call: cards without text, so no empty bubble */}
+          {msg.content.trim() !== "" || !msg.cards?.length ? (
+            <MessageBubble
+              role={msg.role as "user" | "assistant"}
+              content={msg.content}
+              createdAt={msg.created_at}
+            />
+          ) : null}
+          <CardList
+            applicationId={applicationId}
+            cards={msg.cards}
+            onCardUpdated={onCardUpdated}
+          />
+        </Fragment>
       ))}
 
       {streamingContent !== null && (
-        <MessageBubble
-          role="assistant"
-          content={streamingContent}
-          isStreaming
-        />
+        <MessageBubble role="assistant" content={streamingContent} isStreaming />
       )}
 
       <div ref={bottomRef} />

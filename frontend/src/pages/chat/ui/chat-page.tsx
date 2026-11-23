@@ -9,9 +9,16 @@ import {
   clearChatHistory,
   sendChatMessage,
   getChatDraft,
+  type ChangeCard,
   type ChatMessage,
 } from "@/entities/chat";
-import { ChatWindow, ChatInput, QuickActionBar } from "@/features/chat-interface";
+import {
+  ChatWindow,
+  ChatInput,
+  QuickActionBar,
+  mergeCardStates,
+  replaceCardInMessages,
+} from "@/features/chat-interface";
 import { Button, colors, fonts, useToast } from "@/shared/ui";
 
 /**
@@ -39,6 +46,9 @@ export function ChatPage() {
 
   // Keep a ref to the abort controller so we can cancel on unmount
   const abortRef = useRef<AbortController | null>(null);
+  // Text of the reply being streamed, and whether it already moved into `messages`
+  const streamedTextRef = useRef("");
+  const replyCommittedRef = useRef(false);
 
   // Fetch application detail and chat history in parallel on mount
   useEffect(() => {
@@ -100,6 +110,8 @@ export function ChatPage() {
 
       setIsSending(true);
       setStreamingContent("");
+      streamedTextRef.current = "";
+      replyCommittedRef.current = false;
 
       // Optimistically add user message to the list
       const optimisticUserMsg: ChatMessage = {
@@ -108,34 +120,78 @@ export function ChatPage() {
         role: "user",
         content,
         created_at: new Date().toISOString(),
+        cards: [],
       };
       setMessages((prev) => [...prev, optimisticUserMsg]);
 
-      abortRef.current = sendChatMessage(
-        applicationId,
-        content,
-        (token) => {
+      abortRef.current = sendChatMessage(applicationId, content, {
+        onToken: (token) => {
+          streamedTextRef.current += token;
           setStreamingContent((prev) => (prev ?? "") + token);
         },
-        () => {
+        onCards: (cards) => {
+          // The backend always sends `cards` before `done`, often as []
+          const messageId = cards[0]?.message_id;
+          if (!messageId) return;
+          // The text is complete by now: move the reply into `messages` under its
+          // persisted id, so the history reload keeps the same React keys and an
+          // Accept/Reject started before `done` keeps its state.
+          replyCommittedRef.current = true;
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: messageId,
+              application_id: applicationId,
+              role: "assistant",
+              content: streamedTextRef.current,
+              created_at: new Date().toISOString(),
+              cards,
+            },
+          ]);
+          setStreamingContent(null);
+        },
+        onDone: () => {
+          // Keep the finished reply on screen until the history reload replaces it
+          const text = streamedTextRef.current;
+          if (!replyCommittedRef.current && text !== "") {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: `temp-reply-${Date.now()}`,
+                application_id: applicationId,
+                role: "assistant",
+                content: text,
+                created_at: new Date().toISOString(),
+                cards: [],
+              },
+            ]);
+          }
           setStreamingContent(null);
           setIsSending(false);
           // Re-fetch history to get persisted messages from the server
           getChatHistory(applicationId)
-            .then((history) => setMessages(history))
+            // A card decided while the reload was in flight keeps its new state
+            .then((history) =>
+              setMessages((prev) => mergeCardStates(prev, history)),
+            )
             .catch(() => {
               // History refresh failed — keep optimistic messages
             });
         },
-        (detail) => {
+        onError: (detail) => {
           setStreamingContent(null);
           setIsSending(false);
           showToast(detail, "error");
         },
-      );
+      });
     },
     [applicationId, isSending, showToast],
   );
+
+  // A card was decided (or found stale): swap it into its message
+  const handleCardUpdated = useCallback((card: ChangeCard) => {
+    setMessages((prev) => replaceCardInMessages(prev, card));
+  }, []);
 
   const handleClearHistory = useCallback(async (): Promise<void> => {
     if (!applicationId) return;
@@ -285,9 +341,11 @@ export function ChatPage() {
 
       {/* Messages area */}
       <ChatWindow
+        applicationId={applicationId}
         messages={messages}
         streamingContent={streamingContent}
         isLoading={isLoadingHistory}
+        onCardUpdated={handleCardUpdated}
       />
 
       {/* Quick actions */}

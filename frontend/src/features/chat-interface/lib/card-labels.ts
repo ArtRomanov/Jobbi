@@ -1,0 +1,35 @@
+import type { ChangeCard } from "@/entities/chat";
+
+/** How many characters of the anchor line the "Added after:" label shows. */
+export const ANCHOR_PREVIEW_LENGTH = 40;
+
+function previewAnchor(anchor: string): string {
+  const firstLine = anchor.trim().split("\n")[0]?.trim() ?? "";
+  if (firstLine.length <= ANCHOR_PREVIEW_LENGTH) return firstLine;
+  // Cut at a word boundary when there is one ("first words of the line")
+  const cut = firstLine.slice(0, ANCHOR_PREVIEW_LENGTH);
+  const lastSpace = cut.lastIndexOf(" ");
+  const words =
+    firstLine[ANCHOR_PREVIEW_LENGTH] !== " " && lastSpace > 0
+      ? cut.slice(0, lastSpace)
+      : cut;
+  return `${words.trimEnd()}…`;
+}
+
+/** Where an insertion goes, e.g. "Added after: ## Skills". */
+export function getInsertLabel(
+  card: Pick<ChangeCard, "position" | "anchor_text">,
+): string {
+  switch (card.position) {
+    case "start":
+      return "Added at the start";
+    case "end":
+      return "Added at the end";
+    case "after_line": {
+      const anchor = card.anchor_text ? previewAnchor(card.anchor_text) : "";
+      return anchor ? `Added after: ${anchor}` : "Added";
+    }
+    default:
+      return "Added";
+  }
+}
