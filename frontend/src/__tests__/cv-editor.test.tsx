@@ -1,6 +1,6 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { http, HttpResponse } from "msw";
+import { delay, http, HttpResponse } from "msw";
 import { CvEditorPage } from "@/pages/cv-editor";
 import { downloadCvTextPdf } from "@/features/cv-pdf";
 import { CV_CONTENT_MAX_LENGTH } from "@/features/cv-text-editor";
@@ -196,21 +196,85 @@ describe("CvEditorPage — edit", () => {
     expect(textArea()).toHaveValue(`${mockCvs[0]!.content}\nUnsaved`);
   });
 
-  it("exports the saved CV text to PDF", async () => {
+  it("exports the current draft, unsaved changes included, to PDF", async () => {
     const user = userEvent.setup();
     renderEditor("/cvs/cv-1/edit");
     await screen.findByDisplayValue("Software Engineer CV");
 
+    await user.clear(nameInput());
+    await user.type(nameInput(), " Draft name ");
+    await user.type(textArea(), "\nNot saved yet");
     await user.click(screen.getByRole("button", { name: "Export PDF" }));
 
     expect(downloadCvTextPdf).toHaveBeenCalledWith({
-      name: "Software Engineer CV",
-      content: mockCvs[0]!.content,
+      name: "Draft name",
+      content: `${mockCvs[0]!.content}\nNot saved yet`,
     });
+  });
+
+  it("shows no Export PDF button while the CV is loading", async () => {
+    server.use(
+      http.get(CV_URL, async () => {
+        await delay(50);
+        return HttpResponse.json(mockCvs[0]);
+      }),
+    );
+    renderEditor("/cvs/cv-1/edit");
+
+    expect(screen.getByText("Loading...")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Export PDF" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Export PDF" })).toBeInTheDocument();
+  });
+
+  it("sends one request when Save is double-clicked", async () => {
+    const user = userEvent.setup();
+    let patches = 0;
+    server.use(
+      http.patch(CV_URL, async ({ request }) => {
+        patches += 1;
+        const body = (await request.json()) as { version: number };
+        await delay(50);
+        return HttpResponse.json({ ...mockCvs[0]!, ...body, version: body.version + 1 });
+      }),
+    );
+    renderEditor("/cvs/cv-1/edit");
+    await screen.findByDisplayValue("Software Engineer CV");
+
+    await user.dblClick(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText("CV saved")).toBeInTheDocument();
+    expect(patches).toBe(1);
   });
 });
 
 describe("CvEditorPage — text limit", () => {
+  it("leaves a paste that fits to the browser, so undo keeps working", () => {
+    renderEditor("/cvs/new");
+    const field = textArea();
+    field.focus();
+
+    const notCancelled = fireEvent.paste(field, {
+      clipboardData: { getData: () => "short text" },
+    });
+
+    expect(notCancelled).toBe(true);
+  });
+
+  it("intercepts a paste that does not fit", () => {
+    renderEditor("/cvs/new");
+    const field = textArea();
+    fireEvent.change(field, { target: { value: "a".repeat(CV_CONTENT_MAX_LENGTH - 1) } });
+    field.focus();
+    field.setSelectionRange(field.value.length, field.value.length);
+
+    const notCancelled = fireEvent.paste(field, {
+      clipboardData: { getData: () => "bc" },
+    });
+
+    expect(notCancelled).toBe(false);
+    expect(field.value).toHaveLength(CV_CONTENT_MAX_LENGTH);
+  });
+
   it("cuts pasted text to the 20 000 character limit", async () => {
     const user = userEvent.setup();
     renderEditor("/cvs/new");

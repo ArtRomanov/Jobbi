@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { createCv, getCv, updateCv, type Cv } from "@/entities/cv";
 import { CvTextEditor, type CvTextEditorValues } from "@/features/cv-text-editor";
 import { downloadCvTextPdf } from "@/features/cv-pdf";
-import { PageCard, PageHeader, Button, colors, useToast } from "@/shared/ui";
+import { PageCard, PageHeader, colors, useToast } from "@/shared/ui";
 import { handleApiError } from "@/shared/api";
 
 interface EditorSeed {
@@ -11,12 +11,10 @@ interface EditorSeed {
   values: CvTextEditorValues;
 }
 
-let newEditorCount = 0;
-
-function toEditorSeed(cv: Cv | null): EditorSeed {
-  if (cv) return { key: cv.id, values: { name: cv.name, content: cv.content } };
-  newEditorCount += 1;
-  return { key: `new-${newEditorCount}`, values: { name: "", content: "" } };
+function toEditorSeed(cv: Cv | null, newKey: string): EditorSeed {
+  return cv
+    ? { key: cv.id, values: { name: cv.name, content: cv.content } }
+    : { key: newKey, values: { name: "", content: "" } };
 }
 
 /**
@@ -31,25 +29,35 @@ export function CvEditorPage() {
   const { showToast } = useToast();
 
   const isEditMode = Boolean(id);
-  // The last saved (or loaded) CV; its `version` goes with the next PATCH
+  // The last saved (or loaded) CV; its `version` goes with the next PATCH.
+  // State drives rendering; the ref is what the effect and the handlers read,
+  // so neither re-runs on save. Both change only through `setSavedCv`.
   const [cv, setCv] = useState<Cv | null>(null);
-  // What the editor is mounted with. Changes only when a different CV loads,
-  // never on save, so saving keeps the editor (and the user's draft) as is.
-  const [editorSeed, setEditorSeed] = useState(() => toEditorSeed(null));
+  const cvRef = useRef<Cv | null>(null);
+  const setSavedCv = useCallback((next: Cv | null) => {
+    cvRef.current = next;
+    setCv(next);
+  }, []);
+  // What the editor is mounted with. Changes only when a different CV loads
+  // (or a fresh /cvs/new starts), never on save, so saving keeps the editor
+  // and the user's draft as they are.
+  const [editorSeed, setEditorSeed] = useState(() => toEditorSeed(null, "new-0"));
+  const newEditorCountRef = useRef(0);
   const [isLoading, setIsLoading] = useState(isEditMode);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  // Read in the effect and the save handler, so neither re-runs on save
-  const cvRef = useRef(cv);
-  cvRef.current = cv;
+  // Blocks a second save until the first settles (`isSaving` lags a render)
+  const isSavingRef = useRef(false);
 
   useEffect(() => {
     if (!id) {
       // Same page instance moved to /cvs/new: start a fresh CV
+      setError(null);
+      setIsLoading(false);
       if (cvRef.current) {
-        cvRef.current = null;
-        setCv(null);
-        setEditorSeed(toEditorSeed(null));
+        setSavedCv(null);
+        newEditorCountRef.current += 1;
+        setEditorSeed(toEditorSeed(null, `new-${newEditorCountRef.current}`));
       }
       return;
     }
@@ -62,8 +70,8 @@ export function CvEditorPage() {
     getCv(id)
       .then((data) => {
         if (cancelled) return;
-        setCv(data);
-        setEditorSeed(toEditorSeed(data));
+        setSavedCv(data);
+        setEditorSeed(toEditorSeed(data, ""));
         setIsLoading(false);
       })
       .catch((err: unknown) => {
@@ -75,22 +83,23 @@ export function CvEditorPage() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, setSavedCv]);
 
   const handleSave = useCallback(
     async (values: CvTextEditorValues): Promise<void> => {
+      if (isSavingRef.current) return;
+      isSavingRef.current = true;
       setIsSaving(true);
       try {
         const current = cvRef.current;
         if (current) {
           const saved = await updateCv(current.id, { ...values, version: current.version });
-          setCv(saved);
+          setSavedCv(saved);
           showToast("CV saved", "success");
         } else {
           const created = await createCv(values);
           // Set before navigating so the load effect for the new id is skipped
-          cvRef.current = created;
-          setCv(created);
+          setSavedCv(created);
           showToast("CV saved", "success");
           // The router keeps this page (and the editor) mounted across the
           // /cvs/new → /cvs/:id/edit move, so the draft and focus stay put
@@ -99,21 +108,24 @@ export function CvEditorPage() {
       } catch (err: unknown) {
         handleApiError(err, showToast);
       } finally {
+        isSavingRef.current = false;
         setIsSaving(false);
       }
     },
-    [navigate, showToast],
+    [navigate, setSavedCv, showToast],
   );
 
-  const handleExport = useCallback(async () => {
-    if (!cv) return;
-    try {
-      await downloadCvTextPdf({ name: cv.name, content: cv.content });
-    } catch (err: unknown) {
-      handleApiError(err, showToast);
-    }
-  }, [cv, showToast]);
-
+  // Exports what the user sees in the editor, saved or not
+  const handleExport = useCallback(
+    async (values: CvTextEditorValues): Promise<void> => {
+      try {
+        await downloadCvTextPdf(values);
+      } catch (err: unknown) {
+        handleApiError(err, showToast);
+      }
+    },
+    [showToast],
+  );
 
   return (
     <PageCard maxWidth="1120px">
@@ -129,25 +141,10 @@ export function CvEditorPage() {
       >
         ← Back to CVs
       </Link>
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          gap: "0.75rem",
-          justifyContent: "space-between",
-          alignItems: "flex-start",
-        }}
-      >
-        <PageHeader
-          title={isEditMode ? "Edit CV" : "Create New CV"}
-          subtitle="Write your CV as text; the preview shows how it will look."
-        />
-        {isEditMode && cv && (
-          <Button type="button" variant="secondary" onClick={() => void handleExport()}>
-            Export PDF
-          </Button>
-        )}
-      </div>
+      <PageHeader
+        title={isEditMode ? "Edit CV" : "Create New CV"}
+        subtitle="Write your CV as text; the preview shows how it will look."
+      />
 
       {isLoading && (
         <p style={{ color: colors.textMuted, fontSize: "0.875rem" }}>Loading...</p>
@@ -161,6 +158,7 @@ export function CvEditorPage() {
           initialValues={editorSeed.values}
           onSave={handleSave}
           isSaving={isSaving}
+          onExport={isEditMode && cv ? handleExport : undefined}
         />
       )}
     </PageCard>

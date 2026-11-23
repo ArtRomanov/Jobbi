@@ -29,6 +29,11 @@ interface CvTextEditorProps {
   /** Called with the trimmed name and the text. Errors are the caller's to show. */
   onSave: (values: CvTextEditorValues) => Promise<void>;
   isSaving: boolean;
+  /**
+   * When given, an "Export PDF" button exports the current draft (unsaved
+   * changes included; the name trimmed, possibly empty).
+   */
+  onExport?: (values: CvTextEditorValues) => void | Promise<void>;
 }
 
 /**
@@ -36,7 +41,7 @@ interface CvTextEditorProps {
  * "Edit" / "Preview" tabs on phone width. A `feature/` because it is the
  * user's "edit my CV" interaction; saving itself is wired by the page.
  */
-export function CvTextEditor({ initialValues, onSave, isSaving }: CvTextEditorProps) {
+export function CvTextEditor({ initialValues, onSave, isSaving, onExport }: CvTextEditorProps) {
   const draft = useCvTextDraft(initialValues);
   const isPhone = useMediaQuery(PHONE_MEDIA_QUERY);
   const [tab, setTab] = useState<EditorTab>("edit");
@@ -90,10 +95,19 @@ export function CvTextEditor({ initialValues, onSave, isSaving }: CvTextEditorPr
         </div>
       )}
 
-      <div style={{ marginTop: "1rem" }}>
+      <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem" }}>
         <Button type="submit" loading={isSaving}>
           Save
         </Button>
+        {onExport ? (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => void onExport({ name: draft.name.trim(), content: draft.content })}
+          >
+            Export PDF
+          </Button>
+        ) : null}
       </div>
     </form>
   );

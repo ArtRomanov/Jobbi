@@ -13,9 +13,9 @@ interface CvContentFieldProps {
 }
 
 /**
- * The one textarea for the whole CV. `maxLength` stops typing at the limit;
- * pasting is handled here so a too-long paste is cut to fit instead of being
- * dropped (browsers differ on that).
+ * The one textarea for the whole CV. `maxLength` stops typing at the limit.
+ * A paste that would pass the limit is intercepted and cut to fit (browsers
+ * differ on what they do there); any other paste stays native.
  */
 export function CvContentField({ value, onChange }: CvContentFieldProps) {
   const hintId = useId();
@@ -33,6 +33,10 @@ export function CvContentField({ value, onChange }: CvContentFieldProps) {
   function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>): void {
     const pasted = event.clipboardData.getData("text/plain");
     const { selectionStart, selectionEnd } = event.currentTarget;
+    // A paste that fits stays native, so the browser's undo (Ctrl+Z) keeps it
+    const lengthAfter = value.length - (selectionEnd - selectionStart) + pasted.length;
+    if (lengthAfter <= CV_CONTENT_MAX_LENGTH) return;
+
     const next = insertTextWithinLimit(
       value,
       pasted,
