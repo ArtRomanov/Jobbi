@@ -88,9 +88,9 @@ Conventions for every slice:
 
 ---
 
-- [ ] **Slice 5: Base CV, and "Add & tailor CV" starts from it**
-  - [ ] Migration: `users.base_cv_id` (nullable, named FK, `use_alter`), NULL for everyone. **[Agent: database-expert]**
-  - [ ] Backend:
+- [x] **Slice 5: Base CV, and "Add & tailor CV" starts from it**
+  - [x] Migration: `users.base_cv_id` (nullable, named FK, `use_alter`), NULL for everyone. **[Agent: database-expert]**
+  - [x] Backend:
     - `POST /cvs/{id}/make-base`;
     - `CvRead.is_base`, with `GET /cvs` ordered base first;
     - `delete_cv` nulls `base_cv_id`;
@@ -98,7 +98,7 @@ Conventions for every slice:
     - add-to-tracker names the copy after the chosen CV, leaving out an empty company or role.
 
     Tests, including owner scoping and deleting the base. **[Agent: python-backend]**
-  - [ ] Frontend:
+  - [x] Frontend:
     - `features/cv-make-base` ("Make base", "Base CV updated" toast);
     - "Base" label on the CVs page and in the editor header;
     - no-base hint on the CVs page;
@@ -108,24 +108,24 @@ Conventions for every slice:
     - update `features/vacancy-actions/CLAUDE.md`.
 
     Tests. **[Agent: typescript-frontend]**
-  - [ ] Verify:
+  - [x] Verify:
     - with no base, the Inbox "Add to tracker" preselects nothing and "Add & tailor CV" is disabled until a CV is chosen;
     - after "Make base", the base is preselected and the copy is named after it, with no chaining;
     - deleting the base leaves no base;
     - uploading with no base makes the upload the base.
 
-    **[Agent: qa-tester]**
+    **[Agent: qa-tester]** _(2026-11-23: PR #28 together with Slice 6 — backend 1259 on 3.11/3.14, Vitest 480; review no P0/P1. In-browser flow pending the live check)_
 
 ---
 
-- [ ] **Slice 6: Tailored copies kept apart**
-  - [ ] Migration:
+- [x] **Slice 6: Tailored copies kept apart**
+  - [x] Migration:
     - add `cvs.kind` (default `own`) and `cvs.tailored_for_application_id` (nullable FK);
     - classify old copies with the rule from tech spec §2.1;
     - **first run the rule as a dry-run SELECT on the live DB and show the result to the user** (it must list the Kleos, Codery and Welldin copies and no CV linked by hand).
 
     **[Agent: database-expert]**
-  - [ ] Backend:
+  - [x] Backend:
     - add-to-tracker sets `kind=tailored` and `tailored_for_application_id`;
     - `make-base` on a tailored copy sets `kind=own` and keeps the link;
     - `CvRead.tailored_for` / `tailored_application_deleted`;
@@ -134,7 +134,7 @@ Conventions for every slice:
     - duplicate is always `own`.
 
     Tests. **[Agent: python-backend]**
-  - [ ] Frontend:
+  - [x] Frontend:
     - CVs page sections "My CVs" / "Tailored for applications";
     - "Company — Role" link to `/?application=<id>` or "Application deleted";
     - empty states;
@@ -143,15 +143,15 @@ Conventions for every slice:
     - application panel lists own CVs first.
 
     Tests. **[Agent: typescript-frontend]**
-  - [ ] Code review: `form-select` API change, the sections composition in `pages/cvs`. **[Agent: react-code-reviewer]**
-  - [ ] Verify:
+  - [x] Code review: `form-select` API change, the sections composition in `pages/cvs`. **[Agent: react-code-reviewer]**
+  - [x] Verify:
     - after the migration, the live user's Kleos, Codery and Welldin copies are under "Tailored for applications";
     - a CV linked by hand stays in "My CVs";
     - a new "Add & tailor CV" copy lands in the tailored section;
     - deleting its application shows "Application deleted";
     - making a copy the base moves it to "My CVs".
 
-    **[Agent: qa-tester]**
+    **[Agent: qa-tester]** _(2026-11-23: PR #28. Dry run on the live DB shown to the user; rule relaxed (no Inbox link required). Migration on a live-DB copy: exactly the Kleos, Codery and Welldin copies became tailored. In-browser check pending the live check)_
 
 ---
 
