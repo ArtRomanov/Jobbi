@@ -1,4 +1,5 @@
 import { http, HttpResponse } from "msw";
+import type { ChangeCard } from "@/entities/chat";
 import type { Cv } from "@/entities/cv";
 
 const BASE_URL = "http://localhost:8000";
@@ -42,6 +43,7 @@ export const mockChatMessages = [
     role: "user",
     content: "Help me prepare for my interview at Acme Corp.",
     created_at: "2026-03-01T10:00:00Z",
+    cards: [],
   },
   {
     id: "msg-2",
@@ -50,8 +52,55 @@ export const mockChatMessages = [
     content:
       "I'd be happy to help you prepare for your interview at Acme Corp! Let's start with some common questions.",
     created_at: "2026-03-01T10:01:00Z",
+    cards: [],
   },
 ];
+
+// ---------------------------------------------------------------------------
+// Chat change cards (spec 011 slice 7) — local contract until schema regen
+// ---------------------------------------------------------------------------
+
+export const mockChangeCards = {
+  replace: {
+    id: "card-replace",
+    op: "replace",
+    before_text: "## Summary\nExperienced software engineer.",
+    after_text: "## Summary\nSenior software engineer with 8 years in React.",
+    position: null,
+    anchor_text: null,
+    state: "pending",
+    cv_id: "cv-1",
+    message_id: "msg-2",
+    created_at: "2026-03-01T10:01:00Z",
+    decided_at: null,
+  },
+  insert: {
+    id: "card-insert",
+    op: "insert",
+    before_text: "",
+    after_text: "GraphQL, Node.js",
+    position: "after_line",
+    anchor_text: "## Skills",
+    state: "pending",
+    cv_id: "cv-1",
+    message_id: "msg-2",
+    created_at: "2026-03-01T10:01:00Z",
+    decided_at: null,
+  },
+  remove: {
+    id: "card-remove",
+    op: "remove",
+    before_text: "test@example.com · +1234567890 · Berlin, Germany",
+    after_text: "",
+    position: null,
+    anchor_text: null,
+    state: "pending",
+    cv_id: "cv-1",
+    message_id: "msg-2",
+    created_at: "2026-03-01T10:01:00Z",
+    decided_at: null,
+  },
+} as const satisfies Record<string, ChangeCard>;
 
 // ---------------------------------------------------------------------------
 // Telegram mock data
@@ -485,6 +534,36 @@ export const handlers = [
   http.get(`${BASE_URL}/api/v1/applications/:id/chat`, () => {
     return HttpResponse.json(mockChatMessages);
   }),
+
+  // POST /api/v1/applications/:id/chat/cards/:cardId/accept — apply a change card
+  http.post(
+    `${BASE_URL}/api/v1/applications/:id/chat/cards/:cardId/accept`,
+    ({ params }) => {
+      const base =
+        Object.values(mockChangeCards).find((c) => c.id === params.cardId) ??
+        mockChangeCards.replace;
+      return HttpResponse.json({
+        ...base,
+        state: "accepted",
+        decided_at: "2026-03-01T10:05:00Z",
+      });
+    },
+  ),
+
+  // POST /api/v1/applications/:id/chat/cards/:cardId/reject — reject a change card
+  http.post(
+    `${BASE_URL}/api/v1/applications/:id/chat/cards/:cardId/reject`,
+    ({ params }) => {
+      const base =
+        Object.values(mockChangeCards).find((c) => c.id === params.cardId) ??
+        mockChangeCards.replace;
+      return HttpResponse.json({
+        ...base,
+        state: "rejected",
+        decided_at: "2026-03-01T10:05:00Z",
+      });
+    },
+  ),
 
   // DELETE /api/v1/applications/:id/chat — clear chat history
   http.delete(`${BASE_URL}/api/v1/applications/:id/chat`, () => {
