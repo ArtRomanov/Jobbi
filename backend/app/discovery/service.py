@@ -8,7 +8,7 @@ database transaction is open. Every step is either
 Functions never hold an ORM object across a network call; they copy what they
 need into the frozen dataclasses below.
 
-Sources: Telegram channels, Greenhouse / Lever / Teamtailor boards
+Sources: Telegram channels, Greenhouse / Lever / Teamtailor / Ashby boards
 (`board_scan`) and web pages (`web_scan` listing, then a detail step that
 reads each new job's own page before the AI sees it).
 
@@ -120,11 +120,12 @@ PENDING_WITHOUT_DESCRIPTION_RETENTION = timedelta(days=7)
 _VISIBLE_STATES = ("new", "seen", "dismissed")
 
 # Keyed by `SourceReadError.reason` (Telegram), `BoardReadError.reason` and
-# the web listing outcomes (`unreachable`, `no_vacancies`).
+# the web listing outcomes (`unreachable`, `blocked`, `no_vacancies`).
 READ_ERROR_MESSAGES = {
     "private_or_deleted": "Channel is private or deleted",
     "not_found": "Job board not found",
     "unreachable": "Could not reach the source",
+    "blocked": "The site blocks automated readers",
     "no_vacancies": (
         "No vacancies found — check the link or the 'Job link contains' field"
     ),
@@ -1338,7 +1339,7 @@ async def _list_web_source(
             reason = "unreachable"
         except PageFetchError as exc:
             logger.info("Web source %s listing failed: %s", source.id, exc.reason)
-            reason = "unreachable"
+            reason = "blocked" if exc.reason == "blocked" else "unreachable"
         except Exception:
             # E.g. a parser bug on a hostile page: a failed read of this source.
             logger.exception("Web source %s listing failed unexpectedly", source.id)
