@@ -41,7 +41,8 @@ The user already has a CV — usually a PDF or Word file — and wants Jobbi to 
     - [ ] "Create New CV" opens the editor with an empty text area and the placeholder "Write your CV here, or upload a PDF/DOCX on the CVs page."
     - [ ] The CV text can be up to 20 000 characters, counting every character including spaces and line breaks. Typing stops at the limit, pasted text is cut to it, and a counter "N / 20 000" is shown once more than 18 000 characters are used.
     - [ ] The name is required, up to 255 characters; input stops at 255. A name that is empty or only spaces shows "Required" and blocks saving. Several CVs may have the same name.
-    - [ ] "Save" is active only when the name or the text differs from the saved version. After saving, the toast "CV saved" is shown. If saving fails, "Could not save the CV. Please try again." is shown and the user's changes stay in the editor.
+    - [ ] The editor has a "Base CV" switch (on for the base CV, off otherwise). Changing it is part of the unsaved changes and takes effect on "Save": switched on → this CV becomes the base and the previous base becomes an ordinary own CV; switched off on the current base → the user has no base CV. Jobbi never turns it on by itself.
+    - [ ] "Save" is active only when the name, the text or the "Base CV" switch differs from the saved version. After saving, the toast "CV saved" is shown ("CV saved and set as your base CV" when the switch made it the base, "CV saved. You have no base CV now." when the switch removed it). If saving fails, "Could not save the CV. Please try again." is shown and the user's changes stay in the editor.
     - [ ] If the CV was changed elsewhere after the editor opened it (for example, a change card was accepted in the AI chat, or the CV was saved in another tab), "Save" does not overwrite it and shows "This CV was changed elsewhere (for example in the AI chat). Reload to see the latest version." The user's unsaved text stays in the editor so they can copy it.
     - [ ] Leaving the editor with unsaved changes — by moving to another page of Jobbi, closing the tab or reloading — asks "You have unsaved changes. Leave without saving?" with "Leave" and "Stay" (closing or reloading uses the browser's own leave prompt).
     - [ ] The old form editor (separate fields for personal info, summary, work experience, education, skills and languages, used when creating and editing a CV) no longer exists anywhere in Jobbi.
@@ -85,10 +86,10 @@ The user already has a CV — usually a PDF or Word file — and wants Jobbi to 
 - **As a** user, **I want to** upload my existing CV as a PDF or DOCX, **so that** I don't retype it.
   - **Acceptance Criteria:**
     - [ ] The CVs page has an "Upload CV" button next to "Create New CV". It accepts one `.pdf` or `.docx` file at a time, up to 5 MB. While the file is processed, the button shows "Uploading…" and cannot be clicked again.
-    - [ ] Jobbi extracts the file's text in reading order (for multi-column layouts, column by column) and creates a new own CV named after the file without the extension, cut to 255 characters ("Uploaded CV" if nothing is left). The text is used as is: Jobbi does not reword, reorder or reformat it, and does not add markup. Original fonts, columns and images are not kept. Characters in the text that look like markup (for example a line starting with "- ") are shown formatted, like any typed text.
-    - [ ] After the upload, the editor of the new CV opens with the notice "Text extracted from your file. Check the line breaks and save." The CV already exists at that point; leaving without changes keeps it.
-    - [ ] If the user has no base CV, the uploaded CV becomes the base CV and the notice adds "This CV is now your base CV." If they already have one, the base does not change.
-    - [ ] The file type is judged by its content, not only by its name. A file that is not a real PDF or DOCX shows "Upload a PDF or DOCX file." A file over 5 MB shows "The file is larger than 5 MB." A file with no readable text (a scan, an image-only PDF, a password-protected file) shows "Could not read text from this file. Upload a PDF with selectable text or a DOCX." Any other failure shows "Could not upload this file. Please try again." In every error case no CV is created.
+    - [ ] Jobbi extracts the file's text in reading order (for multi-column layouts, column by column) and opens it as an unsaved draft of a new CV named after the file without the extension, cut to 255 characters ("Uploaded CV" if nothing is left). No CV is created until the user saves the draft. The text is used as is: Jobbi does not reword, reorder or reformat it, and does not add markup. Original fonts, columns and images are not kept. Characters in the text that look like markup (for example a line starting with "- ") are shown formatted, like any typed text.
+    - [ ] After the upload, the editor opens the draft with the notice "Text extracted from your file. Review it and save to add it to your CVs." and "Save" is active. Saving creates the CV (toast "CV saved"); leaving without saving asks "You have unsaved changes. Leave without saving?", and "Leave" discards the draft — nothing is added. Reloading the page with an unsaved draft triggers the browser's leave prompt; if the user reloads anyway, the draft is lost.
+    - [ ] Uploading never changes the base CV: the draft's "Base CV" switch starts off, even when the user has no base CV.
+    - [ ] The file type is judged by its content, not only by its name. A file that is not a real PDF or DOCX shows "Upload a PDF or DOCX file." A file over 5 MB shows "The file is larger than 5 MB." A file with no readable text (a scan, an image-only PDF, a password-protected file) shows "Could not read text from this file. Upload a PDF with selectable text or a DOCX." Any other failure shows "Could not upload this file. Please try again." In every error case no draft opens and no CV is created.
     - [ ] Text longer than 20 000 characters is cut to 20 000, and the notice adds "The text was longer than 20 000 characters and was cut."
     - [ ] The uploaded file itself is not stored; only the extracted text is kept.
 
@@ -96,11 +97,11 @@ The user already has a CV — usually a PDF or Word file — and wants Jobbi to 
 
 - **As a** user, **I want to** mark one CV as my base, **so that** tailoring always starts from the right version.
   - **Acceptance Criteria:**
-    - [ ] Each CV on the CVs page that is not the base has a "Make base" action. Using it makes that CV the base, shows the toast "Base CV updated", and the previous base (if any) becomes an ordinary own CV. At most one CV per user is the base at any time.
+    - [ ] The base can be set or removed with the "Base CV" switch in the editor (see 2.1). Each CV on the CVs page that is not the base also has a "Make base" action. Using it makes that CV the base, shows the toast "Base CV updated", and the previous base (if any) becomes an ordinary own CV. At most one CV per user is the base at any time.
     - [ ] The base CV is shown first on the CVs page with a "Base" label.
     - [ ] When the user has no base CV, the CVs page shows "Mark one of your CVs as base — "Add & tailor CV" will start from it." above "My CVs" (only when the user has at least one CV).
     - [ ] A tailored copy can also be made the base. It then becomes an own CV for good: it leaves "Tailored for applications", does not return there when another CV later becomes the base, and stays linked to its application.
-    - [ ] Deleting the base CV leaves the user with no base CV until they mark another one. Jobbi never picks a new base by itself (except on upload, see 2.3).
+    - [ ] Deleting the base CV leaves the user with no base CV until they mark another one. Jobbi never picks a new base by itself.
     - [ ] Each user's base CV is their own; one user's choice never affects another user.
 
 ### 2.5 CVs page: own CVs and tailored copies
@@ -111,6 +112,7 @@ The user already has a CV — usually a PDF or Word file — and wants Jobbi to 
     - [ ] Each tailored copy shows the application it was made for as "<Company> — <Role>". Clicking it opens the dashboard with that application's panel open. If that application was deleted, it shows "Application deleted" instead of the link.
     - [ ] Copies made by "Add & tailor CV" before this change (for example the ones made for Kleos, Codery and Welldin) appear under "Tailored for applications". CVs the user linked to an application by hand (by choosing a CV in the application panel) stay in "My CVs"; linking a CV by hand never makes it a tailored copy.
     - [ ] Open, duplicate, export to PDF and delete are available for own CVs and tailored copies alike. A duplicate is named "<name> (copy)" and is always an own CV.
+    - [ ] Every action that saves or removes something confirms it with a toast: "CV saved" (see 2.1), "CV duplicated", "CV deleted", "Base CV updated", and in the AI chat "Change applied to your CV" after Accept. Uploading shows "Uploading…" on the button while the file is read, then the draft notice in the editor (see 2.3).
     - [ ] Deleting a CV first asks for confirmation, as today ("Are you sure you want to delete "<name>"? Applications linked to it will be unlinked. This action cannot be undone."). If the CV was linked to an application, the application stays and simply has no CV linked.
 
 ### 2.6 "Add & tailor CV" starts from the base CV
@@ -153,8 +155,8 @@ The user already has a CV — usually a PDF or Word file — and wants Jobbi to 
 
 - Free-text CV editor with simple formatting, live preview, character limit, protection against losing unsaved or concurrent changes; removal of the form editor.
 - One-time conversion of every existing CV from form fields to text.
-- Upload of one PDF/DOCX (up to 5 MB) at a time into a new CV, text used as is.
-- One base CV per user: "Make base", the base on upload when none exists, no automatic base otherwise (including after the conversion).
+- Upload of one PDF/DOCX (up to 5 MB) at a time into an unsaved draft of a new CV, text used as is; the CV exists only after Save.
+- One base CV per user, set only explicitly: the "Base CV" switch in the editor or "Make base" on the CVs page; never automatic (not on upload, not after the conversion).
 - CVs page split into "My CVs" and "Tailored for applications", including copies made before this change; delete with confirmation.
 - "Add & tailor CV" preselecting the base CV, or nothing when there is none.
 - AI chat change cards for CV text passages, built for the first time here (spec 008's CV field edits are replaced by text edits).

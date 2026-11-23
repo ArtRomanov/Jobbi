@@ -172,3 +172,11 @@ New npm packages: `marked`, `diff`, and Noto font files committed under `fronten
   - edit in the editor while a card is accepted (conflict message);
   - export the PDF and check the Cyrillic.
 - **AI smoke:** a script like `scripts/smoke_evaluator.py` for `propose_cv_edit` on the real chat model.
+
+---
+
+## Addendum (2026-11-23, live-test follow-up)
+
+- Upload no longer creates a CV: the endpoint only extracts and returns `{name, content, truncated}`; the frontend opens an unsaved draft and the CV is created by the normal `POST /cvs` on Save.
+- The base CV is set only explicitly: an `is_base` field on `POST /cvs` / `PATCH /cvs/{id}` (applied in the same transaction as the save; `false` clears the base only when this CV is the current base) and the existing `POST /cvs/{id}/make-base`. No automatic assignment anywhere (`became_base` removed).
+- Every save/remove action shows a confirming toast (functional spec 2.5).

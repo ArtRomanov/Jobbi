@@ -210,3 +210,20 @@ Conventions for every slice:
     - conflict message.
 
     **[Agent: qa-tester]**
+
+---
+
+- [ ] **Slice 9 (live-test follow-up): upload as a draft, explicit base switch, save toasts**
+  - [ ] Backend:
+    - `POST /cvs/upload` becomes extract-only: returns `{name, content, truncated}` and creates nothing (rename the route to `POST /cvs/extract` or keep the path with a new response — pick one and update the contract);
+    - `POST /cvs` and `PATCH /cvs/{id}` accept an optional `is_base: bool` that sets or clears `users.base_cv_id` atomically with the save (clearing only if this CV is the current base);
+    - remove all automatic base assignment (upload `became_base`).
+
+    Tests. **[Agent: python-backend]**
+  - [ ] Frontend:
+    - Upload → `/cvs/new` with the extracted draft (name, content, truncated) in memory/router state, notice "Text extracted from your file. Review it and save to add it to your CVs.", Save active, unsaved guard on; "Leave" discards; reload loses the draft after the browser prompt;
+    - "Base CV" switch in the editor, part of dirty state, sent with Save; toasts "CV saved" / "CV saved and set as your base CV" / "CV saved. You have no base CV now.";
+    - toasts "CV duplicated", "CV deleted", "Change applied to your CV".
+
+    Tests. **[Agent: typescript-frontend]**
+  - [ ] Verify with the user: upload → draft → Leave adds nothing; upload → Save creates the CV, no base set; switch on + Save makes it base; toasts appear for every save/remove action. **[Agent: qa-tester]**
