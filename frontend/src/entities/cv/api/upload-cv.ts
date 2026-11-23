@@ -1,7 +1,10 @@
 import { apiClient } from "@/shared/api";
 import type { CvUploadResult } from "../model/types";
 
-/** Create a new own CV from a PDF or DOCX file (`POST /cvs/upload`). */
+/**
+ * Extract the text of a PDF or DOCX file (`POST /cvs/upload`). Creates
+ * nothing: the result opens as an unsaved draft in the editor.
+ */
 export async function uploadCv(file: File): Promise<CvUploadResult> {
   const form = new FormData();
   form.append("file", file);

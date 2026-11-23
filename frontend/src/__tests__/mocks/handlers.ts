@@ -72,6 +72,13 @@ export function makeMockCv(overrides: Partial<Cv> & Pick<Cv, "id" | "name">): Cv
 
 export const mockCvDetail = { ...mockCvs[0] };
 
+/** `POST /cvs/upload` response (spec 011 slice 9): the extracted text only. */
+export const mockUploadDraft = {
+  name: "resume",
+  content: "# Ivan Petrov\nFrontend developer",
+  truncated: false,
+};
+
 // ---------------------------------------------------------------------------
 // Chat mock data
 // ---------------------------------------------------------------------------
@@ -532,8 +539,15 @@ export const handlers = [
       created_at: "2026-03-10T10:00:00Z",
       updated_at: "2026-03-10T10:00:00Z",
       ...OWN_CV_FIELDS,
+      // `is_base: true` makes the new CV the base (spec 011 slice 9)
+      is_base: body.is_base === true,
     };
     return HttpResponse.json(newCv, { status: 201 });
+  }),
+
+  // POST /api/v1/cvs/upload — extract only: returns the draft, creates nothing
+  http.post(`${BASE_URL}/api/v1/cvs/upload`, () => {
+    return HttpResponse.json(mockUploadDraft);
   }),
 
   // GET /api/v1/cvs/:id — single CV detail
@@ -559,6 +573,7 @@ export const handlers = [
     if (typeof version !== "number") {
       return HttpResponse.json({ detail: "version is required" }, { status: 422 });
     }
+    // `is_base` (optional) sets or clears the base with the save; omitted = unchanged
     return HttpResponse.json({ ...cv, ...changes, version: version + 1 });
   }),
 

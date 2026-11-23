@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { delay, http, HttpResponse } from "msw";
 import { CvEditorPage } from "@/pages/cv-editor";
@@ -141,7 +141,7 @@ describe("CvEditorPage — create", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     expect(await screen.findByText("CV saved")).toBeInTheDocument();
-    expect(posts).toEqual([{ name: "My CV", content: "# Me" }]);
+    expect(posts).toEqual([{ name: "My CV", content: "# Me", is_base: false }]);
     await waitFor(() => expect(router.state.location.pathname).toBe("/cvs/cv-new/edit"));
     expect(await screen.findByRole("heading", { name: "Edit CV" })).toBeInTheDocument();
     expect(textArea()).toHaveValue("# Me");
@@ -264,42 +264,166 @@ describe("CvEditorPage — edit", () => {
   });
 });
 
-describe("CvEditorPage — upload notice", () => {
-  const NOTICE = "Text extracted from your file. Check the line breaks and save.";
+describe("CvEditorPage — Base CV switch", () => {
+  const HELP = 'Tailoring with "Add & tailor CV" starts from your base CV.';
 
-  it("shows the notice after an upload, once, and a reload does not bring it back", async () => {
-    const first = renderWithProviders(<CvEditorPage />, {
-      initialEntries: [
-        {
-          pathname: "/cvs/cv-1/edit",
-          state: { uploadNotice: { truncated: true, becameBase: false } },
-        },
-      ],
-      path: "/cvs/:id/edit",
-    });
+  function baseSwitch(): HTMLInputElement {
+    return screen.getByRole("switch", { name: "Base CV" }) as HTMLInputElement;
+  }
 
-    expect(screen.getByText(NOTICE)).toBeInTheDocument();
-    expect(
-      screen.getByText("The text was longer than 20 000 characters and was cut."),
-    ).toBeInTheDocument();
-    // The CV still loads under the notice, on the same URL
-    expect(await screen.findByDisplayValue("Software Engineer CV")).toBeInTheDocument();
-    await waitFor(() => expect(first.router.state.location.state).toBeNull());
-    expect(first.router.state.location.pathname).toBe("/cvs/cv-1/edit");
-    expect(screen.getByText(NOTICE)).toBeInTheDocument();
+  function saveButton(): HTMLButtonElement {
+    return screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+  }
 
-    const reloadAt = first.router.state.location;
+  /** Records each PATCH body and echoes it onto the CV, like the real API. */
+  function recordPatches(cv: (typeof mockCvs)[number]): Record<string, unknown>[] {
+    const patches: Record<string, unknown>[] = [];
+    server.use(
+      http.patch(CV_URL, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown> & { version: number };
+        patches.push(body);
+        const { version, ...changes } = body;
+        return HttpResponse.json({ ...cv, ...changes, version: version + 1 });
+      }),
+    );
+    return patches;
+  }
+
+  it("starts from is_base, with its helper text; off for a new CV", async () => {
+    const first = renderEditor("/cvs/cv-1/edit");
+    await screen.findByDisplayValue("Software Engineer CV");
+    expect(baseSwitch()).toBeChecked();
+    expect(baseSwitch()).toHaveAccessibleDescription(HELP);
     first.unmount();
-    renderWithProviders(<CvEditorPage />, { initialEntries: [reloadAt], path: "/cvs/:id/edit" });
-    expect(await screen.findByDisplayValue("Software Engineer CV")).toBeInTheDocument();
-    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+
+    renderEditor("/cvs/new");
+    expect(baseSwitch()).not.toBeChecked();
   });
 
-  it("shows no notice when the editor is opened normally", async () => {
-    renderEditor("/cvs/cv-1/edit");
+  it("changing only the switch enables Save; switching back disables it", async () => {
+    const user = userEvent.setup();
+    renderEditor("/cvs/cv-2/edit");
+    await screen.findByDisplayValue("Frontend Developer CV");
 
-    expect(await screen.findByDisplayValue("Software Engineer CV")).toBeInTheDocument();
-    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+    expect(saveButton()).toHaveAttribute("aria-disabled", "true");
+    await user.click(baseSwitch());
+    expect(saveButton()).not.toHaveAttribute("aria-disabled");
+    await user.click(baseSwitch());
+    expect(saveButton()).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("switched on: PATCH sends is_base true, toast says it is the base, the header shows Base", async () => {
+    const user = userEvent.setup();
+    const patches = recordPatches(mockCvs[1]!);
+    renderEditor("/cvs/cv-2/edit");
+    await screen.findByDisplayValue("Frontend Developer CV");
+    expect(screen.queryByText("Base")).not.toBeInTheDocument();
+
+    await user.click(baseSwitch());
+    await user.click(saveButton());
+
+    expect(await screen.findByText("CV saved and set as your base CV")).toBeInTheDocument();
+    expect(patches).toEqual([
+      {
+        name: "Frontend Developer CV",
+        content: mockCvs[1]!.content,
+        version: mockCvs[1]!.version,
+        is_base: true,
+      },
+    ]);
+    expect(screen.getByText("Base")).toBeInTheDocument();
+    expect(saveButton()).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("switched off on the base: PATCH sends is_base false and says there is no base now", async () => {
+    const user = userEvent.setup();
+    const patches = recordPatches(mockCvs[0]!);
+    renderEditor("/cvs/cv-1/edit");
+    await screen.findByDisplayValue("Software Engineer CV");
+    expect(screen.getByText("Base")).toBeInTheDocument();
+
+    await user.click(baseSwitch());
+    await user.click(saveButton());
+
+    expect(await screen.findByText("CV saved. You have no base CV now.")).toBeInTheDocument();
+    expect(patches[0]).toMatchObject({ is_base: false });
+    await waitFor(() => expect(screen.queryByText("Base")).not.toBeInTheDocument());
+    expect(baseSwitch()).not.toBeChecked();
+  });
+
+  it("a text-only save leaves is_base out of the PATCH and shows the plain toast", async () => {
+    const user = userEvent.setup();
+    const patches = recordPatches(mockCvs[0]!);
+    renderEditor("/cvs/cv-1/edit");
+    await screen.findByDisplayValue("Software Engineer CV");
+
+    await user.type(textArea(), "!");
+    await user.click(saveButton());
+
+    expect(await screen.findByText("CV saved")).toBeInTheDocument();
+    expect(patches[0]).not.toHaveProperty("is_base");
+    expect(screen.getByText("Base")).toBeInTheDocument();
+  });
+
+  it("base changed elsewhere: a text-only save says just CV saved and the switch follows the server", async () => {
+    const user = userEvent.setup();
+    // cv-1 was the base when opened; another CV became the base meanwhile
+    const patches: Record<string, unknown>[] = [];
+    server.use(
+      http.patch(CV_URL, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown> & { version: number };
+        patches.push(body);
+        const { version, ...changes } = body;
+        return HttpResponse.json({ ...mockCvs[0]!, ...changes, is_base: false, version: version + 1 });
+      }),
+    );
+    const { router } = renderWithProviders(<CvEditorPage />, {
+      initialEntries: ["/cvs/cv-1/edit"],
+      path: "/cvs/:id/edit",
+      routes: [{ path: "/cvs", element: <p>CVs list</p> }],
+    });
+    await screen.findByDisplayValue("Software Engineer CV");
+    expect(baseSwitch()).toBeChecked();
+
+    await user.type(textArea(), "!");
+    await user.click(saveButton());
+
+    expect(await screen.findByText("CV saved")).toBeInTheDocument();
+    expect(patches[0]).not.toHaveProperty("is_base");
+    expect(screen.queryByText("CV saved. You have no base CV now.")).not.toBeInTheDocument();
+    await waitFor(() => expect(baseSwitch()).not.toBeChecked());
+    expect(screen.queryByText("Base")).not.toBeInTheDocument();
+    expect(saveButton()).toHaveAttribute("aria-disabled", "true");
+
+    // Nothing unsaved: leaving does not ask
+    await act(async () => {
+      await router.navigate("/cvs");
+    });
+    expect(await screen.findByText("CVs list")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("a new CV with the switch on is created as the base", async () => {
+    const user = userEvent.setup();
+    const posts: unknown[] = [];
+    server.use(
+      http.post(CVS_URL, async ({ request }) => {
+        const body = (await request.json()) as { name: string; content: string; is_base: boolean };
+        posts.push(body);
+        return HttpResponse.json(
+          { ...mockCvs[1]!, id: "cv-new", ...body, version: 1 },
+          { status: 201 },
+        );
+      }),
+    );
+    renderEditor("/cvs/new");
+
+    await user.type(nameInput(), "Mine");
+    await user.click(baseSwitch());
+    await user.click(saveButton());
+
+    expect(await screen.findByText("CV saved and set as your base CV")).toBeInTheDocument();
+    expect(posts).toEqual([{ name: "Mine", content: "", is_base: true }]);
   });
 });
 

@@ -5,10 +5,12 @@ import {
   rejectChangeCard,
   type ChangeCard,
 } from "@/entities/chat";
+import { useToast } from "@/shared/ui";
 import {
   CARD_ERROR_MESSAGES,
   getCardErrorCode,
 } from "../lib/card-error-message";
+import { CARD_ACCEPTED_MESSAGE } from "../lib/constants";
 
 export type CardDecision = "accept" | "reject";
 
@@ -45,6 +47,7 @@ export function useCardDecision(
 ): CardDecisionState {
   const [running, setRunning] = useState<CardDecision | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { showToast } = useToast();
 
   const decide = useCallback(
     async (decision: CardDecision): Promise<void> => {
@@ -56,6 +59,8 @@ export function useCardDecision(
             ? await acceptChangeCard(applicationId, card.id)
             : await rejectChangeCard(applicationId, card.id);
         onCardUpdated(updated);
+        // Accept saved the CV; Reject saves nothing, so no toast for it
+        if (decision === "accept") showToast(CARD_ACCEPTED_MESSAGE, "success");
       } catch (err: unknown) {
         const code = getCardErrorCode(err);
         const fallback =
@@ -93,7 +98,7 @@ export function useCardDecision(
         setRunning(null);
       }
     },
-    [applicationId, card, onCardUpdated],
+    [applicationId, card, onCardUpdated, showToast],
   );
 
   return { running, error, decide };

@@ -377,30 +377,30 @@ describe("Leaving with unsaved changes", () => {
     expect(saveButton()).toHaveAttribute("aria-disabled", "true");
   });
 
-  it("does not ask when the upload notice clears its router state (same-URL replace)", async () => {
+  it("an upload draft counts as unsaved: clearing its router state does not ask, leaving does", async () => {
     const user = userEvent.setup();
-    const { router } = await renderLoadedEditor([
-      { pathname: "/cvs/cv-1/edit", state: { uploadNotice: { truncated: false, becameBase: false } } },
+    const draft = { name: "resume", content: "# Ivan", truncated: false };
+    const { router } = renderEditor("/cvs/new", [
+      "/cvs",
+      { pathname: "/cvs/new", state: { uploadDraft: draft } },
     ]);
 
-    expect(screen.getByRole("status")).toHaveTextContent("Text extracted from your file.");
+    expect(textArea()).toHaveValue("# Ivan");
+    // The draft's same-URL replace goes through without a prompt
     await waitFor(() => expect(router.state.location.state).toBeNull());
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(saveButton()).not.toHaveAttribute("aria-disabled");
+    expect(firesLeavePrompt()).toBe(true);
 
-    // A dirty draft cannot exist at mount, so replay the notice's replace while dirty
-    await user.type(textArea(), "!");
+    // Back to the CVs page is a real leave: it asks
     await act(async () => {
-      await router.navigate(
-        { pathname: "/cvs/cv-1/edit" },
-        { replace: true, state: { uploadNotice: { truncated: false, becameBase: false } } },
-      );
+      await router.navigate(-1);
     });
-    await waitFor(() => expect(router.state.location.state).toBeNull());
-
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(router.state.location.pathname).toBe("/cvs/cv-1/edit");
-    expect(textArea()).toHaveValue(`${savedCv.content}!`);
-    expect(screen.getByRole("status")).toHaveTextContent("Text extracted from your file.");
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(LEAVE_PROMPT);
+    await user.click(within(dialog).getByRole("button", { name: "Stay" }));
+    expect(router.state.location.pathname).toBe("/cvs/new");
+    expect(textArea()).toHaveValue("# Ivan");
   });
 
   it("asks the browser to prompt on close or reload only while there are changes", async () => {
