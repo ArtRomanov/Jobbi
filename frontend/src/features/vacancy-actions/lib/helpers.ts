@@ -1,21 +1,8 @@
 import { getErrorMessage, isApiError } from "@/shared/api";
-import type { Cv } from "@/entities/cv";
 import type { AddToTrackerRequest } from "@/entities/vacancy";
 import type { AddToTrackerFormValues } from "../model/schemas";
 import type { AddMode } from "../model/types";
 import { ADD_ERROR_MESSAGE, ALREADY_ADDED_DETAIL, SPECIFIC_ERROR_STATUSES } from "./constants";
-
-/**
- * Id of the most recently updated CV (the default base for "Add & tailor CV"),
- * or null when there are none. ISO timestamps from the API compare as strings.
- */
-export function pickMostRecentCvId(cvs: readonly Cv[]): string | null {
-  let latest: Cv | null = null;
-  for (const cv of cvs) {
-    if (latest === null || cv.updated_at > latest.updated_at) latest = cv;
-  }
-  return latest?.id ?? null;
-}
 
 /** Request body from the dialog values. Only "Add & tailor CV" sends `base_cv_id`. */
 export function toAddToTrackerBody(

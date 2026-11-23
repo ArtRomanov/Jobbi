@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { createCv, getCv, updateCv, type Cv } from "@/entities/cv";
+import { createCv, CvTailoredFor, getCv, isTailoredCv, updateCv, type Cv } from "@/entities/cv";
 import {
   CvTextEditor,
   getCvSaveErrorMessage,
@@ -8,8 +8,9 @@ import {
 } from "@/features/cv-text-editor";
 import { downloadCvTextPdf } from "@/features/cv-pdf";
 import { UploadNotice } from "@/features/cv-upload";
-import { PageCard, PageHeader, colors, useToast } from "@/shared/ui";
+import { Badge, PageCard, PageHeader, colors, useToast } from "@/shared/ui";
 import { handleApiError } from "@/shared/api";
+import { BASE_LABEL, TAILORED_FOR_PREFIX } from "../lib/constants";
 
 interface EditorSeed {
   key: string;
@@ -163,6 +164,28 @@ export function CvEditorPage() {
         title={isEditMode ? "Edit CV" : "Create New CV"}
         subtitle="Write your CV as text; the preview shows how it will look."
       />
+
+      {/* Base label / the application a tailored copy was made for (spec 011 §2.1) */}
+      {cv && (cv.is_base || isTailoredCv(cv)) ? (
+        <p
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "0.5rem",
+            flexWrap: "wrap",
+            margin: "-1rem 0 1rem",
+            fontSize: "0.875rem",
+            color: colors.textSecondary,
+          }}
+        >
+          {cv.is_base ? <Badge tone="accent">{BASE_LABEL}</Badge> : null}
+          {isTailoredCv(cv) ? (
+            <span>
+              {TAILORED_FOR_PREFIX} <CvTailoredFor cv={cv} />
+            </span>
+          ) : null}
+        </p>
+      ) : null}
 
       {/* Only after an upload (router state); shown once */}
       <UploadNotice />

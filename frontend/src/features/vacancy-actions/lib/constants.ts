@@ -31,7 +31,10 @@ export const ADDED_TOAST_DURATION_MS = 8000;
 export const DUPLICATE_PREFIX = "You already track this:";
 export const OPEN_EXISTING_LABEL = "Open it";
 export const ADD_ANYWAY_LABEL = "Add anyway";
-export const BASE_CV_LABEL = "Base CV";
+export const CV_SELECT_LABEL = "CV to tailor";
+/** Empty choice, shown only when the user has no base CV (nothing is preselected). */
+export const CHOOSE_CV_PLACEHOLDER = "Choose a CV";
+export const NO_BASE_CV_HINT = "Choose a CV to tailor, or mark one as base on the CVs page.";
 export const NO_CVS_HINT = "Create a CV first";
 export const CVS_LOAD_ERROR_HINT = "Could not load your CVs.";
 export const CVS_LOADING_HINT = "Loading your CVs…";

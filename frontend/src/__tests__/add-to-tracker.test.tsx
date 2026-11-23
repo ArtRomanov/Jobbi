@@ -5,7 +5,7 @@ import { http, HttpResponse, delay } from "msw";
 import { InboxPage } from "@/pages/inbox";
 import { ChatPage } from "@/pages/chat";
 import { useNewVacancyCount } from "@/entities/vacancy";
-import { mockVacancy, mockVacancyPageEmpty } from "./mocks/handlers";
+import { makeMockCv, mockCvs, mockVacancy, mockVacancyPageEmpty } from "./mocks/handlers";
 import { server } from "./setup";
 import { renderWithProviders } from "./utils";
 
@@ -15,6 +15,7 @@ const SEEN_URL = "*/api/v1/vacancies/:id/seen";
 const CVS_URL = "*/api/v1/cvs";
 const CHAT_URL = "*/api/v1/applications/:id/chat";
 const NEW_COUNT_URL = "*/api/v1/vacancies/new-count";
+const CV_SELECT = "CV to tailor";
 
 const EXISTING = { id: "app-9", company_name: "Acme Corp", role_title: "Senior Engineer" };
 
@@ -108,7 +109,7 @@ beforeEach(() => {
 });
 
 describe("Add to tracker dialog", () => {
-  it("prefills company, role and the full text, and defaults to the most recently updated CV", async () => {
+  it("prefills company, role and the full text, and preselects the base CV", async () => {
     serveVacancies([mockVacancy]);
     const { dialog } = await openDialog();
 
@@ -116,9 +117,9 @@ describe("Add to tracker dialog", () => {
     expect(within(dialog).getByRole("textbox", { name: "Role" })).toHaveValue("Senior React Developer");
     expect(within(dialog).getByRole("textbox", { name: "Notes" })).toHaveValue(mockVacancy.text);
     expect(within(dialog).getByRole("textbox", { name: "Company" })).toHaveFocus();
-    // cv-2 was updated 2026-03-01, cv-1 on 2026-02-20
+    // cv-1 is the base; cv-2 was updated later and must not win (backlog #7)
     await waitFor(() =>
-      expect(within(dialog).getByRole("combobox", { name: "Base CV" })).toHaveValue("cv-2"),
+      expect(within(dialog).getByRole("combobox", { name: CV_SELECT })).toHaveValue("cv-1"),
     );
   });
 
@@ -192,13 +193,13 @@ describe("Add to tracker dialog", () => {
     const { user, dialog } = await openDialog();
     const tailor = dialogButton(dialog, "Add & tailor CV");
     await waitFor(() => expect(tailor).toBeEnabled());
-    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Base CV" }), "cv-1");
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: CV_SELECT }), "cv-2");
 
     await user.click(tailor);
 
     const input = await screen.findByRole("textbox", { name: "Chat message" });
     expect(input).toHaveValue("Adapt my CV to this vacancy");
-    expect(bodies[0]).toMatchObject({ base_cv_id: "cv-1", allow_duplicate: false });
+    expect(bodies[0]).toMatchObject({ base_cv_id: "cv-2", allow_duplicate: false });
     await screen.findByText(/Acme Corp — Senior Engineer/);
     expect(chatPosts).toBe(0);
   });
@@ -212,7 +213,7 @@ describe("Add to tracker dialog", () => {
     const tailor = dialogButton(dialog, "Add & tailor CV");
     expect(tailor).toBeDisabled();
     expect(tailor).toHaveAttribute("aria-describedby", hint.id);
-    expect(within(dialog).queryByRole("combobox", { name: "Base CV" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("combobox", { name: CV_SELECT })).not.toBeInTheDocument();
     expect(dialogButton(dialog, "Add to tracker")).toBeEnabled();
   });
 
@@ -275,8 +276,8 @@ describe("Add to tracker dialog", () => {
         "Adapt my CV to this vacancy",
       );
       expect(bodies.map((body) => [body.allow_duplicate, body.base_cv_id])).toEqual([
-        [false, "cv-2"],
-        [true, "cv-2"],
+        [false, "cv-1"],
+        [true, "cv-1"],
       ]);
     });
   });
@@ -404,7 +405,7 @@ describe("Add to tracker — review follow-ups", () => {
     await user.click(dialogButton(dialog, "Add anyway"));
 
     await screen.findByRole("textbox", { name: "Chat message" });
-    expect(bodies).toEqual([expect.objectContaining({ allow_duplicate: true, base_cv_id: "cv-2" })]);
+    expect(bodies).toEqual([expect.objectContaining({ allow_duplicate: true, base_cv_id: "cv-1" })]);
   });
 
   it("409 Already added closes the dialog, removes the card and says so", async () => {
@@ -427,5 +428,97 @@ describe("Add to tracker — review follow-ups", () => {
     await user.click(dialogButton(dialog, "Add to tracker"));
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("Vacancy is not in the Inbox.");
+  });
+});
+
+describe("Add to tracker — base CV and tailored copies (spec 011 §2.6)", () => {
+  const NO_BASE_HINT = "Choose a CV to tailor, or mark one as base on the CVs page.";
+
+  function serveCvsWithoutBase(): void {
+    server.use(
+      http.get(CVS_URL, () => HttpResponse.json(mockCvs.map((cv) => ({ ...cv, is_base: false })))),
+    );
+  }
+
+  it("lists own CVs first (base first, labelled) and tailored copies in their own group", async () => {
+    serveVacancies([mockVacancy]);
+    // Server order shuffled on purpose: the dialog groups by is_base / kind itself
+    server.use(http.get(CVS_URL, () => HttpResponse.json([mockCvs[2], mockCvs[1], mockCvs[0]])));
+    const { dialog } = await openDialog();
+
+    const select = within(dialog).getByRole("combobox", { name: CV_SELECT });
+    await waitFor(() => expect(select).toHaveValue("cv-1"));
+    const ungrouped = Array.from(select.children)
+      .filter((el): el is HTMLOptionElement => el.tagName === "OPTION")
+      .map((option) => option.textContent);
+    expect(ungrouped).toEqual(["Software Engineer CV (base)", "Frontend Developer CV"]);
+
+    const group = select.querySelector("optgroup");
+    expect(group).toHaveAttribute("label", "Tailored copies");
+    expect(Array.from(group!.querySelectorAll("option")).map((o) => o.value)).toEqual(["cv-3"]);
+    expect(within(dialog).queryByText(NO_BASE_HINT)).not.toBeInTheDocument();
+  });
+
+  it("has no Tailored copies group when there are none", async () => {
+    serveVacancies([mockVacancy]);
+    server.use(http.get(CVS_URL, () => HttpResponse.json(mockCvs.slice(0, 2))));
+    const { dialog } = await openDialog();
+
+    const select = within(dialog).getByRole("combobox", { name: CV_SELECT });
+    await waitFor(() => expect(select).toHaveValue("cv-1"));
+    expect(select.querySelector("optgroup")).toBeNull();
+  });
+
+  it("with no base preselects nothing, disables Add & tailor CV with the hint until a CV is chosen", async () => {
+    serveVacancies([mockVacancy]);
+    serveCvsWithoutBase();
+    const bodies = recordAdds(() =>
+      HttpResponse.json({ application_id: "app-1", cv_id: "cv-copy" }, { status: 201 }),
+    );
+    const { user, dialog } = await openDialog();
+
+    const hint = await within(dialog).findByText(NO_BASE_HINT);
+    const select = within(dialog).getByRole("combobox", { name: CV_SELECT });
+    const tailor = dialogButton(dialog, "Add & tailor CV");
+    expect(select).toHaveValue("");
+    expect(within(select).getByRole("option", { name: "Choose a CV" })).toBeInTheDocument();
+    expect(within(select).queryByRole("option", { name: /\(base\)/ })).not.toBeInTheDocument();
+    expect(select).toHaveAttribute("aria-describedby", hint.id);
+    expect(tailor).toBeDisabled();
+    expect(tailor).toHaveAttribute("aria-describedby", hint.id);
+
+    await user.selectOptions(select, "cv-3");
+    expect(tailor).toBeEnabled();
+    await user.click(tailor);
+
+    await screen.findByRole("textbox", { name: "Chat message" });
+    expect(bodies).toEqual([expect.objectContaining({ base_cv_id: "cv-3" })]);
+  });
+
+  it("with no base, plain Add to tracker still works and sends no CV", async () => {
+    serveVacancies([mockVacancy]);
+    serveCvsWithoutBase();
+    const bodies = recordAdds();
+    const { user, dialog } = await openDialog();
+
+    await within(dialog).findByText(NO_BASE_HINT);
+    await user.click(dialogButton(dialog, "Add to tracker"));
+
+    await waitFor(() => expect(bodies).toEqual([expect.objectContaining({ base_cv_id: null })]));
+  });
+
+  it("a base that used to be a tailored copy is listed as own", async () => {
+    serveVacancies([mockVacancy]);
+    server.use(
+      http.get(CVS_URL, () =>
+        HttpResponse.json([makeMockCv({ id: "cv-x", name: "Promoted copy", is_base: true, kind: "tailored" })]),
+      ),
+    );
+    const { dialog } = await openDialog();
+
+    const select = within(dialog).getByRole("combobox", { name: CV_SELECT });
+    await waitFor(() => expect(select).toHaveValue("cv-x"));
+    expect(select.querySelector("optgroup")).toBeNull();
+    expect(within(select).getByRole("option", { name: "Promoted copy (base)" })).toBeInTheDocument();
   });
 });

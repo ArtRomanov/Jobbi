@@ -1,5 +1,6 @@
 export { FormInput } from "./form-input";
 export { FormSelect } from "./form-select";
+export type { SelectOption, SelectOptionGroup } from "./form-select";
 export { FormTextarea } from "./form-textarea";
 export { Button } from "./button";
 export { ToastProvider, useToast } from "./toast";

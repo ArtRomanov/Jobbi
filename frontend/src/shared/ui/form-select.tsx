@@ -1,14 +1,22 @@
 import { forwardRef, useId, type SelectHTMLAttributes } from "react";
 import { colors } from "./theme";
 
-interface SelectOption {
+export interface SelectOption {
   value: string;
   label: string;
 }
 
+/** Options shown under an `<optgroup>` label, after the ungrouped `options`. */
+export interface SelectOptionGroup {
+  label: string;
+  options: readonly SelectOption[];
+}
+
 interface FormSelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
   label: string;
-  options: SelectOption[];
+  options: readonly SelectOption[];
+  /** Optional `<optgroup>`s rendered after `options` (an empty group is skipped). */
+  groups?: readonly SelectOptionGroup[];
   error?: string;
 }
 
@@ -17,10 +25,16 @@ interface FormSelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
  * Accepts React Hook Form register spread via forwardRef.
  */
 export const FormSelect = forwardRef<HTMLSelectElement, FormSelectProps>(
-  function FormSelect({ label, options, error, id: providedId, ...rest }, ref) {
+  function FormSelect(
+    { label, options, groups, error, id: providedId, "aria-describedby": describedBy, ...rest },
+    ref,
+  ) {
     const generatedId = useId();
     const id = providedId ?? generatedId;
     const errorId = `${id}-error`;
+    // The caller's description (e.g. a hint) and the error are both kept
+    const describedByIds =
+      [describedBy, error ? errorId : undefined].filter(Boolean).join(" ") || undefined;
 
     return (
       <div style={{ marginBottom: "1rem" }}>
@@ -40,7 +54,7 @@ export const FormSelect = forwardRef<HTMLSelectElement, FormSelectProps>(
           ref={ref}
           id={id}
           aria-invalid={error ? true : undefined}
-          aria-describedby={error ? errorId : undefined}
+          aria-describedby={describedByIds}
           style={{
             width: "100%",
             padding: "0.5rem 0.75rem",
@@ -57,6 +71,17 @@ export const FormSelect = forwardRef<HTMLSelectElement, FormSelectProps>(
               {opt.label}
             </option>
           ))}
+          {groups?.map((group) =>
+            group.options.length > 0 ? (
+              <optgroup key={group.label} label={group.label}>
+                {group.options.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null,
+          )}
         </select>
         {error ? (
           <p
