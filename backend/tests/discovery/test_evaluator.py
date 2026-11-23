@@ -323,8 +323,8 @@ async def test_evaluate_batch_maps_keys_and_uses_json_mode() -> None:
 @pytest.mark.parametrize(
     ("model", "expected"),
     [
-        ("openai/gpt-oss-20b", "low"),
-        ("openai/gpt-oss-120b", "low"),
+        ("openai/gpt-oss-20b", "medium"),
+        ("openai/gpt-oss-120b", "medium"),
         ("qwen/qwen3.8-27b", None),
     ],
 )

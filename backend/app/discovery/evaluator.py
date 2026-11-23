@@ -53,8 +53,9 @@ MAX_PROFILE_VALUE_CHARS = 100
 MAX_NAME_CHARS = 200
 REQUEST_TIMEOUT_S = 60.0
 # Reasoning models count their thinking in completion tokens: gpt-oss-20b at
-# reasoning_effort "low" used ~780 completion tokens on 5 long posts (2026-11-23).
-MAX_COMPLETION_TOKENS = 3_000
+# reasoning_effort "medium" used ~2 300 completion tokens on 5 long posts
+# (2026-11-23), so the cap leaves room for that plus the JSON answer.
+MAX_COMPLETION_TOKENS = 4_000
 
 # Fence markers. Post text can never contain "<<<" or ">>>" (see `_defang`), so a
 # post cannot close its own fence or open a fake one.
@@ -390,12 +391,11 @@ def _map_status_error(exc: groq.APIStatusError) -> EvaluationError:
 def _model_options(model: str) -> dict[str, Any]:
     """Extra request options per model family.
 
-    gpt-oss reasons before answering; at the default effort it spent ~2 300
-    completion tokens on 5 long posts (over the cap, so the JSON was cut).
-    "low" keeps the same verdicts on the smoke cases at a third of the tokens.
+    gpt-oss reasons before answering. "medium" is pinned on purpose: "low" cut
+    the tokens by two thirds but broke the fit rules (smoke 10/16 vs 15/16).
     """
     if model.startswith("openai/gpt-oss"):
-        return {"reasoning_effort": "low"}
+        return {"reasoning_effort": "medium"}
     return {}
 
 
