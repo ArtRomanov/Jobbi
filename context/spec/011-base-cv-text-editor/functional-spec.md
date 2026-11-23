@@ -1,7 +1,7 @@
 # Functional Specification: Base CV, File Upload and Text CV Editor
 
 - **Roadmap Item:** Follow-up to "CV Constructor" (Phase 2) — not a new roadmap item. Fixes backlog #7 (tailored copies chain) and delivers backlog #8 (base CV) and #3 (free-text editing; PDF had only the heading). Revises spec 003 (form editor) and spec 008 (AI edits to CV fields).
-- **Status:** Draft
+- **Status:** Approved
 - **Author:** Poe (AI Product Analyst)
 
 ---
