@@ -13,7 +13,9 @@ Rules (spec 011, section 2.3):
   - anything else -> ``UnsupportedFile``;
 - DOCX zip-bomb guard (before python-docx opens it): total uncompressed size,
   entry count and per-entry compression ratio are capped;
-- PDF: pdfminer.six, at most ``MAX_PDF_PAGES`` pages; password-protected ->
+- PDF: pdfminer.six, at most ``MAX_PDF_PAGES`` pages, text in reading order
+  (multi-column layouts column by column, see ``order_text_boxes``);
+  password-protected ->
   ``NoText``; decompression-bomb guard: all streams of one PDF may decode to
   at most ``MAX_PDF_DECODED_BYTES`` (see ``pdf_decode_limit``), more ->
   ``UnsupportedFile`` (same code as a DOCX zip bomb: not a real CV file);
@@ -37,7 +39,7 @@ import json
 import re
 import sys
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
@@ -46,8 +48,8 @@ import structlog
 from docx import Document
 from docx.table import Table, _Cell
 from docx.text.paragraph import Paragraph
-from pdfminer.high_level import extract_text as pdf_extract_text
-from pdfminer.layout import LAParams
+from pdfminer.high_level import extract_pages as pdf_extract_pages
+from pdfminer.layout import LAParams, LTPage, LTTextContainer
 from pdfminer.pdfdocument import PDFEncryptionError
 
 from app.services import pdf_decode_limit
@@ -68,12 +70,14 @@ __all__ = [
     "FileTooLarge",
     "NoText",
     "PdfDecodeLimitExceeded",
+    "TextBox",
     "UnsupportedFile",
     "UploadFailed",
     "cv_name_from_filename",
     "extract_cv_text",
     "extract_cv_text_async",
     "extract_text_only",
+    "order_text_boxes",
 ]
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
@@ -82,6 +86,12 @@ MAX_PDF_PAGES = 30
 MAX_CV_NAME_LENGTH = 255
 # Every stream of one PDF together; a real CV decodes to a few MB at most.
 MAX_PDF_DECODED_BYTES = 50 * 1024 * 1024
+# A PDF text box wider than this share of the page spans the columns (a title,
+# a full-width section); narrower boxes may sit side by side in columns.
+FULL_WIDTH_BOX_RATIO = 0.6
+# Pages are separated by two blank lines, as pdfminer's own text output reads
+# after ``normalize_text`` (a box's newline, a blank line, then a form feed).
+_PAGE_BREAK = "\n\n\n"
 EXTRACT_TIMEOUT_SECONDS = 20.0
 _WORKER_MODULE = "app.services.cv_upload_worker"
 # The directory holding the `app` package: the worker runs from it.
@@ -270,12 +280,87 @@ def cv_name_from_filename(filename: str) -> str:
 # --------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class TextBox:
+    """One PDF text box: its horizontal extent, its top edge and its text.
+
+    PDF coordinates: ``x`` grows to the right, ``y`` grows upwards.
+    """
+
+    x0: float
+    x1: float
+    y1: float
+    text: str
+
+
+@dataclass(slots=True)
+class _Column:
+    x0: float
+    x1: float
+    boxes: list[TextBox]
+
+
+def order_text_boxes(boxes: Sequence[TextBox], page_width: float) -> str:
+    """One page's text in reading order; multi-column parts column by column.
+
+    ``boxes`` come in pdfminer's top-to-bottom order. A box wider than
+    ``FULL_WIDTH_BOX_RATIO`` of the page ends the current section and is read
+    as is. Narrower boxes collect into a section; a section is split into
+    columns by horizontal overlap and read column by column, left to right,
+    each column top to bottom. Blank boxes are skipped; boxes are joined by a
+    blank line. Only the order changes: every box's text is kept.
+    """
+    out: list[str] = []
+    section: list[TextBox] = []
+    for box in boxes:
+        if not box.text.strip():
+            continue
+        if box.x1 - box.x0 > FULL_WIDTH_BOX_RATIO * page_width:
+            out.extend(_read_columns(section))
+            section = []
+            out.append(box.text.strip())
+        else:
+            section.append(box)
+    out.extend(_read_columns(section))
+    return "\n\n".join(out)
+
+
+def _read_columns(section: list[TextBox]) -> list[str]:
+    """Group boxes into columns by horizontal overlap; read them in order."""
+    columns: list[_Column] = []
+    for box in sorted(section, key=lambda b: b.x0):
+        for column in columns:
+            if box.x0 < column.x1 and box.x1 > column.x0:
+                column.boxes.append(box)
+                column.x0 = min(column.x0, box.x0)
+                column.x1 = max(column.x1, box.x1)
+                break
+        else:
+            columns.append(_Column(x0=box.x0, x1=box.x1, boxes=[box]))
+    return [
+        box.text.strip()
+        for column in sorted(columns, key=lambda c: c.x0)
+        for box in sorted(column.boxes, key=lambda b: -b.y1)
+    ]
+
+
+def _page_text(page: LTPage) -> str:
+    boxes = [
+        TextBox(x0=item.x0, x1=item.x1, y1=item.y1, text=item.get_text())
+        for item in page
+        if isinstance(item, LTTextContainer)
+    ]
+    return order_text_boxes(boxes, page.width)
+
+
 def _extract_pdf(data: bytes) -> str:
     with pdf_decode_limit.decode_budget(MAX_PDF_DECODED_BYTES) as budget:
         try:
-            text = pdf_extract_text(
+            # Pages are parsed lazily: the whole loop must stay in the budget.
+            pages = pdf_extract_pages(
                 io.BytesIO(data), maxpages=MAX_PDF_PAGES, laparams=LAParams()
             )
+            text = _PAGE_BREAK.join(_page_text(page) for page in pages)
         except PdfDecodeLimitExceeded as exc:
             raise _pdf_too_big() from exc
         except PDFEncryptionError as exc:
