@@ -40,11 +40,9 @@ export interface UseManageSourcesResult {
 export interface UseSearchSettingsFormResult {
   description: string;
   setDescription: (value: string) => void;
-  exclude: readonly string[];
-  setExclude: (values: readonly string[]) => void;
   /** Inline error under the Save button, or null. */
   saveError: string | null;
   isSaving: boolean;
-  /** Save both fields; resolves true on success. */
+  /** Save the description (exclude words are not sent); resolves true on success. */
   save: () => Promise<boolean>;
 }

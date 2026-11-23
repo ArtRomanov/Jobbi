@@ -715,7 +715,8 @@ export const handlers = [
   }),
 
   // Echoes the update normalized like the backend: trimmed, empty description →
-  // null, exclude terms trimmed + lowercased + deduplicated (no limit checks)
+  // null, exclude terms trimmed + lowercased + deduplicated (no limit checks).
+  // The UI no longer sends `exclude` (hidden since spec 012), so it echoes [].
   http.patch(`${BASE_URL}/api/v1/vacancy-search-settings`, async ({ request }) => {
     const body = (await request.json()) as { description?: string | null; exclude?: string[] };
     const description = body.description?.trim() || null;

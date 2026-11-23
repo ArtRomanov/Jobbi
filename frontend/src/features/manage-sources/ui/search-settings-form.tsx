@@ -1,14 +1,7 @@
 import { useId, useRef, type FormEvent } from "react";
 import type { VacancySearchSettings } from "@/entities/vacancy-source";
-import { Button, ChipInput, FormTextarea, colors } from "@/shared/ui";
-import {
-  DESCRIPTION_MAX_LENGTH,
-  DESCRIPTION_PLACEHOLDER,
-  EXCLUDE_HINT,
-  EXCLUDE_LIMIT_MESSAGE,
-  EXCLUDE_MAX_ITEMS,
-  EXCLUDE_TERM_MAX_LENGTH,
-} from "../lib/constants";
+import { Button, FormTextarea, colors } from "@/shared/ui";
+import { DESCRIPTION_MAX_LENGTH, DESCRIPTION_PLACEHOLDER } from "../lib/constants";
 import { useSearchSettingsForm } from "../model/use-search-settings-form";
 
 interface SearchSettingsFormProps {
@@ -18,16 +11,19 @@ interface SearchSettingsFormProps {
 }
 
 /**
- * "What are you looking for?": search description (500 chars, live counter)
- * and exclude-word chips, saved together. Re-mount it (via `key`) when the
- * saved settings first load so the drafts start from them.
+ * "What are you looking for?": search description (500 chars, live counter).
+ * Exclude words are hidden since spec 012 (stored ones are kept, never sent).
+ * Re-mount it (via `key`) when the saved settings first load so the draft
+ * starts from them.
  */
 export function SearchSettingsForm({ initialSettings, onSaved }: SearchSettingsFormProps) {
   const headingId = useId();
   const counterId = useId();
   const saveButtonRef = useRef<HTMLButtonElement>(null);
-  const { description, setDescription, exclude, setExclude, saveError, isSaving, save } =
-    useSearchSettingsForm(initialSettings, onSaved);
+  const { description, setDescription, saveError, isSaving, save } = useSearchSettingsForm(
+    initialSettings,
+    onSaved,
+  );
   const isDisabled = initialSettings === null;
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
@@ -75,16 +71,6 @@ export function SearchSettingsForm({ initialSettings, onSaved }: SearchSettingsF
         >
           {description.length}/{DESCRIPTION_MAX_LENGTH}
         </p>
-        <ChipInput
-          label="Exclude words"
-          values={exclude}
-          onChange={setExclude}
-          maxItems={EXCLUDE_MAX_ITEMS}
-          maxItemsMessage={EXCLUDE_LIMIT_MESSAGE}
-          maxLength={EXCLUDE_TERM_MAX_LENGTH}
-          hint={EXCLUDE_HINT}
-          disabled={isDisabled || isSaving}
-        />
         <Button ref={saveButtonRef} type="submit" loading={isSaving} disabled={isDisabled}>
           Save
         </Button>
