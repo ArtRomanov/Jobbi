@@ -1,10 +1,14 @@
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.application import Application
 from app.models.cv import Cv
 from app.schemas.cv import CvCreate, CvUpdate
 from app.services.chat_card_service import mark_cv_cards_stale
+
+
+class CvNotFoundError(Exception):
+    """No CV with this id belongs to the user."""
 
 
 async def list_cvs(db: AsyncSession, user_id: str) -> list[dict]:
@@ -52,25 +56,91 @@ async def get_cv(db: AsyncSession, user_id: str, cv_id: str) -> Cv | None:
     return result.scalar_one_or_none()
 
 
+class CvVersionConflict(Exception):
+    """The CV was changed since the caller read it (its version moved on)."""
+
+
+async def update_cv_content_if_version(
+    db: AsyncSession,
+    user_id: str,
+    cv_id: str,
+    expected_version: int,
+    *,
+    name: str | None = None,
+    content: str | None = None,
+) -> Cv:
+    """Write `name`/`content` only if the CV is still at `expected_version`.
+
+    One conditional `UPDATE ... WHERE id AND user_id AND version`, so two
+    writers racing on the same version cannot both win. Bumps `version` by one.
+    `None` leaves a field unchanged. Does not commit: the caller owns the
+    transaction (the chat card Accept commits its card state alongside).
+
+    Raises CvNotFoundError if the CV is missing or another user's, and
+    CvVersionConflict if it exists but is no longer at `expected_version`.
+    """
+    values: dict[str, object] = {"version": Cv.version + 1}
+    if name is not None:
+        values["name"] = name
+    if content is not None:
+        values["content"] = content
+
+    result = await db.execute(
+        update(Cv)
+        .where(
+            Cv.id == cv_id,
+            Cv.user_id == user_id,
+            Cv.version == expected_version,
+        )
+        .values(**values)
+        .execution_options(synchronize_session=False)
+    )
+    if result.rowcount == 0:
+        if await get_cv(db, user_id, cv_id) is None:
+            raise CvNotFoundError(cv_id)
+        raise CvVersionConflict(cv_id)
+
+    fresh = await db.execute(
+        select(Cv).where(Cv.id == cv_id).execution_options(populate_existing=True)
+    )
+    return fresh.scalar_one()
+
+
 async def update_cv(
     db: AsyncSession, user_id: str, cv_id: str, data: CvUpdate
 ) -> Cv | None:
+    """Apply an editor save. Returns None if the CV is not the user's.
+
+    Raises CvVersionConflict if `data.version` is stale, also for a save that
+    changes nothing. A save that changes nothing at the current version returns
+    the CV without bumping its version.
+    """
     cv = await get_cv(db, user_id, cv_id)
     if cv is None:
         return None
+    if cv.version != data.version:
+        raise CvVersionConflict(cv_id)
 
-    # `version` is accepted but not checked yet: the stale-version 409 lands in
-    # spec 011 slice 3. A null name/content means "unchanged".
+    # A null name/content means "unchanged".
     changes = data.model_dump(include={"name", "content"}, exclude_none=True)
     changed = {
         field: value for field, value in changes.items() if getattr(cv, field) != value
     }
-    if changed:
-        for field, value in changed.items():
-            setattr(cv, field, value)
-        cv.version += 1
-        await db.commit()
-        await db.refresh(cv)
+    if not changed:
+        return cv
+
+    try:
+        cv = await update_cv_content_if_version(
+            db, user_id, cv_id, data.version, **changed
+        )
+    except CvNotFoundError:
+        await db.rollback()
+        return None
+    except CvVersionConflict:
+        await db.rollback()
+        raise
+    await db.commit()
+    await db.refresh(cv)
     return cv
 
 
@@ -89,10 +159,6 @@ async def delete_cv(db: AsyncSession, user_id: str, cv_id: str) -> bool:
     await db.delete(cv)
     await db.commit()
     return True
-
-
-class CvNotFoundError(Exception):
-    """No CV with this id belongs to the user."""
 
 
 async def build_cv_copy(db: AsyncSession, user_id: str, cv_id: str, name: str) -> Cv:

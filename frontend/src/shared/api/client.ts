@@ -16,14 +16,20 @@ export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError;
 }
 
+function serializeJson(body: unknown): string | undefined {
+  return body !== undefined ? JSON.stringify(body) : undefined;
+}
+
 async function request<T>(
   method: string,
   path: string,
   body?: unknown,
 ): Promise<T> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
+  // FormData sets its own multipart Content-Type (with the boundary).
+  const isForm = body instanceof FormData;
+  const headers: Record<string, string> = isForm
+    ? {}
+    : { "Content-Type": "application/json" };
 
   const token = localStorage.getItem("jobbi_token");
   if (token) {
@@ -33,7 +39,7 @@ async function request<T>(
   const response = await fetch(`${baseUrl}${path}`, {
     method,
     headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: isForm ? body : serializeJson(body),
   });
 
   const data: unknown = await response.json().catch(() => null);
@@ -53,6 +59,9 @@ export const apiClient = {
   get: <T>(path: string): Promise<T> => request<T>("GET", path),
   post: <T>(path: string, body: unknown): Promise<T> =>
     request<T>("POST", path, body),
+  /** Multipart POST, e.g. a file upload. */
+  postForm: <T>(path: string, form: FormData): Promise<T> =>
+    request<T>("POST", path, form),
   patch: <T>(path: string, body: unknown): Promise<T> =>
     request<T>("PATCH", path, body),
   delete: <T>(path: string): Promise<T> => request<T>("DELETE", path),

@@ -1,8 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { createCv, getCv, updateCv, type Cv } from "@/entities/cv";
-import { CvTextEditor, type CvTextEditorValues } from "@/features/cv-text-editor";
+import {
+  CvTextEditor,
+  getCvSaveErrorMessage,
+  type CvTextEditorValues,
+} from "@/features/cv-text-editor";
 import { downloadCvTextPdf } from "@/features/cv-pdf";
+import { UploadNotice } from "@/features/cv-upload";
 import { PageCard, PageHeader, colors, useToast } from "@/shared/ui";
 import { handleApiError } from "@/shared/api";
 
@@ -10,6 +15,8 @@ interface EditorSeed {
   key: string;
   values: CvTextEditorValues;
 }
+
+const EMPTY_VALUES: CvTextEditorValues = { name: "", content: "" };
 
 function toEditorSeed(cv: Cv | null, newKey: string): EditorSeed {
   return cv
@@ -46,10 +53,13 @@ export function CvEditorPage() {
   const [isLoading, setIsLoading] = useState(isEditMode);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  // Shown next to Save until the next attempt; the draft stays in the editor
+  const [saveError, setSaveError] = useState<string | null>(null);
   // Blocks a second save until the first settles (`isSaving` lags a render)
   const isSavingRef = useRef(false);
 
   useEffect(() => {
+    setSaveError(null);
     if (!id) {
       // Same page instance moved to /cvs/new: start a fresh CV
       setError(null);
@@ -90,6 +100,7 @@ export function CvEditorPage() {
       if (isSavingRef.current) return;
       isSavingRef.current = true;
       setIsSaving(true);
+      setSaveError(null);
       try {
         const current = cvRef.current;
         if (current) {
@@ -106,13 +117,20 @@ export function CvEditorPage() {
           navigate(`/cvs/${created.id}/edit`, { replace: true });
         }
       } catch (err: unknown) {
-        handleApiError(err, showToast);
+        // A 409 (changed elsewhere) must not overwrite: the draft stays as typed
+        setSaveError(getCvSaveErrorMessage(err));
       } finally {
         isSavingRef.current = false;
         setIsSaving(false);
       }
     },
     [navigate, setSavedCv, showToast],
+  );
+
+  // What "Save" and the unsaved-changes guard compare the draft with
+  const savedValues = useMemo<CvTextEditorValues>(
+    () => (cv ? { name: cv.name, content: cv.content } : EMPTY_VALUES),
+    [cv],
   );
 
   // Exports what the user sees in the editor, saved or not
@@ -146,6 +164,9 @@ export function CvEditorPage() {
         subtitle="Write your CV as text; the preview shows how it will look."
       />
 
+      {/* Only after an upload (router state); shown once */}
+      <UploadNotice />
+
       {isLoading && (
         <p style={{ color: colors.textMuted, fontSize: "0.875rem" }}>Loading...</p>
       )}
@@ -156,8 +177,10 @@ export function CvEditorPage() {
         <CvTextEditor
           key={editorSeed.key}
           initialValues={editorSeed.values}
+          savedValues={savedValues}
           onSave={handleSave}
           isSaving={isSaving}
+          saveError={saveError}
           onExport={isEditMode && cv ? handleExport : undefined}
         />
       )}

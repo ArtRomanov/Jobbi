@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_current_user, get_db
@@ -9,6 +9,7 @@ from app.models.cv import Cv
 from app.models.user import User
 from app.schemas.cv import CvCreate, CvDuplicateRequest, CvRead, CvUpdate
 from app.services.cv_service import (
+    CvVersionConflict,
     create_cv,
     delete_cv,
     duplicate_cv,
@@ -18,6 +19,9 @@ from app.services.cv_service import (
 )
 
 router = APIRouter(prefix="/cvs", tags=["cvs"])
+
+# The frontend maps this code to "This CV was changed elsewhere ...".
+CV_CHANGED_DETAIL = "CV_CHANGED"
 
 
 def _cv_to_read(cv: Cv, linked_count: int = 0) -> CvRead:
@@ -64,14 +68,28 @@ async def get_user_cv(
     return _cv_to_read(cv)
 
 
-@router.patch("/{cv_id}", response_model=CvRead)
+@router.patch(
+    "/{cv_id}",
+    response_model=CvRead,
+    responses={
+        status.HTTP_409_CONFLICT: {
+            "description": "`version` is stale: the CV was changed elsewhere "
+            '(`{"detail": "CV_CHANGED"}`).'
+        }
+    },
+)
 async def update_user_cv(
     cv_id: str,
     body: CvUpdate,
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> CvRead:
-    cv = await update_cv(db, current_user.id, cv_id, body)
+    try:
+        cv = await update_cv(db, current_user.id, cv_id, body)
+    except CvVersionConflict:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, detail=CV_CHANGED_DETAIL
+        ) from None
     if cv is None:
         not_found("CV")
     return _cv_to_read(cv)
