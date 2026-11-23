@@ -136,15 +136,20 @@ export function CvEditorPage() {
       try {
         const current = cvRef.current;
         if (current) {
+          const isBaseChanged = values.isBase !== current.is_base;
           const saved = await updateCv(current.id, {
             name: values.name,
             content: values.content,
             version: current.version,
             // Only when the switch changed: never clear a base set elsewhere
-            ...(values.isBase !== current.is_base ? { is_base: values.isBase } : {}),
+            ...(isBaseChanged ? { is_base: values.isBase } : {}),
           });
           setSavedCv(saved);
-          showToast(getSavedMessage(current.is_base, saved), "success");
+          // A base change made elsewhere is not this save's doing: plain toast
+          showToast(
+            isBaseChanged ? getSavedMessage(current.is_base, saved) : CV_SAVED_MESSAGE,
+            "success",
+          );
         } else {
           const created = await createCv({
             name: values.name,
@@ -153,7 +158,8 @@ export function CvEditorPage() {
           });
           // Set before navigating so the load effect for the new id is skipped
           setSavedCv(created);
-          showToast(getSavedMessage(false, created), "success");
+          // The switch starts off, so only "on" is a change made by this save
+          showToast(values.isBase ? getSavedMessage(false, created) : CV_SAVED_MESSAGE, "success");
           // The router keeps this page (and the editor) mounted across the
           // /cvs/new → /cvs/:id/edit move, so the draft and focus stay put
           navigate(`/cvs/${created.id}/edit`, { replace: true });

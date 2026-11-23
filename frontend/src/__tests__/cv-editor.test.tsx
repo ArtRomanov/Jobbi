@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { delay, http, HttpResponse } from "msw";
 import { CvEditorPage } from "@/pages/cv-editor";
@@ -363,6 +363,44 @@ describe("CvEditorPage — Base CV switch", () => {
     expect(await screen.findByText("CV saved")).toBeInTheDocument();
     expect(patches[0]).not.toHaveProperty("is_base");
     expect(screen.getByText("Base")).toBeInTheDocument();
+  });
+
+  it("base changed elsewhere: a text-only save says just CV saved and the switch follows the server", async () => {
+    const user = userEvent.setup();
+    // cv-1 was the base when opened; another CV became the base meanwhile
+    const patches: Record<string, unknown>[] = [];
+    server.use(
+      http.patch(CV_URL, async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown> & { version: number };
+        patches.push(body);
+        const { version, ...changes } = body;
+        return HttpResponse.json({ ...mockCvs[0]!, ...changes, is_base: false, version: version + 1 });
+      }),
+    );
+    const { router } = renderWithProviders(<CvEditorPage />, {
+      initialEntries: ["/cvs/cv-1/edit"],
+      path: "/cvs/:id/edit",
+      routes: [{ path: "/cvs", element: <p>CVs list</p> }],
+    });
+    await screen.findByDisplayValue("Software Engineer CV");
+    expect(baseSwitch()).toBeChecked();
+
+    await user.type(textArea(), "!");
+    await user.click(saveButton());
+
+    expect(await screen.findByText("CV saved")).toBeInTheDocument();
+    expect(patches[0]).not.toHaveProperty("is_base");
+    expect(screen.queryByText("CV saved. You have no base CV now.")).not.toBeInTheDocument();
+    await waitFor(() => expect(baseSwitch()).not.toBeChecked());
+    expect(screen.queryByText("Base")).not.toBeInTheDocument();
+    expect(saveButton()).toHaveAttribute("aria-disabled", "true");
+
+    // Nothing unsaved: leaving does not ask
+    await act(async () => {
+      await router.navigate("/cvs");
+    });
+    expect(await screen.findByText("CVs list")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("a new CV with the switch on is created as the base", async () => {

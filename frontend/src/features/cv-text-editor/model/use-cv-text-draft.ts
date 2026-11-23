@@ -33,6 +33,17 @@ export function useCvTextDraft(
   const [isBase, setIsBase] = useState(initial.isBase);
   const [nameError, setNameError] = useState<string | null>(null);
 
+  // After every save the switch follows the server's answer: the base may have
+  // changed elsewhere, and a stale switch would leave Save and the guard dirty.
+  // Name and text are not re-seeded, so typing is never overwritten. Adjusted
+  // during render (React's "store previous prop" pattern), not in an effect,
+  // so no frame shows a dirty Save.
+  const [syncedSaved, setSyncedSaved] = useState(saved);
+  if (saved !== syncedSaved) {
+    setSyncedSaved(saved);
+    setIsBase(saved.isBase);
+  }
+
   const setName = useCallback((next: string) => {
     setNameState(next);
     // A blank name shows "Required" while typing; a valid one clears it
