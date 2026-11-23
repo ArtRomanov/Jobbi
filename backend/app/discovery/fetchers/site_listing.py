@@ -17,12 +17,14 @@ geekjob.ru (``geekjob.ru`` / ``www.geekjob.ru``, path ``/vacancies`` or
 from the page URL and calls ``GET /json/find/vacancy?page=N&<filters>``,
 which answers ``{page, nextpage, pagecount, documentsCount, data: [{id,
 position, company, log: {modify, archived}, ...}]}`` (up to 100 per page;
-``nextpage`` is 0 on the last page). Recognised filters, copied from the
-pasted link: ``qs`` (search text), ``t`` / ``or`` (comma-separated tag ids),
-``s`` (salary given; the site also sends ``money``, default 120 000), ``pt``,
-``ih``, ``rm``, ``rl``, ``na`` (part-time, in-house, remote, relocation, no
-agencies). At least one is needed, otherwise the page is server-rendered and
-read as HTML. ``sort=1`` ("by date", newest first) is always sent, so the
+``nextpage`` is 0 on the last page). Only the filters the site's script
+itself reads from the page URL are copied: ``qs`` (search text), ``t``
+(comma-separated tag ids), ``s`` (salary given; the script then always sends
+its own ``money=120000``, never one from the URL), ``pt``, ``ih``, ``rm``,
+``rl``, ``na`` (part-time, in-house, remote, relocation, no agencies).
+``or``, ``money`` and ``f`` in the pasted link are ignored, as on the site.
+At least one filter is needed, otherwise the page is server-rendered and
+read as HTML. A single trailing dot on the host (``geekjob.ru.``) is allowed. ``sort=1`` ("by date", newest first) is always sent, so the
 worker's "stop at the first page with a seen job" rule holds. A job is
 ``https://geekjob.ru/vacancy/<id>`` titled by ``position``; archived jobs
 are skipped.
@@ -101,7 +103,6 @@ _GEEKJOB_FLAGS = ("pt", "ih", "rm", "rl", "na")
 _GEEKJOB_DEFAULT_MONEY = "120000"
 _GEEKJOB_NEWEST_FIRST = ("sort", "1")
 _TAG_LIST_RE = re.compile(r"\d{1,6}(?:,\d{1,6}){0,49}", re.ASCII)
-_MONEY_RE = re.compile(r"\d{1,9}", re.ASCII)
 _ITEM_ID_RE = re.compile(r"[A-Za-z0-9]{1,64}", re.ASCII)
 
 
@@ -114,17 +115,19 @@ def _geekjob_params(query: str) -> list[tuple[str, str]]:
     text = values.get("qs", "").strip()[:MAX_QUERY_CHARS].strip()
     if text:
         params.append(("qs", text))
-    for name in ("t", "or"):
-        if _TAG_LIST_RE.fullmatch(values.get(name, "")):
-            params.append((name, values[name]))
+    if _TAG_LIST_RE.fullmatch(values.get("t", "")):
+        params.append(("t", values["t"]))
     if values.get("s"):
-        money = values.get("money", "")
         params.append(("s", "1"))
-        params.append(
-            ("money", money if _MONEY_RE.fullmatch(money) else _GEEKJOB_DEFAULT_MONEY)
-        )
+        params.append(("money", _GEEKJOB_DEFAULT_MONEY))
     params.extend((flag, "1") for flag in _GEEKJOB_FLAGS if values.get(flag))
     return params
+
+
+def _host_without_root_dot(hostname: str | None) -> str:
+    """Lowercased host with one trailing (DNS root) dot removed."""
+    host = (hostname or "").lower()
+    return host[:-1] if host.endswith(".") else host
 
 
 def _match_geekjob(url: str) -> SiteListing | None:
@@ -138,7 +141,7 @@ def _match_geekjob(url: str) -> SiteListing | None:
         or parts.username is not None
         or parts.password is not None
         or port is not None
-        or (parts.hostname or "").lower() not in _GEEKJOB_HOSTS
+        or _host_without_root_dot(parts.hostname) not in _GEEKJOB_HOSTS
         or not _GEEKJOB_PATH_RE.fullmatch(parts.path)
     ):
         return None

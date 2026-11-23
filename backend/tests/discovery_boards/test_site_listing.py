@@ -53,6 +53,8 @@ def _answer(items: list[Any], *, page: int = 1, nextpage: Any = 0) -> dict[str, 
         "http://geekjob.ru/vacancies?qs=react",
         "https://www.geekjob.ru/vacancies?qs=react",
         "https://GEEKJOB.RU/vacancies?qs=react",
+        "https://GEEKJOB.RU./vacancies?qs=x",  # trailing-dot host
+        "https://www.geekjob.ru./vacancies?rm=1",
         "https://geekjob.ru/vacancies/?qs=react",
         "https://geekjob.ru/vacancies/2?qs=react",
         "https://geekjob.ru/vacancies?rm=1",
@@ -77,6 +79,11 @@ def test_geekjob_search_links_get_the_adapter(url: str) -> None:
         "https://geekjob.ru/vacancies?t=abc",
         "https://geekjob.ru/vacancies?sort=1",
         "https://geekjob.ru/vacancies?page=2",
+        # The site's own script never reads these from the page URL.
+        "https://geekjob.ru/vacancies?or=52,107",
+        "https://geekjob.ru/vacancies?money=200000",
+        "https://geekjob.ru/vacancies?f=1,2",
+        "https://geekjob.ru../vacancies?qs=x",
         "https://geekjob.ru/vacancy/6b01b96bc859285a74045e0c?qs=react",
         "https://geekjob.ru/vacancies/x?qs=react",
         "https://geekjob.ru/json/find/vacancy?qs=react",
@@ -101,19 +108,21 @@ def test_other_links_keep_the_html_path(url: str) -> None:
 def test_filters_are_copied_and_newest_first_is_forced() -> None:
     listing = site_listing.find_site_listing(
         "https://geekjob.ru/vacancies/3?qs=react%20native&rm=1&rl=1&pt=1&ih=1&na=1"
-        "&t=52,107&s=1&money=200000&sort=2&page=7&utm_source=tg&foo=bar"
+        "&t=52,107&or=1,2&s=1&money=200000&sort=2&page=7&utm_source=tg&foo=bar"
     )
     assert listing is not None
 
     url = listing.page_url(1)
 
     assert url.startswith("https://geekjob.ru/json/find/vacancy?")
+    # Only what the site's script reads from the page URL; `money` is always
+    # the script's own default and `or` is never read.
     assert _query(url) == [
         ("page", "1"),
         ("qs", "react native"),
         ("t", "52,107"),
         ("s", "1"),
-        ("money", "200000"),
+        ("money", "120000"),
         ("pt", "1"),
         ("ih", "1"),
         ("rm", "1"),
