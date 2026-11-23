@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from sqlalchemy import Select, case, func, or_, select, update
+from sqlalchemy import Select, case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.application import Application
@@ -128,42 +128,64 @@ async def list_cvs(db: AsyncSession, user_id: str) -> list[CvDetails]:
 
 
 async def create_cv(db: AsyncSession, user_id: str, data: CvCreate) -> Cv:
+    """Create an own CV. With `data.is_base` it becomes the user's base CV in
+    the same transaction."""
     cv = Cv(user_id=user_id, name=data.name, content=data.content)
     db.add(cv)
+    await db.flush()
+    if data.is_base:
+        await _set_base(db, user_id, cv.id)
     await db.commit()
     await db.refresh(cv)
     return cv
 
 
-async def create_uploaded_cv(
-    db: AsyncSession, user_id: str, data: CvCreate
-) -> tuple[Cv, bool]:
-    """Create an own CV from an upload; it becomes the base if the user has
-    none. Returns the CV and whether it became the base.
+async def _set_base(
+    db: AsyncSession,
+    user_id: str,
+    cv_id: str,
+    *,
+    expected_version: int | None = None,
+) -> bool:
+    """Point the user's base at their CV `cv_id`; a tailored copy becomes an
+    own CV for good and keeps its application link. Neither write touches
+    `version` or `updated_at`. Does not commit.
 
-    The base is set by a conditional `UPDATE ... WHERE base_cv_id IS NULL OR
-    base_cv_id NOT IN (the user's CVs)`, so of two concurrent first uploads
-    only one becomes the base, and a dangling pointer counts as "no base".
+    Both writes are conditional on the CV still being the user's (and, if
+    given, still at `expected_version`), so a delete or save that lands after
+    the caller's read never leaves a dangling base. Returns False (nothing
+    written) if the condition fails.
     """
-    cv = Cv(user_id=user_id, name=data.name, content=data.content)
-    db.add(cv)
-    await db.flush()
+    conditions = [Cv.id == cv_id, Cv.user_id == user_id]
+    if expected_version is not None:
+        conditions.append(Cv.version == expected_version)
+    still_mine = select(Cv.id).where(*conditions).exists()
     result = await db.execute(
         update(User)
-        .where(
-            User.id == user_id,
-            or_(
-                User.base_cv_id.is_(None),
-                User.base_cv_id.not_in(_user_cv_ids(user_id)),
-            ),
-        )
-        .values(base_cv_id=cv.id)
+        .where(User.id == user_id, still_mine)
+        .values(base_cv_id=cv_id)
         .execution_options(synchronize_session=False)
     )
-    became_base = result.rowcount == 1
-    await db.commit()
-    await db.refresh(cv)
-    return cv, became_base
+    if result.rowcount == 0:
+        return False
+    await db.execute(
+        update(Cv)
+        .where(Cv.id == cv_id, Cv.user_id == user_id, Cv.kind != CV_KIND_OWN)
+        # Explicit so the `onupdate` does not move the CV in the list.
+        .values(kind=CV_KIND_OWN, updated_at=Cv.updated_at)
+        .execution_options(synchronize_session=False)
+    )
+    return True
+
+
+async def _clear_base_if(db: AsyncSession, user_id: str, cv_id: str) -> None:
+    """Clear the user's base only if it points at `cv_id`. Does not commit."""
+    await db.execute(
+        update(User)
+        .where(User.id == user_id, User.base_cv_id == cv_id)
+        .values(base_cv_id=None)
+        .execution_options(synchronize_session=False)
+    )
 
 
 async def make_base(db: AsyncSession, user_id: str, cv_id: str) -> Cv | None:
@@ -176,25 +198,9 @@ async def make_base(db: AsyncSession, user_id: str, cv_id: str) -> Cv | None:
     cv = await get_cv(db, user_id, cv_id)
     if cv is None:
         return None
-    # Both writes are conditional on the CV still being the user's: a delete
-    # that lands after the read above must not leave a dangling base.
-    still_mine = select(Cv.id).where(Cv.id == cv_id, Cv.user_id == user_id).exists()
-    result = await db.execute(
-        update(User)
-        .where(User.id == user_id, still_mine)
-        .values(base_cv_id=cv_id)
-        .execution_options(synchronize_session=False)
-    )
-    if result.rowcount == 0:
+    if not await _set_base(db, user_id, cv_id):
         await db.rollback()
         return None
-    await db.execute(
-        update(Cv)
-        .where(Cv.id == cv_id, Cv.user_id == user_id, Cv.kind != CV_KIND_OWN)
-        # Explicit so the `onupdate` does not move the CV in the list.
-        .values(kind=CV_KIND_OWN, updated_at=Cv.updated_at)
-        .execution_options(synchronize_session=False)
-    )
     fresh = await db.execute(
         select(Cv)
         .where(Cv.id == cv_id, Cv.user_id == user_id)
@@ -269,8 +275,10 @@ async def update_cv(
     """Apply an editor save. Returns None if the CV is not the user's.
 
     Raises CvVersionConflict if `data.version` is stale, also for a save that
-    changes nothing. A save that changes nothing at the current version returns
-    the CV without bumping its version.
+    changes nothing or only `is_base`. Name/content changes bump `version`;
+    a base change does not. `is_base=True` makes the CV the base (a tailored
+    copy becomes own), `False` clears the base only if it is this CV, `None`
+    leaves it alone. Everything commits in one transaction.
     """
     cv = await get_cv(db, user_id, cv_id)
     if cv is None:
@@ -283,13 +291,22 @@ async def update_cv(
     changed = {
         field: value for field, value in changes.items() if getattr(cv, field) != value
     }
-    if not changed:
+    if not changed and data.is_base is None:
         return cv
 
     try:
-        cv = await update_cv_content_if_version(
-            db, user_id, cv_id, data.version, **changed
-        )
+        # Base first: its guard checks the version the content update bumps.
+        if data.is_base is True:
+            if not await _set_base(db, user_id, cv_id, expected_version=data.version):
+                if await get_cv(db, user_id, cv_id) is None:
+                    raise CvNotFoundError(cv_id)
+                raise CvVersionConflict(cv_id)
+        elif data.is_base is False:
+            await _clear_base_if(db, user_id, cv_id)
+        if changed:
+            await update_cv_content_if_version(
+                db, user_id, cv_id, data.version, **changed
+            )
     except CvNotFoundError:
         await db.rollback()
         return None
@@ -297,8 +314,12 @@ async def update_cv(
         await db.rollback()
         raise
     await db.commit()
-    await db.refresh(cv)
-    return cv
+    fresh = await db.execute(
+        select(Cv)
+        .where(Cv.id == cv_id, Cv.user_id == user_id)
+        .execution_options(populate_existing=True)
+    )
+    return fresh.scalar_one_or_none()
 
 
 async def delete_cv(db: AsyncSession, user_id: str, cv_id: str) -> bool:
@@ -313,12 +334,7 @@ async def delete_cv(db: AsyncSession, user_id: str, cv_id: str) -> bool:
     # Cards keep `cv_id` without an FK: pending ones on this CV go stale.
     await chat_card_service.mark_cv_cards_stale(db, cv_id)
     # No FK enforcement on SQLite: deleting the base leaves no base.
-    await db.execute(
-        update(User)
-        .where(User.id == user_id, User.base_cv_id == cv_id)
-        .values(base_cv_id=None)
-        .execution_options(synchronize_session=False)
-    )
+    await _clear_base_if(db, user_id, cv_id)
 
     await db.delete(cv)
     await db.commit()
