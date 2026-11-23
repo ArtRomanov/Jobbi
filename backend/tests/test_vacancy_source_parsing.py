@@ -4,6 +4,7 @@ from app.services.vacancy_source_parsing import (
     BOARD_INVALID_INPUT_MESSAGE,
     INVALID_INPUT_MESSAGE,
     MAX_INPUT_LENGTH,
+    PRIVATE_INVITE_MESSAGE,
     ParsedSource,
     SourceInputError,
     parse_source_input,
@@ -72,8 +73,6 @@ def test_telegram_handle_length_bounds_accepted(handle: str) -> None:
         "t.me/s/../../etc/passwd",
         "https://t.me/durov_jobs/../admin",
         "https://t.me/durov_jobs/abc",
-        "https://t.me/joinchat/AAAAAE",
-        "https://t.me/+AbCdEfGhIj",
         "https://t.me/durov_jobs#frag",
         "https://t.me/durov_jobs%2F..",
         "t.me/s/s/durov_jobs",
@@ -97,6 +96,22 @@ def test_hostile_or_unsupported_input_rejected(raw: str) -> None:
     with pytest.raises(SourceInputError) as exc_info:
         parse_source_input(raw)
     assert exc_info.value.message == INVALID_INPUT_MESSAGE
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "https://t.me/+0zv_MNh22Xw3NTMy",
+        "t.me/+0zv_MNh22Xw3NTMy",
+        "http://t.me/joinchat/AAAAAEtest123",
+        "https://telegram.me/joinchat/AAAAAEtest123",
+        "T.ME/+abc",
+    ],
+)
+def test_private_invite_link_gets_private_hint(raw: str) -> None:
+    with pytest.raises(SourceInputError) as exc_info:
+        parse_source_input(raw)
+    assert exc_info.value.message == PRIVATE_INVITE_MESSAGE
 
 
 def test_over_long_input_rejected() -> None:
@@ -247,7 +262,7 @@ def test_hostile_or_unknown_board_links_rejected(raw: str) -> None:
         # Telegram-looking input -> Telegram hint.
         ("@abc", INVALID_INPUT_MESSAGE),
         ("t.me/abc", INVALID_INPUT_MESSAGE),
-        ("https://t.me/joinchat/AAAAAE", INVALID_INPUT_MESSAGE),
+        ("https://t.me/joinchat/AAAAAE", PRIVATE_INVITE_MESSAGE),
         ("https://t.me.evil.com/durov_jobs", INVALID_INPUT_MESSAGE),
         ("https://telegram.me/durov_jobs", INVALID_INPUT_MESSAGE),
         ("@clever_jobs!", INVALID_INPUT_MESSAGE),  # "lever" inside is not a link

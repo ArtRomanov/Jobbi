@@ -14,6 +14,8 @@ Supported inputs:
   `lever_eu` (Lever keeps a company's data in one region).
 
 Which error text an unrecognised input gets (`_invalid_input_message`):
+- a private invite link (`t.me/+HASH`, `t.me/joinchat/HASH`) ->
+  PRIVATE_INVITE_MESSAGE (only public channels can be read);
 - it mentions `greenhouse.io` or `lever.co`, or it is an http(s) URL whose
   host does not look like Telegram -> BOARD_INVALID_INPUT_MESSAGE;
 - anything else (`@name`, bare words, t.me look-alikes) ->
@@ -28,6 +30,10 @@ MAX_INPUT_LENGTH = 200
 
 INVALID_INPUT_MESSAGE = "Enter a Telegram channel as @name or a t.me/name link"
 BOARD_INVALID_INPUT_MESSAGE = "Not a Greenhouse or Lever job board link"
+PRIVATE_INVITE_MESSAGE = (
+    "Private Telegram invite links are not supported. "
+    "Add a public channel as @name or a t.me/name link"
+)
 
 # Telegram usernames: 5-32 letters, digits or underscores.
 _TELEGRAM_HANDLE = r"[A-Za-z0-9_]{5,32}"
@@ -77,6 +83,11 @@ _LEVER_LINK = re.compile(
 _BOARD_DOMAIN_HINT = re.compile(r"greenhouse\.io|lever\.co", re.IGNORECASE)
 _HTTP_URL = re.compile(r"https?://(?P<host>[^/?#]*)", re.IGNORECASE)
 _TELEGRAM_HOST_HINT = re.compile(r"t\.me|telegram", re.IGNORECASE)
+# Private invite links: `t.me/+HASH` or `t.me/joinchat/HASH` (also on
+# telegram.me). Only used to pick a clearer error text, never accepted.
+_TELEGRAM_PRIVATE_INVITE = re.compile(
+    r"(?:https?://)?(?:t|telegram)\.me/(?:\+|joinchat/)", re.IGNORECASE
+)
 
 
 class SourceInputError(ValueError):
@@ -127,6 +138,8 @@ _PARSERS: tuple[Callable[[str], ParsedSource | None], ...] = (
 
 def _invalid_input_message(text: str) -> str:
     """Pick the hint for unrecognised input (rule in the module docstring)."""
+    if _TELEGRAM_PRIVATE_INVITE.match(text):
+        return PRIVATE_INVITE_MESSAGE
     if _BOARD_DOMAIN_HINT.search(text):
         return BOARD_INVALID_INPUT_MESSAGE
     url = _HTTP_URL.match(text)
