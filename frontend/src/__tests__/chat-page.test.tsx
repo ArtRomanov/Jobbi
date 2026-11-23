@@ -1,30 +1,20 @@
 import { StrictMode, useState } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { http, HttpResponse } from "msw";
 import { ChatPage } from "@/pages/chat/ui/chat-page";
-import { ToastProvider } from "@/shared/ui";
 import { server } from "./setup";
+import { renderWithProviders } from "./utils";
 
 const BASE_URL = "http://localhost:8000";
 
 function renderChatPage(applicationId: string) {
-  return render(
-    <MemoryRouter
-      initialEntries={[`/applications/${applicationId}/chat`]}
-    >
-      <ToastProvider>
-        <Routes>
-          <Route
-            path="/applications/:id/chat"
-            element={<ChatPage />}
-          />
-          <Route path="/dashboard" element={<p>Dashboard</p>} />
-        </Routes>
-      </ToastProvider>
-    </MemoryRouter>,
-  );
+  return renderWithProviders(<ChatPage />, {
+    initialEntries: [`/applications/${applicationId}/chat`],
+    path: "/applications/:id/chat",
+    routes: [{ path: "/dashboard", element: <p>Dashboard</p> }],
+  });
 }
 
 beforeEach(() => {
@@ -101,15 +91,10 @@ describe("ChatPage draft from router state", () => {
   }
 
   function renderWithDraft() {
-    return render(
-      <MemoryRouter initialEntries={[{ pathname: "/applications/app-1/chat", state: { draft: DRAFT } }]}>
-        <ToastProvider>
-          <Routes>
-            <Route path="/applications/:id/chat" element={<RemountableChat />} />
-          </Routes>
-        </ToastProvider>
-      </MemoryRouter>,
-    );
+    return renderWithProviders(<RemountableChat />, {
+      initialEntries: [{ pathname: "/applications/app-1/chat", state: { draft: DRAFT } }],
+      path: "/applications/:id/chat",
+    });
   }
 
   it("pre-fills the input without sending it", async () => {
@@ -155,28 +140,18 @@ describe("ChatPage draft under StrictMode", () => {
       const location = useLocation();
       return <output aria-label="router state">{JSON.stringify(location.state)}</output>;
     }
-    render(
-      <StrictMode>
-        <MemoryRouter
-          initialEntries={[
-            { pathname: "/applications/app-1/chat", state: { draft: "Adapt my CV to this vacancy" } },
-          ]}
-        >
-          <ToastProvider>
-            <Routes>
-              <Route
-                path="/applications/:id/chat"
-                element={
-                  <>
-                    <ChatPage />
-                    <StateProbe />
-                  </>
-                }
-              />
-            </Routes>
-          </ToastProvider>
-        </MemoryRouter>
-      </StrictMode>,
+    renderWithProviders(
+      <>
+        <ChatPage />
+        <StateProbe />
+      </>,
+      {
+        initialEntries: [
+          { pathname: "/applications/app-1/chat", state: { draft: "Adapt my CV to this vacancy" } },
+        ],
+        path: "/applications/:id/chat",
+        wrapper: StrictMode,
+      },
     );
 
     expect(screen.getByRole("textbox", { name: "Chat message" })).toHaveValue("Adapt my CV to this vacancy");

@@ -1,13 +1,13 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { http, HttpResponse, delay } from "msw";
 import { InboxPage } from "@/pages/inbox";
 import { ChatPage } from "@/pages/chat";
 import { useNewVacancyCount } from "@/entities/vacancy";
-import { ToastProvider } from "@/shared/ui";
 import { mockVacancy, mockVacancyPageEmpty } from "./mocks/handlers";
 import { server } from "./setup";
+import { renderWithProviders } from "./utils";
 
 const VACANCIES_URL = "*/api/v1/vacancies";
 const ADD_URL = "*/api/v1/vacancies/:id/add-to-tracker";
@@ -68,24 +68,19 @@ function CountProbe() {
 }
 
 function renderApp() {
-  return render(
-    <MemoryRouter initialEntries={["/inbox"]}>
-      <ToastProvider>
-        <Routes>
-          <Route
-            path="/inbox"
-            element={
-              <>
-                <CountProbe />
-                <InboxPage />
-              </>
-            }
-          />
-          <Route path="/dashboard" element={<LocationProbe />} />
-          <Route path="/applications/:id/chat" element={<ChatPage />} />
-        </Routes>
-      </ToastProvider>
-    </MemoryRouter>,
+  return renderWithProviders(
+    <>
+      <CountProbe />
+      <InboxPage />
+    </>,
+    {
+      initialEntries: ["/inbox"],
+      path: "/inbox",
+      routes: [
+        { path: "/dashboard", element: <LocationProbe /> },
+        { path: "/applications/:id/chat", element: <ChatPage /> },
+      ],
+    },
   );
 }
 
