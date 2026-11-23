@@ -97,6 +97,8 @@ describe("CvEditorPage — create", () => {
     );
     renderEditor("/cvs/new");
 
+    // Some text, so the draft differs from the (empty) saved version and Save is active
+    await user.type(textArea(), "# Me");
     if (name) await user.type(nameInput(), name);
     await user.click(screen.getByRole("button", { name: "Save" }));
 
@@ -240,6 +242,7 @@ describe("CvEditorPage — edit", () => {
     renderEditor("/cvs/cv-1/edit");
     await screen.findByDisplayValue("Software Engineer CV");
 
+    await user.type(textArea(), "!");
     await user.dblClick(screen.getByRole("button", { name: "Save" }));
 
     expect(await screen.findByText("CV saved")).toBeInTheDocument();

@@ -5,8 +5,10 @@ import { CV_NAME_MAX_LENGTH, PHONE_MEDIA_QUERY } from "../config";
 import { useMediaQuery } from "../lib/use-media-query";
 import type { CvTextEditorValues } from "../model/types";
 import { useCvTextDraft } from "../model/use-cv-text-draft";
+import { useUnsavedChangesGuard } from "../model/use-unsaved-changes-guard";
 import { CvContentField } from "./cv-content-field";
 import { CvPreviewPane } from "./cv-preview-pane";
+import { UnsavedChangesDialog } from "./unsaved-changes-dialog";
 
 type EditorTab = "edit" | "preview";
 
@@ -26,9 +28,16 @@ const PANE_LABEL_STYLE = {
 interface CvTextEditorProps {
   /** Values the editor starts from; read once on mount. */
   initialValues: CvTextEditorValues;
+  /**
+   * The last saved version ({"", ""} for a CV not created yet). "Save" is
+   * active and leaving is guarded only while the draft differs from it.
+   */
+  savedValues: CvTextEditorValues;
   /** Called with the trimmed name and the text. Errors are the caller's to show. */
   onSave: (values: CvTextEditorValues) => Promise<void>;
   isSaving: boolean;
+  /** Why the last save failed; shown next to "Save". The draft is kept. */
+  saveError?: string | null;
   /**
    * When given, an "Export PDF" button exports the current draft (unsaved
    * changes included; the name trimmed, possibly empty).
@@ -41,14 +50,22 @@ interface CvTextEditorProps {
  * "Edit" / "Preview" tabs on phone width. A `feature/` because it is the
  * user's "edit my CV" interaction; saving itself is wired by the page.
  */
-export function CvTextEditor({ initialValues, onSave, isSaving, onExport }: CvTextEditorProps) {
-  const draft = useCvTextDraft(initialValues);
+export function CvTextEditor({
+  initialValues,
+  savedValues,
+  onSave,
+  isSaving,
+  saveError,
+  onExport,
+}: CvTextEditorProps) {
+  const draft = useCvTextDraft(initialValues, savedValues);
+  const guard = useUnsavedChangesGuard(draft.isDirty);
   const isPhone = useMediaQuery(PHONE_MEDIA_QUERY);
   const [tab, setTab] = useState<EditorTab>("edit");
 
   function handleSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    if (isSaving) return;
+    if (isSaving || !draft.isDirty) return;
     const values = draft.validate();
     if (!values) return;
     // Show the name as it is saved (trimmed)
@@ -95,8 +112,14 @@ export function CvTextEditor({ initialValues, onSave, isSaving, onExport }: CvTe
         </div>
       )}
 
+      {saveError ? (
+        <p role="alert" style={{ margin: "1rem 0 0", fontSize: "0.875rem", color: colors.error }}>
+          {saveError}
+        </p>
+      ) : null}
+
       <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem" }}>
-        <Button type="submit" loading={isSaving}>
+        <Button type="submit" loading={isSaving} disabled={!draft.isDirty}>
           Save
         </Button>
         {onExport ? (
@@ -109,6 +132,8 @@ export function CvTextEditor({ initialValues, onSave, isSaving, onExport }: CvTe
           </Button>
         ) : null}
       </div>
+
+      {guard.isPrompting ? <UnsavedChangesDialog onLeave={guard.leave} onStay={guard.stay} /> : null}
     </form>
   );
 }

@@ -1,10 +1,12 @@
 import { useId, useLayoutEffect, useRef, type ClipboardEvent } from "react";
 import { FormTextarea, colors } from "@/shared/ui";
 import {
+  CV_CONTENT_COUNTER_THRESHOLD,
   CV_CONTENT_MAX_LENGTH,
   CV_CONTENT_PLACEHOLDER,
   CV_FORMATTING_HINT,
 } from "../config";
+import { formatThousands } from "../lib/format-thousands";
 import { insertTextWithinLimit } from "../lib/insert-text-within-limit";
 
 interface CvContentFieldProps {
@@ -19,6 +21,8 @@ interface CvContentFieldProps {
  */
 export function CvContentField({ value, onChange }: CvContentFieldProps) {
   const hintId = useId();
+  const counterId = useId();
+  const showCounter = value.length > CV_CONTENT_COUNTER_THRESHOLD;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const pendingCaretRef = useRef<number | null>(null);
 
@@ -59,17 +63,30 @@ export function CvContentField({ value, onChange }: CvContentFieldProps) {
         value={value}
         maxLength={CV_CONTENT_MAX_LENGTH}
         placeholder={CV_CONTENT_PLACEHOLDER}
-        aria-describedby={hintId}
+        aria-describedby={showCounter ? `${hintId} ${counterId}` : hintId}
         spellCheck
         onChange={(event) => onChange(event.target.value)}
         onPaste={handlePaste}
       />
-      <p
-        id={hintId}
-        style={{ margin: "-0.75rem 0 1rem", fontSize: "0.75rem", color: colors.textMuted }}
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: "0.75rem",
+          margin: "-0.75rem 0 1rem",
+          fontSize: "0.75rem",
+          color: colors.textMuted,
+        }}
       >
-        {CV_FORMATTING_HINT}
-      </p>
+        <p id={hintId} style={{ margin: 0 }}>
+          {CV_FORMATTING_HINT}
+        </p>
+        {showCounter ? (
+          <p id={counterId} style={{ margin: 0, whiteSpace: "nowrap" }}>
+            {`${formatThousands(value.length)} / ${formatThousands(CV_CONTENT_MAX_LENGTH)}`}
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }

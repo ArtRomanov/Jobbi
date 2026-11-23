@@ -6,4 +6,7 @@ The CV editor (functional spec 011 §2.1): name field + one textarea for the who
 - Text limit 20 000 (UTF-16 units, the same unit `maxLength` counts). Typing stops via `maxLength`; a paste is intercepted only when it would pass the limit, then cut to fit by `insertTextWithinLimit` (never splits a surrogate pair), caret placed after the pasted part. A paste that fits stays native so browser undo keeps working.
 - `onExport` (optional) adds "Export PDF", which exports the current draft (name trimmed), not the saved version.
 - Name: `maxLength` 255, trimmed before save; blank → "Required" and `onSave` is not called.
-- The draft lives in `model/use-cv-text-draft.ts` so dirty tracking, the counter and the unsaved-changes guard (Slice 3) can hook in there.
+- Counter "N / 20 000" (space-grouped) shows above `CV_CONTENT_COUNTER_THRESHOLD` (18 000) and joins the textarea's `aria-describedby`.
+- Dirty = the draft differs from `savedValues` (name compared trimmed). "Save" is disabled while not dirty; reverting disables it again. A blank name shows "Required" while typing.
+- `saveError` (from the page) is shown as `role="alert"` next to Save; `getCvSaveErrorMessage` maps a PATCH 409 `CV_CHANGED` to the "changed elsewhere" text and any other failure to "Could not save the CV. Please try again." The draft is never touched on failure.
+- `useUnsavedChangesGuard(isDirty)`: `useBlocker` (needs the data router) + `beforeunload` while dirty; the editor renders `UnsavedChangesDialog` ("Leave" / "Stay", Escape = Stay). `REPLACE` navigations are not blocked, so the page's `/cvs/new` → `/cvs/<id>/edit` move after the first save goes through.
