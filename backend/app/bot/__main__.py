@@ -17,6 +17,7 @@ from telegram.ext import (
 
 from app.bot.handlers.cancel import handle_cancel
 from app.bot.handlers.dialog import handle_message, handle_status_callback
+from app.bot.handlers.inbox_forward import CHANNEL_FORWARD
 from app.bot.handlers.jobs import register_summary_jobs
 from app.bot.handlers.start import handle_start
 from app.bot.handlers.summary import handle_summary
@@ -53,15 +54,15 @@ def add_handlers(app: Application) -> None:
     the chat type itself.
     """
     private = filters.ChatType.PRIVATE
+    # First: a channel post forwarded to the bot goes to the Inbox, whatever
+    # it contains (media only, text starting with "/").
+    app.add_handler(MessageHandler(CHANNEL_FORWARD & private, handle_message))
     app.add_handler(CommandHandler("start", handle_start, filters=private))
     app.add_handler(CommandHandler("cancel", handle_cancel, filters=private))
     app.add_handler(CommandHandler("summary", handle_summary, filters=private))
     app.add_handler(CallbackQueryHandler(handle_status_callback, pattern=r"^status:"))
     app.add_handler(
-        MessageHandler(
-            (filters.TEXT | filters.CAPTION) & ~filters.COMMAND & private,
-            handle_message,
-        )
+        MessageHandler(filters.TEXT & ~filters.COMMAND & private, handle_message)
     )
 
 

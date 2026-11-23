@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from telegram import Chat, Message, MessageEntity, Update
+from telegram import Chat, Message, MessageEntity, MessageOriginChannel, Update
 from telegram import User as TgUser
 from telegram.ext import (
     Application,
@@ -53,7 +53,7 @@ def _use_test_db(monkeypatch: pytest.MonkeyPatch) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _message_update(chat_type: str, text: str) -> Update:
+def _message_update(chat_type: str, text: str, *, from_channel: bool = False) -> Update:
     entities = (
         [MessageEntity(MessageEntity.BOT_COMMAND, 0, len(text.split()[0]))]
         if text.startswith("/")
@@ -66,6 +66,13 @@ def _message_update(chat_type: str, text: str) -> Update:
         from_user=TgUser(id=7, first_name="Ann", is_bot=False),
         text=text,
         entities=entities,
+        forward_origin=MessageOriginChannel(
+            date=datetime.now(timezone.utc),
+            chat=Chat(id=-1001234567890, type=Chat.CHANNEL, title="Jobs"),
+            message_id=5,
+        )
+        if from_channel
+        else None,
     )
     return Update(update_id=1, message=message)
 
@@ -79,6 +86,12 @@ def bot_app() -> Application:
 
 def _registered_handlers(app: Application) -> list[object]:
     return [h for group in app.handlers.values() for h in group]
+
+
+def _sample_update(chat_type: str, handler: object) -> Update:
+    # The channel-forward handler only takes channel forwards.
+    from_channel = "CHANNEL_FORWARD" in str(getattr(handler, "filters", ""))
+    return _message_update(chat_type, _sample_text(handler), from_channel=from_channel)
 
 
 def _sample_text(handler: object) -> str:
@@ -104,7 +117,7 @@ def test_message_and_command_handlers_ignore_non_private_chats(
     for handler in _registered_handlers(bot_app):
         if isinstance(handler, CallbackQueryHandler):
             continue
-        update = _message_update(chat_type, _sample_text(handler))
+        update = _sample_update(chat_type, handler)
         assert not handler.filters.check_update(update), handler
 
 
@@ -114,7 +127,7 @@ def test_message_and_command_handlers_accept_private_chats(
     for handler in _registered_handlers(bot_app):
         if isinstance(handler, CallbackQueryHandler):
             continue
-        update = _message_update(Chat.PRIVATE, _sample_text(handler))
+        update = _sample_update(Chat.PRIVATE, handler)
         assert handler.filters.check_update(update), handler
 
 
@@ -136,9 +149,7 @@ def _callback_update(
 
 
 @pytest.fixture
-async def linked_at_status_step(
-    db_session: AsyncSession, make_user: MakeUser
-) -> str:
+async def linked_at_status_step(db_session: AsyncSession, make_user: MakeUser) -> str:
     user = await make_user()
     db_session.add_all(
         [
@@ -193,9 +204,7 @@ async def test_status_callback_rejects_unknown_status(
     await dialog.handle_status_callback(update, SimpleNamespace())
 
     assert await _applications(db_session) == []
-    update.callback_query.answer.assert_awaited_once_with(
-        dialog.UNKNOWN_STATUS_MESSAGE
-    )
+    update.callback_query.answer.assert_awaited_once_with(dialog.UNKNOWN_STATUS_MESSAGE)
     assert await _conversation_exists(db_session)  # can still tap a real button
 
 

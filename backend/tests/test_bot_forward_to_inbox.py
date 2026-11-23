@@ -276,3 +276,39 @@ def test_message_handler_accepts_forwarded_captions() -> None:
         for group in app.handlers.values()
         for handler in group
     )
+
+
+@pytest.mark.parametrize(
+    ("text", "caption", "entities"),
+    [
+        (None, None, None),  # a photo/video forwarded without a caption
+        ("/hiring React devs", None, [MessageEntity(MessageEntity.BOT_COMMAND, 0, 7)]),
+        ("/start now", None, [MessageEntity(MessageEntity.BOT_COMMAND, 0, 6)]),
+    ],
+)
+def test_any_channel_forward_reaches_the_inbox_handler(
+    text: str | None, caption: str | None, entities: list[MessageEntity] | None
+) -> None:
+    app = ApplicationBuilder().token("123:fake").build()
+    add_handlers(app)
+    update = _update(
+        _message(
+            text=text, caption=caption, entities=entities, origin=_channel_origin()
+        )
+    )
+
+    # The first handler that takes the update is the one that runs.
+    first = next(h for h in app.handlers[0] if h.check_update(update))
+
+    assert first.callback is dialog.handle_message
+
+
+def test_overlong_job_link_is_dropped() -> None:
+    url = "https://jobs.example.com/" + "a" * 2100
+    message = _message(
+        text=url, entities=[MessageEntity(MessageEntity.URL, 0, len(url))]
+    )
+
+    _, post = build_forwarded_post(message, _channel_origin())
+
+    assert post.job_link is None

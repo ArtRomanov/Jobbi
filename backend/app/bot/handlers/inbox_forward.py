@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from sqlalchemy import select
 from telegram import Message, MessageEntity, MessageOriginChannel, Update
 from telegram.ext import ContextTypes
+from telegram.ext.filters import MessageFilter
 
 from app.core.database import async_session
 from app.discovery.fetchers.telegram import MAX_TEXT_CHARS, is_telegram_host
@@ -28,6 +29,7 @@ __all__ = [
     "ADDED_MESSAGE",
     "ADDED_NO_DESCRIPTION_MESSAGE",
     "ALREADY_SEEN_MESSAGE",
+    "CHANNEL_FORWARD",
     "MERGED_MESSAGE",
     "NO_TEXT_MESSAGE",
     "build_forwarded_post",
@@ -37,7 +39,7 @@ __all__ = [
 ADDED_MESSAGE = "📥 Added to your Inbox. Jobbi will rate the fit in a minute or two."
 ADDED_NO_DESCRIPTION_MESSAGE = (
     "📥 Saved. Describe what you're looking for on the Sources page so Jobbi "
-    "can rate it; it shows up in your Inbox once rated."
+    "can rate it; it shows up in your Inbox once rated (it is kept for 7 days)."
 )
 MERGED_MESSAGE = (
     "This job is already in your Inbox. I added this channel to its sources."
@@ -48,6 +50,18 @@ NO_TEXT_MESSAGE = "This post has no text, so there is nothing to add to the Inbo
 # Bot API ids of channels are -100<internal id>; t.me/c/ links use the internal id.
 _CHANNEL_ID_OFFSET = 1_000_000_000_000
 _LABEL_MAX = 255
+_JOB_LINK_MAX = 2048
+
+
+class _ChannelForwardFilter(MessageFilter):
+    """A message forwarded from a channel (any content, even media only or
+    text starting with "/")."""
+
+    def filter(self, message: Message) -> bool:
+        return isinstance(message.forward_origin, MessageOriginChannel)
+
+
+CHANNEL_FORWARD = _ChannelForwardFilter(name="CHANNEL_FORWARD")
 
 
 def _internal_id(chat_id: int) -> int:
@@ -80,7 +94,9 @@ def _first_job_link(message: Message) -> str | None:
             and host
             and not is_telegram_host(host)
         ):
-            return normalize_url(href)
+            link = normalize_url(href)
+            # Same bound as the column (and the board fetcher).
+            return link if len(link) <= _JOB_LINK_MAX else None
     return None
 
 

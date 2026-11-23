@@ -88,7 +88,7 @@ def _status_keyboard() -> InlineKeyboardMarkup:
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle any non-command text or captioned message from the user.
+    """Handle a non-command text message, or any post forwarded from a channel.
 
     A post forwarded from a channel goes to the Inbox (`inbox_forward`);
     anything else with text starts or continues the tracker dialog.
