@@ -9,10 +9,10 @@ Conventions for every slice:
 
 ---
 
-- [ ] **Slice 1: Data router (no visible change)**
-  - [ ] Move `app/index.tsx` and `app/router` from `<BrowserRouter>`/`<Routes>` to `createBrowserRouter` + `RouterProvider` with the same route table. Move `src/__tests__/utils.tsx` to `createMemoryRouter`. **[Agent: typescript-frontend]**
-  - [ ] Code review: route parity, layout and auth guard, deep links (`/?application=`), the chat draft from router state. **[Agent: react-code-reviewer]**
-  - [ ] Verify: the full Vitest suite and `tsc` are green. Every route opens, including the dashboard deep link and the chat draft from the Inbox (Chrome MCP if connected, otherwise curl for the routes plus a manual click-through by the user). **[Agent: qa-tester]**
+- [x] **Slice 1: Data router (no visible change)**
+  - [x] Move `app/index.tsx` and `app/router` from `<BrowserRouter>`/`<Routes>` to `createBrowserRouter` + `RouterProvider` with the same route table. Move `src/__tests__/utils.tsx` to `createMemoryRouter`. **[Agent: typescript-frontend]**
+  - [x] Code review: route parity, layout and auth guard, deep links (`/?application=`), the chat draft from router state. **[Agent: react-code-reviewer]**
+  - [x] Verify: the full Vitest suite and `tsc` are green. Every route opens, including the dashboard deep link and the chat draft from the Inbox (Chrome MCP if connected, otherwise curl for the routes plus a manual click-through by the user). **[Agent: qa-tester]** _(2026-11-23: PR #21 — tsc clean, Vitest 280/280, vite build OK, route tests on the real table; review no P0/P1. Browser click-through pending: Chrome not connected)_
 
 ---
 
