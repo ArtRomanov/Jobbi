@@ -80,6 +80,18 @@ Spec 009 watches Telegram channels and Greenhouse/Lever boards. Most vacancies t
 - [ ] Editing a Telegram source to another channel → old cards show "<old name> (removed)" in the source filter; the new channel shows "Scanning…" and its last 7 days are evaluated.
 - [ ] `http://localhost:8000/` or `http://192.168.1.1/` → "This link can't be used"; nothing is opened or saved.
 
+### 2.6 Follow-up: Ashby boards, geekjob search links, blocked sites
+
+- **As a** user, **I want to** watch companies on Ashby, see real results for geekjob.ru search links and understand why a site can't be read, **so that** fewer of my sources end up empty or "Could not open this page".
+- **Acceptance Criteria:**
+    - [ ] **Ashby boards.** The user can add a company by its `jobs.ashbyhq.com/<company>` link (with or without `https://`, also a single job's link `jobs.ashbyhq.com/<company>/<job id>`). It behaves like Greenhouse/Lever: kind label "Ashby", name = the company slug with capital letters (Ashby does not publish the company name), full job texts and publish dates, first scan = jobs published in the last 7 days.
+    - [ ] `jobs.ashbyhq.com/manychat` → added as "Manychat"; its jobs (21 at the time of writing) appear as the board's vacancies after the first scan.
+    - [ ] An unknown company on Ashby → "Could not read this job board". A link on an Ashby host that is not a board (e.g. `www.ashbyhq.com/...`, `jobs.ashbyhq.com/` without a company) → "Not a Greenhouse, Lever, Teamtailor or Ashby job board link" (this text replaces the earlier one for all boards). Look-alikes such as `jobs.ashbyhq.com.evil.com/manychat` are treated as ordinary web pages.
+    - [ ] A career page that links to or embeds an Ashby board shows "This page uses Ashby — add the board instead" in the preview, like the other boards.
+    - [ ] **geekjob.ru search links.** A geekjob.ru search link with at least one filter (e.g. `geekjob.ru/vacancies?qs=react`) is read from the site's own search results, newest first: the preview of `geekjob.ru/vacancies?qs=react` shows "Found N vacancies" and React job titles instead of "No vacancies found". Saving, hourly checks, opening job pages, exclude words and AI work as for any other web page. `geekjob.ru/vacancies` without filters works as before.
+    - [ ] **Blocked sites.** A site that answers with a bot-protection challenge (e.g. Cloudflare "Just a moment…") → preview, Add and Edit show "This site blocks automated readers — try its job board link instead"; nothing is saved. `careers.manychat.com/positions` → this text.
+    - [ ] A saved web page that starts answering with such a challenge → after 24 hours of failed checks the row shows "Unavailable — The site blocks automated readers".
+
 ---
 
 ## 3. Scope and Boundaries
