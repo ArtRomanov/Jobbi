@@ -61,10 +61,10 @@ Conventions for every slice:
 
 ---
 
-- [ ] **Slice 7: Telegram alerts and daily summary line**
+- [x] **Slice 7: Telegram alerts and daily summary line**
   - [x] Move the RetryAfter send logic into `app/core/telegram_send.py` taking a `Bot`; bot uses it unchanged in behavior (existing bot tests green). **[Agent: python-backend]**
   - [x] `alerts.py`: one message per user per `check_all` run for cards that became new in this run (not from initial scans); exact text from functional spec 2.4; `alert_handled_at` set in every case. `summary_service`: "📥 N new vacancies in Inbox" incl. the zero-applications branch. Tests. **[Agent: python-backend]**
-  - [ ] Verify: live — with Telegram linked, a new matching post in a watched channel produces one grouped bot message after the next check; adding a source produces no message; `/summary` shows the Inbox line; unlink + new matches + relink → no message about old cards. **[Agent: qa-tester]**
+  - [x] Verify: live — with Telegram linked, a new matching post in a watched channel produces one grouped bot message after the next check; adding a source produces no message; `/summary` shows the Inbox line; unlink + new matches + relink → no message about old cards. **[Agent: qa-tester]** _(2026-11-23 live with the user: 5 channels added, 0 messages from initial scans; three one-off `check_all` runs on a re-unseen post each sent one "🔎 1 new vacancy" message, received; `/summary` shows the Inbox line. Unlink + relink not run live — covered by alert tests)_
 
 ---
 
@@ -75,8 +75,8 @@ Conventions for every slice:
 
 ---
 
-- [ ] **Slice 9: Final regression and gates**
+- [x] **Slice 9: Final regression and gates**
   - [x] Full backend suite on 3.11 and 3.14, frontend suite, `tsc`, lint on changed files. **[Agent: qa-tester]** _(2026-11-22: backend 1017 passed, frontend 275 passed, tsc clean, ruff clean)_
   - [x] Accessibility pass on the Inbox page, Modal and ChipInput (keyboard only, screen-reader labels). **[Agent: react-code-reviewer]** _(fixes in 0c5d78f: per-card button names, heading order, focus rings, contrast)_
   - [x] `/pre-merge` and `/security-review` on the branch (SSRF patterns, prompt injection, XSS, per-user isolation). **[Agent: general-purpose]** _(pre-merge BLOCK on cross-user cv_id fixed with all other findings in a7d528c; security-review: no vulnerabilities)_
-  - [ ] Live check: real channel + Greenhouse board → Inbox fills with no bot burst → hourly alert → Add & tailor CV → Dismiss + Undo. **[Agent: qa-tester]** _(pending: done together with the user after merge)_
+  - [x] Live check: real channel + Greenhouse board → Inbox fills with no bot burst → hourly alert → Add & tailor CV → Dismiss + Undo. **[Agent: qa-tester]** _(2026-11-23 with the user: Inbox filled from 5 TG channels (+ Greenhouse/Lever from Slices 6/8) with no bot burst; alert received; Open source, Dismiss + Undo, Add & tailor CV, filters checked in the browser. Found and fixed: fit rules for option lists (PR #16), discovery model switched to gpt-oss-20b (PR #17). Follow-ups in context/product/backlog.md (PR #15), incl. the High bug: tailored CV defaults to the last copy)_

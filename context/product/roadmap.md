@@ -50,8 +50,8 @@ _Turn tracked data into actionable visibility on the job search._
 
 _Extend Jobbi with external job sources to streamline the research step._
 
-- [ ] **Telegram Bot Integration**
-  - [ ] **Job Alerts via Telegram:** Receive notifications about new matching jobs directly in Telegram.
+- [x] **Telegram Bot Integration**
+  - [x] **Job Alerts via Telegram:** Receive notifications about new matching jobs directly in Telegram.
   - [x] **Quick Add from Telegram:** Forward a job posting to Jobbi's bot to create an application entry automatically.
 
 - [ ] **HeadHunter Integration**
