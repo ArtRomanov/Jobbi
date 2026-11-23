@@ -29,6 +29,7 @@ from typing import Any, Self, TypeAlias
 import groq
 import httpx
 from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Bot
 
@@ -58,19 +59,25 @@ from app.models.vacancy_source import VacancySource
 __all__ = [
     "CARD_RETENTION",
     "EVAL_PAUSE_S",
+    "FORWARDED_KIND",
     "LOOKBACK",
     "MAX_EVAL_ATTEMPTS",
     "MAX_PAGES",
+    "NOT_A_MATCH_REASON",
+    "NOT_RATED_REASON",
     "PENDING_WITHOUT_DESCRIPTION_RETENTION",
     "READ_ERROR_MESSAGES",
     "CleanupReport",
     "Clock",
     "DiscoveryConfig",
+    "ForwardOutcome",
+    "ForwardedChannel",
     "RunReport",
     "check_all",
     "cleanup",
     "evaluate_pending",
     "run_initial_scans",
+    "store_forwarded_post",
 ]
 
 logger = logging.getLogger(__name__)
@@ -106,6 +113,13 @@ READ_ERROR_MESSAGES = {
     "unreachable": "Could not reach the source",
 }
 SUPPORTED_KINDS = frozenset({"telegram"}) | BOARD_KINDS
+# Card-source kind of posts the user forwarded to the bot. Not a
+# `VacancySource` kind: nothing is ever fetched for it.
+FORWARDED_KIND = "tg_forward"
+# `fit_reason` of a forwarded post the AI rejected without a reason, or could
+# not rate.
+NOT_A_MATCH_REASON = "Does not match your search"
+NOT_RATED_REASON = "Jobbi could not rate this post"
 
 SessionFactory: TypeAlias = Callable[[], AsyncSession]
 # Returns the current time as naive UTC. Called per source and per AI batch,
@@ -163,6 +177,9 @@ class _PendingRow:
     vacancy_id: str
     eval_attempts: int
     post: RawPost
+    # Forwarded to the bot by the user: never deleted by the AI (see
+    # `_keep_forwarded`).
+    forwarded: bool = False
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -215,7 +232,8 @@ async def run_initial_scans(
 ) -> RunReport:
     """First 7-day scan of every source whose first scan has not completed and
     is due (`next_initial_attempt_at` unset or passed), then evaluate the
-    pending posts of the users whose sources were scanned.
+    pending posts of the users whose sources were scanned or who forwarded a
+    post to the bot (so a forwarded post is rated within about a minute).
 
     First-scan cards are never alerted. Posts of those users that were found
     by an earlier hourly check and waited (daily cap, AI down) may be rated
@@ -224,7 +242,9 @@ async def run_initial_scans(
     config = config or DiscoveryConfig.from_settings()
     report = RunReport()
     sources = await _load_sources(session_factory, clock(), initial=True)
-    if not sources:
+    user_ids = {source.user_id for source in sources}
+    user_ids |= await _users_with_forwarded_pending(session_factory, clock())
+    if not user_ids:
         return report
 
     async def work() -> None:
@@ -242,7 +262,7 @@ async def run_initial_scans(
             session_factory,
             groq_client,
             clock,
-            user_ids={source.user_id for source in sources},
+            user_ids=user_ids,
             config=config,
             sleep=sleep,
             report=report,
@@ -671,6 +691,144 @@ async def _store_posts(
             report.posts_stored += 1
 
 
+class ForwardOutcome(Enum):
+    ADDED = auto()  # new pending card; rated by the next per-minute run
+    MERGED = auto()  # same job link as an existing card; source added to it
+    ALREADY_SEEN = auto()  # this post was found or forwarded before
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ForwardedChannel:
+    """Card-source identity of a channel a post was forwarded from.
+
+    `handle` is the channel's username (lowercased) or `c<internal id>` for a
+    private channel; `label` is the channel title shown on the card.
+    """
+
+    handle: str
+    label: str
+
+
+async def store_forwarded_post(
+    session_factory: SessionFactory,
+    user_id: str,
+    channel: ForwardedChannel,
+    post: RawPost,
+    now: datetime,
+) -> ForwardOutcome:
+    """Put a post the user forwarded to the bot into their Inbox as `pending`.
+
+    Unlike `_store_posts` there is no exclude-term filter (the user picked
+    this post by hand) and no alert (they already know about it). Dedup and
+    repost merging work as for watched sources.
+    """
+    try:
+        async with session_factory() as session, session.begin():
+            if await _already_seen(session, user_id, [post.external_key]):
+                # Fetched from a watched channel and not rated yet: the user
+                # has seen it now, so it is not alerted later.
+                await session.execute(
+                    update(Vacancy)
+                    .where(
+                        Vacancy.user_id == user_id,
+                        Vacancy.external_key == post.external_key,
+                        Vacancy.alert_handled_at.is_(None),
+                    )
+                    .values(alert_handled_at=now)
+                )
+                return ForwardOutcome.ALREADY_SEEN
+            session.add(
+                VacancySeenKey(
+                    user_id=user_id, external_key=post.external_key, first_seen_at=now
+                )
+            )
+            if post.job_link is not None and (
+                target_id := await _merge_target(session, user_id, post.job_link)
+            ):
+                if not await _has_card_source(
+                    session, target_id, FORWARDED_KIND, channel.handle
+                ):
+                    session.add(
+                        VacancyCardSource(
+                            vacancy_id=target_id,
+                            source_id=None,
+                            source_kind=FORWARDED_KIND,
+                            source_handle=channel.handle,
+                            label=channel.label,
+                        )
+                    )
+                return ForwardOutcome.MERGED
+            vacancy_id = str(uuid.uuid4())
+            session.add(
+                Vacancy(
+                    id=vacancy_id,
+                    user_id=user_id,
+                    source_id=None,
+                    external_key=post.external_key,
+                    url=post.url,
+                    job_link=post.job_link,
+                    title=post.title,
+                    company=post.company,
+                    text=post.text,
+                    posted_at=post.posted_at,
+                    found_at=now,
+                    state="pending",
+                    from_initial_scan=False,
+                    alert_handled_at=now,
+                )
+            )
+            session.add(
+                VacancyCardSource(
+                    vacancy_id=vacancy_id,
+                    source_id=None,
+                    source_kind=FORWARDED_KIND,
+                    source_handle=channel.handle,
+                    label=channel.label,
+                )
+            )
+            return ForwardOutcome.ADDED
+    except IntegrityError:
+        # The same post forwarded twice at once: the other one won.
+        return ForwardOutcome.ALREADY_SEEN
+
+
+async def _users_with_forwarded_pending(
+    session_factory: SessionFactory, now: datetime
+) -> set[str]:
+    """Users with a forwarded post waiting for its first rating attempt, whose
+    AI is not failing and who did not hit the daily cap lately.
+
+    Anything else (a retry, AI down, cap) is left to the hourly check, so the
+    per-minute run neither calls a failing AI every minute nor burns the
+    MAX_EVAL_ATTEMPTS meant for hourly retries in three minutes. The cap
+    check is by UTC date with a day of slack (the cap day is the user's
+    local date); a skipped user is still rated hourly.
+    """
+    async with session_factory() as session:
+        rows = await session.scalars(
+            select(Vacancy.user_id)
+            .join(VacancyCardSource, VacancyCardSource.vacancy_id == Vacancy.id)
+            .join(
+                VacancySearchSettings,
+                VacancySearchSettings.user_id == Vacancy.user_id,
+            )
+            .where(
+                Vacancy.state == "pending",
+                Vacancy.eval_attempts == 0,
+                VacancyCardSource.source_kind == FORWARDED_KIND,
+                VacancySearchSettings.description.is_not(None),
+                VacancySearchSettings.ai_failing_since.is_(None),
+                or_(
+                    VacancySearchSettings.limit_reached_on.is_(None),
+                    VacancySearchSettings.limit_reached_on
+                    < now.date() - timedelta(days=1),
+                ),
+            )
+            .distinct()
+        )
+        return set(rows.all())
+
+
 async def _merge_target(
     session: AsyncSession,
     user_id: str,
@@ -920,6 +1078,16 @@ async def _next_batch(
             return None
         if remaining <= 0:
             return _CapReached(local_date=local_date)
+        forwarded_ids = set(
+            (
+                await session.scalars(
+                    select(VacancyCardSource.vacancy_id).where(
+                        VacancyCardSource.vacancy_id.in_([row.id for row in rows]),
+                        VacancyCardSource.source_kind == FORWARDED_KIND,
+                    )
+                )
+            ).all()
+        )
         return _Batch(
             description=description,
             profile=_profile(user),
@@ -927,6 +1095,7 @@ async def _next_batch(
                 _PendingRow(
                     vacancy_id=row.id,
                     eval_attempts=row.eval_attempts,
+                    forwarded=row.id in forwarded_ids,
                     post=RawPost(
                         external_key=row.external_key,
                         url=row.url,
@@ -1064,9 +1233,10 @@ async def _apply_evaluation(
 ) -> None:
     """Apply verdicts in one short transaction.
 
-    Match → card `new`; no match → card deleted, seen key kept. A post without
-    a valid verdict (left out, malformed item, or invalid single-post answer)
-    gets one attempt counted; after MAX_EVAL_ATTEMPTS it is treated as rejected.
+    Match → card `new`; no match → card deleted, seen key kept (a forwarded
+    post is kept as a low-fit card instead). A post without a valid verdict
+    (left out, malformed item, or invalid single-post answer) gets one attempt
+    counted; after MAX_EVAL_ATTEMPTS it is treated as rejected.
     """
     evaluated_keys: list[str] = []
     new_ids: list[str] = []
@@ -1110,6 +1280,10 @@ async def _apply_evaluation(
                 )
                 if result.rowcount:
                     new_ids.append(row.vacancy_id)
+            elif row.forwarded:
+                await _keep_forwarded(
+                    session, row.vacancy_id, verdict.reason or NOT_A_MATCH_REASON
+                )
             else:
                 await _delete_pending(session, row.vacancy_id)
         if evaluated_keys:
@@ -1141,13 +1315,27 @@ async def _count_failed_attempt(
             row.post.external_key,
             MAX_EVAL_ATTEMPTS,
         )
-        await _delete_pending(session, row.vacancy_id)
+        if row.forwarded:
+            await _keep_forwarded(session, row.vacancy_id, NOT_RATED_REASON)
+        else:
+            await _delete_pending(session, row.vacancy_id)
         report.rejected += 1
         return
     await session.execute(
         update(Vacancy)
         .where(Vacancy.id == row.vacancy_id, Vacancy.state == "pending")
         .values(eval_attempts=Vacancy.eval_attempts + 1)
+    )
+
+
+async def _keep_forwarded(session: AsyncSession, vacancy_id: str, reason: str) -> None:
+    """Show a forwarded post the AI rejected (or could not rate) as a low-fit
+    card: the user picked it by hand and was told it is in their Inbox, and
+    its seen key would block forwarding it again."""
+    await session.execute(
+        update(Vacancy)
+        .where(Vacancy.id == vacancy_id, Vacancy.state == "pending")
+        .values(state="new", fit="low", fit_reason=reason[:255])
     )
 
 
