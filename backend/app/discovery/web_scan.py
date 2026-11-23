@@ -5,6 +5,11 @@ one second apart, following the parser's next-page link only while it stays
 on the same host; reading stops at the page limit, at a page with no new job
 links, at the first page that cannot be read (only page 1 failing is an
 error), or when the total time budget is spent.
+
+A link a site listing adapter knows (`fetchers/site_listing.py`, e.g. a
+geekjob.ru search) is read from the site's JSON endpoint instead, page by
+page through `safe_http.fetch_json`, with the same limits and stop rules;
+its next page is built by the adapter (fixed host), not taken from the page.
 """
 
 import asyncio
@@ -22,8 +27,15 @@ from app.discovery.fetchers.safe_http import (
     Resolver,
     UnsafeUrlError,
     fetch_html,
+    fetch_json,
 )
-from app.discovery.fetchers.web_listing import AtsHint, ListingJob, parse_listing
+from app.discovery.fetchers.site_listing import SiteListing, find_site_listing
+from app.discovery.fetchers.web_listing import (
+    AtsHint,
+    ListingJob,
+    ListingPage,
+    parse_listing,
+)
 from app.discovery.normalize import normalize_url
 
 __all__ = [
@@ -71,6 +83,41 @@ async def _should_stop(stop_after: StopFn | None, page_jobs: list[ListingJob]) -
     return bool(verdict)
 
 
+async def _read_page(
+    site: SiteListing | None,
+    page_url: str,
+    page_number: int,
+    job_link_contains: str | None,
+    *,
+    client: httpx.AsyncClient,
+    resolver: Resolver,
+    timeout_s: float,
+) -> tuple[ListingPage, str]:
+    """Fetch and parse one listing page; returns it and its final URL.
+
+    Parsing is CPU work (a hostile page can take seconds): it runs in a
+    worker thread, off the event loop the API and the worker share.
+
+    Raises:
+        UnsafeUrlError, PageFetchError: from ``safe_http``.
+    """
+    if site is None:
+        page = await fetch_html(
+            page_url, client=client, resolver=resolver, timeout_s=timeout_s
+        )
+        listing = await asyncio.to_thread(
+            parse_listing, page.text, page.final_url, job_link_contains
+        )
+        return listing, page.final_url
+    document = await fetch_json(
+        page_url, client=client, resolver=resolver, timeout_s=timeout_s
+    )
+    listing = await asyncio.to_thread(
+        site.parse_page, document.data, page_number, job_link_contains
+    )
+    return listing, document.final_url
+
+
 async def read_listing(
     url: str,
     job_link_contains: str | None,
@@ -104,10 +151,11 @@ async def read_listing(
     loop = asyncio.get_running_loop()
     deadline = loop.time() + total_timeout_s
 
+    site = find_site_listing(url)
     result = ListingRead()
     seen_urls: set[str] = set()
     visited: set[str] = set()
-    next_url: str | None = url
+    next_url: str | None = url if site is None else site.page_url(1)
     own_client = client is None
     http = client or safe_http.make_client()
     try:
@@ -125,19 +173,20 @@ async def read_listing(
                     raise PageFetchError("unreachable")
                 break
             try:
-                page = await fetch_html(
-                    page_url, client=http, resolver=resolver, timeout_s=remaining
+                listing, final_url = await _read_page(
+                    site,
+                    page_url,
+                    result.pages_read + 1,
+                    job_link_contains,
+                    client=http,
+                    resolver=resolver,
+                    timeout_s=remaining,
                 )
             except (UnsafeUrlError, PageFetchError):
                 if result.pages_read == 0:
                     raise
                 break
             result.pages_read += 1
-            # Parsing is CPU work (a hostile page can take seconds): keep it
-            # off the event loop the API and the worker share.
-            listing = await asyncio.to_thread(
-                parse_listing, page.text, page.final_url, job_link_contains
-            )
             if result.pages_read == 1:
                 result.ats_hint = listing.ats_hint
             new_jobs = [job for job in listing.jobs if job.url not in seen_urls]
@@ -148,7 +197,8 @@ async def read_listing(
             candidate = listing.next_url
             if (
                 candidate is not None
-                and _host(candidate) == _host(page.final_url)
+                # An adapter builds its next page on its own fixed host.
+                and (site is not None or _host(candidate) == _host(final_url))
                 and normalize_url(candidate) not in visited
             ):
                 next_url = candidate
