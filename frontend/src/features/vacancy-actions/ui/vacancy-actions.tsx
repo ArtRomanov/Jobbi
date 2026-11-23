@@ -1,5 +1,7 @@
 import { memo, useCallback, useState } from "react";
 import { Button } from "@/shared/ui";
+import { isSafeExternalUrl } from "@/shared/lib";
+import { getVacancyLabel } from "@/entities/vacancy";
 import type { Vacancy } from "@/entities/vacancy";
 import {
   ADD_TO_TRACKER_LABEL,
@@ -7,7 +9,6 @@ import {
   OPEN_SOURCE_LABEL,
   UNSAFE_URL_HINT,
 } from "../lib/constants";
-import { isSafeExternalUrl } from "../lib/helpers";
 import { AddToTrackerDialog } from "./add-to-tracker-dialog";
 
 interface VacancyActionsProps {
@@ -46,6 +47,8 @@ export const VacancyActions = memo(function VacancyActions({
     [onAdded],
   );
   const isUrlSafe = isSafeExternalUrl(vacancy.url);
+  // Distinct names per card: a screen reader's button list would otherwise read "Dismiss" ×N
+  const vacancyLabel = getVacancyLabel(vacancy);
 
   return (
     <>
@@ -53,6 +56,7 @@ export const VacancyActions = memo(function VacancyActions({
         type="button"
         disabled={!isUrlSafe}
         title={isUrlSafe ? undefined : UNSAFE_URL_HINT}
+        aria-label={`${OPEN_SOURCE_LABEL} for ${vacancyLabel}`}
         onClick={() => onOpenSource(vacancy)}
       >
         {OPEN_SOURCE_LABEL}
@@ -61,6 +65,7 @@ export const VacancyActions = memo(function VacancyActions({
         type="button"
         variant="secondary"
         aria-haspopup="dialog"
+        aria-label={`${ADD_TO_TRACKER_LABEL}: ${vacancyLabel}`}
         onClick={() => {
           setIsAddDialogOpen(true);
           // Spec 2.3: clicking "Add to tracker" makes a new card seen (no-op if already seen)
@@ -73,6 +78,7 @@ export const VacancyActions = memo(function VacancyActions({
         ref={dismissRef}
         type="button"
         variant="secondary"
+        aria-label={`${DISMISS_LABEL} ${vacancyLabel}`}
         onClick={() => onDismiss(vacancy)}
       >
         {DISMISS_LABEL}

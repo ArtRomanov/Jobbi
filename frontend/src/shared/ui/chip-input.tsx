@@ -134,6 +134,7 @@ export function ChipInput({
       {values.length > 0 ? (
         <ul
           ref={listRef}
+          aria-label={label}
           style={{
             display: "flex",
             flexWrap: "wrap",
@@ -200,7 +201,6 @@ export function ChipInput({
           border: `1px solid ${colors.border}`,
           borderRadius: "0.375rem",
           fontSize: "0.875rem",
-          outline: "none",
           boxSizing: "border-box",
         }}
       />

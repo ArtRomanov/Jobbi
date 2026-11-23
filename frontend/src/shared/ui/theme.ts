@@ -23,10 +23,10 @@ export const colors = {
   border: "#d1d5db",
   borderLight: "#e5e7eb",
 
-  // Feedback
-  error: "#ef4444",
+  // Feedback (error: 4.83:1 as text on white; success: 5.02:1 behind white toast text)
+  error: "#dc2626",
   errorBg: "#dc2626",
-  success: "#16a34a",
+  success: "#15803d",
 
   // Badge tones (background / text pairs, WCAG AA on the pill)
   badge: {

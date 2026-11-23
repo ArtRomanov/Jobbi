@@ -566,10 +566,10 @@ async def test_send_daily_summary_skips_when_link_moved_to_other_chat(
             logging.WARNING,
             "Cannot send summary",
         ),
-        (TelegramError("boom"), logging.ERROR, "Telegram error sending summary"),
+        (TelegramError("boom"), logging.WARNING, "Telegram error sending summary"),
         (
             NetworkError("connection reset"),
-            logging.ERROR,
+            logging.WARNING,
             "Telegram error sending summary",
         ),
     ],
@@ -591,6 +591,34 @@ async def test_send_daily_summary_swallows_telegram_errors(
     assert len(matching) == 1
     assert matching[0].levelno == level
     assert linked_user.id in matching[0].getMessage()
+
+
+@pytest.mark.parametrize(
+    "error_class", [TelegramError, NetworkError], ids=["telegram", "network"]
+)
+async def test_send_daily_summary_telegram_error_log_hides_token(
+    linked_user: User,
+    caplog: pytest.LogCaptureFixture,
+    error_class: type[TelegramError],
+) -> None:
+    """httpx/PTB errors can carry the request URL, which holds the bot token:
+    one masked warning line, no traceback."""
+    token = "999999:SECRET-BOT-TOKEN"
+    bot = FakeBot(
+        error=error_class(
+            f"POST https://api.telegram.org/bot{token}/sendMessage failed"
+        )
+    )
+    bot.token = token  # type: ignore[attr-defined]
+
+    with caplog.at_level(logging.DEBUG, logger=jobs.__name__):
+        await send_daily_summary(_job_context(_schedule(linked_user.id), bot))
+
+    [record] = [r for r in caplog.records if "Telegram error" in r.getMessage()]
+    assert record.levelno == logging.WARNING
+    assert record.exc_info is None
+    assert "***" in record.getMessage()
+    assert token not in caplog.text
 
 
 @pytest.mark.parametrize("failing_call", ["get_user_link", "build_summary"])
@@ -637,9 +665,7 @@ async def test_send_daily_summary_dst_fall_back_sends_once(
 ) -> None:
     # Europe/Berlin 2026-10-25: 02:30 local happens at 00:30Z and again at 01:30Z.
     bot, bot_data = FakeBot(), {}
-    schedule = _schedule(
-        linked_user.id, summary_time="02:30", timezone="Europe/Berlin"
-    )
+    schedule = _schedule(linked_user.id, summary_time="02:30", timezone="Europe/Berlin")
 
     for moment in (
         datetime(2026, 10, 25, 0, 30, tzinfo=UTC),
@@ -698,7 +724,7 @@ async def test_send_daily_summary_retry_after_twice_gives_up(
     monkeypatch.setattr(jobs, "_sleep", _fake_sleep)
     bot = FakeBot(error=RetryAfter(7))
 
-    with caplog.at_level(logging.ERROR, logger=jobs.__name__):
+    with caplog.at_level(logging.WARNING, logger=jobs.__name__):
         await send_daily_summary(_job_context(_schedule(linked_user.id), bot))
 
     assert slept == [7]

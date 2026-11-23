@@ -3,6 +3,8 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { InboxPage } from "@/pages/inbox";
+import { VacancyList } from "@/pages/inbox/ui/vacancy-list";
+import { DEFAULT_INBOX_FILTERS } from "@/features/inbox-filters";
 import { useNewVacancyCount } from "@/entities/vacancy";
 import { renderWithProviders } from "./utils";
 import { mockVacancy, mockVacancyPageEmpty } from "./mocks/handlers";
@@ -80,6 +82,19 @@ function LeavableInbox() {
   );
 }
 
+/** The list alone, with a button that bumps `refreshKey` (a background reload). */
+function RefreshableList() {
+  const [refreshKey, setRefreshKey] = useState(0);
+  return (
+    <>
+      <VacancyList refreshKey={refreshKey} filters={DEFAULT_INBOX_FILTERS} onListEmptied={() => undefined} />
+      <button type="button" onClick={() => setRefreshKey((key) => key + 1)}>
+        Refresh
+      </button>
+    </>
+  );
+}
+
 async function findCard(name: string): Promise<HTMLElement> {
   const heading = await screen.findByRole("heading", { name });
   return heading.closest("article")!;
@@ -119,7 +134,7 @@ describe("Inbox card actions", () => {
       const card = await findCard("Senior React Developer");
       await waitFor(() => expect(newCountCalls()).toBe(1));
 
-      await user.click(within(card).getByRole("button", { name: "Open source" }));
+      await user.click(within(card).getByRole("button", { name: /^Open source for / }));
 
       expect(openSpy).toHaveBeenCalledWith(
         "https://t.me/frontend_jobs/101",
@@ -139,7 +154,7 @@ describe("Inbox card actions", () => {
       renderWithProviders(<InboxPage />);
       const card = await findCard("Senior React Developer");
 
-      await user.click(within(card).getByRole("button", { name: "Open source" }));
+      await user.click(within(card).getByRole("button", { name: /^Open source for / }));
 
       expect(openSpy).toHaveBeenCalledTimes(1);
       expect(recorded).toEqual([]);
@@ -152,7 +167,7 @@ describe("Inbox card actions", () => {
       renderWithProviders(<InboxPage />);
       const card = await findCard("Senior React Developer");
 
-      const button = within(card).getByRole("button", { name: "Open source" });
+      const button = within(card).getByRole("button", { name: /^Open source for / });
       expect(button).toBeDisabled();
       await user.click(button);
 
@@ -167,7 +182,7 @@ describe("Inbox card actions", () => {
       renderWithProviders(<InboxPage />);
       const card = await findCard("Senior React Developer");
 
-      await user.click(within(card).getByRole("button", { name: "Open source" }));
+      await user.click(within(card).getByRole("button", { name: /^Open source for / }));
 
       expect(openSpy).toHaveBeenCalledTimes(1);
       await waitFor(() => expect(within(card).getByText("New")).toBeInTheDocument());
@@ -190,7 +205,7 @@ describe("Inbox card actions", () => {
       const card = await findCard("Senior React Developer");
       await waitFor(() => expect(newCountCalls()).toBe(1));
 
-      await user.click(within(card).getByRole("button", { name: "Dismiss" }));
+      await user.click(within(card).getByRole("button", { name: /^Dismiss / }));
 
       expect(screen.queryByRole("heading", { name: "Senior React Developer" })).not.toBeInTheDocument();
       expect(screen.getByText("Dismissed")).toBeInTheDocument();
@@ -219,7 +234,7 @@ describe("Inbox card actions", () => {
       renderWithProviders(<InboxPage />);
       const card = await findCard("Senior React Developer");
 
-      await user.click(within(card).getByRole("button", { name: "Dismiss" }));
+      await user.click(within(card).getByRole("button", { name: /^Dismiss / }));
       expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
 
       await act(() => vi.advanceTimersByTimeAsync(5000));
@@ -237,7 +252,7 @@ describe("Inbox card actions", () => {
       renderWithProviders(<LeavableInbox />);
       const card = await findCard("Senior React Developer");
 
-      await user.click(within(card).getByRole("button", { name: "Dismiss" }));
+      await user.click(within(card).getByRole("button", { name: /^Dismiss / }));
       expect(screen.getByRole("button", { name: "Undo" })).toBeInTheDocument();
 
       await user.click(screen.getByRole("button", { name: "Leave inbox" }));
@@ -261,7 +276,7 @@ describe("Inbox card actions", () => {
       const card = await findCard("Senior React Developer");
       await waitFor(() => expect(newCountCalls()).toBe(1));
 
-      await user.click(within(card).getByRole("button", { name: "Dismiss" }));
+      await user.click(within(card).getByRole("button", { name: /^Dismiss / }));
 
       expect(await screen.findByText("Something went wrong. Please try again.")).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument();
@@ -280,7 +295,7 @@ describe("Inbox card actions", () => {
       renderWithProviders(<InboxPage />);
       const card = await findCard("Senior React Developer");
 
-      await user.click(within(card).getByRole("button", { name: "Dismiss" }));
+      await user.click(within(card).getByRole("button", { name: /^Dismiss / }));
       await user.click(screen.getByRole("button", { name: "Undo" }));
 
       expect(await screen.findByText("Something went wrong. Please try again.")).toBeInTheDocument();
@@ -306,7 +321,7 @@ describe("Inbox card actions", () => {
       renderWithProviders(<InboxPage />);
       const card = await findCard("Senior React Developer");
 
-      await user.click(within(card).getByRole("button", { name: "Dismiss" }));
+      await user.click(within(card).getByRole("button", { name: /^Dismiss / }));
       await user.click(screen.getByRole("button", { name: "Undo" }));
       await waitFor(() => expect(recorded).toEqual([{ id: "vac-1", action: "dismiss" }]));
 
@@ -333,7 +348,7 @@ describe("Inbox card actions", () => {
       renderWithProviders(<InboxPage />);
       const card = await findCard("Senior React Developer");
 
-      await user.click(within(card).getByRole("button", { name: "Dismiss" }));
+      await user.click(within(card).getByRole("button", { name: /^Dismiss / }));
       await user.click(screen.getByRole("radio", { name: "New" }));
       await waitFor(() => expect(cardHeadings()).toEqual(["Frontend Engineer"]));
       await user.click(screen.getByRole("button", { name: "Undo" }));
@@ -347,6 +362,83 @@ describe("Inbox card actions", () => {
       expect(cardHeadings()).toEqual(["Frontend Engineer"]);
     });
 
+    it("does not put an undone card back into a state filter it no longer matches", async () => {
+      const newCards = [mockVacancy, { ...SECOND, state: "new" as const }];
+      server.use(
+        http.get(VACANCIES_URL, ({ request }) => {
+          const isNewOnly = new URL(request.url).searchParams.get("state") === "new";
+          const items = isNewOnly ? newCards : [mockVacancy, SECOND];
+          return HttpResponse.json({ ...mockVacancyPageEmpty, items, total: items.length });
+        }),
+      );
+      const recorded = recordActions();
+      const user = userEvent.setup();
+      renderWithProviders(<InboxPage />);
+      await findCard("Senior React Developer");
+      await user.click(screen.getByRole("radio", { name: "New" }));
+      await waitFor(() => expect(screen.getByRole("radio", { name: "New" })).toHaveAttribute("aria-checked", "true"));
+      const card = await findCard("Senior React Developer");
+
+      await user.click(within(card).getByRole("button", { name: /^Dismiss / }));
+      await user.click(screen.getByRole("button", { name: "Undo" }));
+
+      await waitFor(() =>
+        expect(recorded).toEqual([
+          { id: "vac-1", action: "dismiss" },
+          { id: "vac-1", action: "restore" },
+        ]),
+      );
+      // Undo restores it as seen, which the New filter excludes
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Undo" })).not.toBeInTheDocument());
+      expect(cardHeadings()).toEqual(["Frontend Engineer"]);
+      // Total not bumped: one card listed out of one, so no "Load more"
+      expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+    });
+
+    it("keeps a card dismissed during a background reload hidden, and Undo still restores it", async () => {
+      const THIRD: MockVacancy = { ...mockVacancy, id: "vac-3", title: "Platform Engineer" };
+      let listCalls = 0;
+      let releaseReload: () => void = () => undefined;
+      const reloadGate = new Promise<void>((resolve) => {
+        releaseReload = resolve;
+      });
+      server.use(
+        http.get(VACANCIES_URL, async () => {
+          listCalls += 1;
+          // The reload's snapshot is taken before the dismiss commits
+          const items = listCalls === 1 ? [mockVacancy, SECOND] : [mockVacancy, SECOND, THIRD];
+          if (listCalls > 1) await reloadGate;
+          return HttpResponse.json({ ...mockVacancyPageEmpty, items, total: items.length });
+        }),
+      );
+      const recorded = recordActions();
+      const user = userEvent.setup();
+      renderWithProviders(<RefreshableList />);
+      const card = await findCard("Senior React Developer");
+
+      await user.click(screen.getByRole("button", { name: "Refresh" }));
+      await waitFor(() => expect(listCalls).toBe(2));
+      await user.click(within(card).getByRole("button", { name: /^Dismiss / }));
+      await waitFor(() => expect(recorded).toEqual([{ id: "vac-1", action: "dismiss" }]));
+
+      releaseReload();
+
+      await findCard("Platform Engineer");
+      expect(cardHeadings()).toEqual(["Frontend Engineer", "Platform Engineer"]);
+      expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Undo" }));
+
+      const restored = await findCard("Senior React Developer");
+      expect(within(restored).queryByText("New")).not.toBeInTheDocument();
+      expect(cardHeadings()).toEqual(["Senior React Developer", "Frontend Engineer", "Platform Engineer"]);
+      expect(recorded).toEqual([
+        { id: "vac-1", action: "dismiss" },
+        { id: "vac-1", action: "restore" },
+      ]);
+      expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+    });
+
     it("moves focus to the next card's Dismiss, then to the page heading when the list empties", async () => {
       serveVacancies([mockVacancy, SECOND]);
       recordActions();
@@ -355,10 +447,10 @@ describe("Inbox card actions", () => {
       const first = await findCard("Senior React Developer");
       const second = await findCard("Frontend Engineer");
 
-      await user.click(within(first).getByRole("button", { name: "Dismiss" }));
-      expect(within(second).getByRole("button", { name: "Dismiss" })).toHaveFocus();
+      await user.click(within(first).getByRole("button", { name: /^Dismiss / }));
+      expect(within(second).getByRole("button", { name: /^Dismiss / })).toHaveFocus();
 
-      await user.click(within(second).getByRole("button", { name: "Dismiss" }));
+      await user.click(within(second).getByRole("button", { name: /^Dismiss / }));
       expect(screen.getByRole("heading", { level: 1, name: "Inbox" })).toHaveFocus();
     });
 
@@ -370,8 +462,8 @@ describe("Inbox card actions", () => {
       const first = await findCard("Senior React Developer");
       const second = await findCard("Frontend Engineer");
 
-      await user.click(within(second).getByRole("button", { name: "Dismiss" }));
-      expect(within(first).getByRole("button", { name: "Dismiss" })).toHaveFocus();
+      await user.click(within(second).getByRole("button", { name: /^Dismiss / }));
+      expect(within(first).getByRole("button", { name: /^Dismiss / })).toHaveFocus();
     });
   });
 
@@ -405,7 +497,7 @@ describe("Inbox card actions", () => {
       renderWithProviders(<InboxPage />);
       const card = await findCard("A");
 
-      await user.click(within(card).getByRole("button", { name: "Dismiss" }));
+      await user.click(within(card).getByRole("button", { name: /^Dismiss / }));
       await waitFor(() => expect(dismissed.has("vac-1")).toBe(true));
       await user.click(screen.getByRole("button", { name: "Load more" }));
 
@@ -413,6 +505,45 @@ describe("Inbox card actions", () => {
       expect(cardHeadings()).toEqual(["B", "C", "D"]);
       expect(requestedPages.slice(1).sort()).toEqual(["1", "2"]);
       expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+    });
+
+    it("does not re-add a card whose dismiss is still in flight", async () => {
+      const all = ["A", "B", "C", "D"].map((title, i) => ({
+        ...mockVacancy,
+        id: `vac-${i + 1}`,
+        title,
+      }));
+      let releaseDismiss: () => void = () => undefined;
+      const dismissGate = new Promise<void>((resolve) => {
+        releaseDismiss = resolve;
+      });
+      // Server pages of 2; the dismiss has not committed, so page 1 still has A
+      server.use(
+        http.get(VACANCIES_URL, ({ request }) => {
+          const pageNumber = Number(new URL(request.url).searchParams.get("page"));
+          return HttpResponse.json({
+            ...mockVacancyPageEmpty,
+            items: all.slice((pageNumber - 1) * 2, pageNumber * 2),
+            total: all.length,
+          });
+        }),
+        http.post(ACTION_URL, async () => {
+          await dismissGate;
+          return new HttpResponse(null, { status: 204 });
+        }),
+      );
+      const user = userEvent.setup();
+      renderWithProviders(<InboxPage />);
+      const card = await findCard("A");
+
+      await user.click(within(card).getByRole("button", { name: /^Dismiss / }));
+      await user.click(screen.getByRole("button", { name: "Load more" }));
+
+      await findCard("D");
+      expect(cardHeadings()).toEqual(["B", "C", "D"]);
+      // The server total still counts A; the hidden card must not keep "Load more" up
+      expect(screen.queryByRole("button", { name: "Load more" })).not.toBeInTheDocument();
+      releaseDismiss();
     });
   });
 });

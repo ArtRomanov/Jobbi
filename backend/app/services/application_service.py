@@ -4,8 +4,10 @@ from sqlalchemy.orm import selectinload
 
 from app.core.pagination import paginate
 from app.models.application import Application, ApplicationStatusHistory
+from app.models.cv import Cv
 from app.models.vacancy import Vacancy
 from app.schemas.application import ApplicationCreate, ApplicationUpdate
+from app.services.cv_service import CvNotFoundError
 
 
 async def list_applications(
@@ -30,9 +32,8 @@ async def list_applications(
             )
         )
 
-    query = (
-        query.options(selectinload(Application.status_history))
-        .order_by(Application.updated_at.desc())
+    query = query.options(selectinload(Application.status_history)).order_by(
+        Application.updated_at.desc()
     )
 
     return await paginate(db, query, page, per_page)
@@ -102,11 +103,23 @@ async def update_application(
     application_id: str,
     data: ApplicationUpdate,
 ) -> Application | None:
+    """Apply a partial update; return None if the application isn't the user's.
+
+    Raises CvNotFoundError if `cv_id` names a CV that is missing or belongs to
+    another user (nothing is changed then).
+    """
     application = await get_application(db, user_id, application_id)
     if application is None:
         return None
 
     update_data = data.model_dump(exclude_unset=True)
+    cv_id = update_data.get("cv_id")
+    if cv_id is not None:
+        owned = await db.scalar(
+            select(Cv.id).where(Cv.id == cv_id, Cv.user_id == user_id)
+        )
+        if owned is None:
+            raise CvNotFoundError(cv_id)
     old_status = application.status
 
     for field, value in update_data.items():

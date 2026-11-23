@@ -1,5 +1,6 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { colors } from "./theme";
+import { VISUALLY_HIDDEN_STYLE } from "./visually-hidden";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   children: ReactNode;
@@ -22,18 +23,6 @@ const variantStyles: Record<
     border: `1px solid ${colors.border}`,
   },
 };
-
-const VISUALLY_HIDDEN = {
-  position: "absolute",
-  width: "1px",
-  height: "1px",
-  margin: "-1px",
-  padding: 0,
-  overflow: "hidden",
-  clip: "rect(0 0 0 0)",
-  whiteSpace: "nowrap",
-  border: 0,
-} as const;
 
 /** Styled button. Forwards its ref so callers can manage focus. */
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
@@ -63,7 +52,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         <>
           {/* Visible "Loading..." while the accessible name stays the label */}
           <span aria-hidden="true">Loading...</span>
-          <span style={VISUALLY_HIDDEN}>{children}</span>
+          <span style={VISUALLY_HIDDEN_STYLE}>{children}</span>
         </>
       ) : (
         children

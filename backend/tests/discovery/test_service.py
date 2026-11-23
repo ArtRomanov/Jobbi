@@ -1256,6 +1256,85 @@ class TestAlerts:
         else:  # shutting down: no network, cards only marked handled
             assert bot.sent == []
 
+    async def test_cancel_during_alert_send_still_marks_cards_handled(
+        self, factory, db, channel, http, ai, sleep
+    ) -> None:
+        """Shutdown while the alert is in flight: the cards are marked handled
+        without another network call, and no later run announces them."""
+        bot = FakeBot(
+            errors=[asyncio.CancelledError()],
+            open_transactions=factory.open_transactions,
+        )
+        user_id = await make_user(db)
+        await link_telegram(db, user_id)
+        await make_source(db, user_id, scanned=True)
+        channel.add(10, "MATCH")
+
+        with pytest.raises(asyncio.CancelledError):
+            await check_all(
+                factory, http, ai, at(NOW), config=CONFIG, sleep=sleep, bot=bot
+            )
+
+        [card] = await vacancies(db)
+        assert (card.state, card.alert_handled_at) == ("new", NOW)
+        assert bot.attempts == 1
+        await check_all(
+            factory,
+            http,
+            ai,
+            at(NOW + timedelta(hours=1)),
+            config=CONFIG,
+            sleep=sleep,
+            bot=bot,
+        )
+        assert (bot.attempts, bot.sent) == (1, [])
+        assert bot.violations == 0
+
+    async def test_db_error_marking_handled_is_logged_and_never_resends(
+        self, factory, db, channel, http, ai, sleep, bot, monkeypatch, caplog
+    ) -> None:
+        """Per-user DB error after the send: logged, the other runs go on, and
+        the card is not announced again (later runs alert only their own
+        cards)."""
+        from sqlalchemy.exc import OperationalError
+
+        from app.discovery import alerts
+
+        real_mark = alerts._mark_handled
+        failures = [OperationalError("UPDATE", {}, Exception("db down"))]
+
+        async def flaky_mark(*args: Any, **kwargs: Any) -> None:
+            if failures:
+                raise failures.pop()
+            await real_mark(*args, **kwargs)
+
+        monkeypatch.setattr(alerts, "_mark_handled", flaky_mark)
+        user_id = await make_user(db)
+        await link_telegram(db, user_id)
+        await make_source(db, user_id, scanned=True)
+        channel.add(10, "MATCH a")
+
+        await check_all(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep, bot=bot)
+
+        assert "Alerts for user" in caplog.text
+        assert len(bot.texts) == 1
+        for hours in (1, 2):
+            if hours == 2:
+                channel.add(11, "MATCH b")
+            await check_all(
+                factory,
+                http,
+                ai,
+                at(NOW + timedelta(hours=hours)),
+                config=CONFIG,
+                sleep=sleep,
+                bot=bot,
+            )
+        assert [text.splitlines()[0] for text in bot.texts] == [
+            "🔎 1 new vacancy",
+            "🔎 1 new vacancy",
+        ]
+
     async def test_without_bot_cards_are_still_handled(
         self, factory, db, channel, http, ai, sleep
     ) -> None:

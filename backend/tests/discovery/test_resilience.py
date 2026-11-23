@@ -20,6 +20,7 @@ from app.discovery.service import (
     cleanup,
     run_initial_scans,
 )
+from app.models.application import Application
 from app.models.vacancy import Vacancy, VacancyCardSource
 from app.models.vacancy_seen_key import VacancySeenKey
 from app.models.vacancy_source import VacancySource
@@ -197,11 +198,22 @@ async def add_card(
     state: str,
     found_at: datetime,
     job_link: str | None = None,
+    with_application: bool = True,
 ) -> str:
+    """Insert a card with one card source. An `added` card is linked to a new
+    application unless `with_application` is False (application deleted)."""
     async with db() as session:
         session.add(
             VacancySeenKey(user_id=user_id, external_key=key, first_seen_at=found_at)
         )
+        application_id = None
+        if state == "added" and with_application:
+            application = Application(
+                user_id=user_id, company_name="Acme", role_title="Dev"
+            )
+            session.add(application)
+            await session.flush()
+            application_id = application.id
         card = Vacancy(
             user_id=user_id,
             external_key=key,
@@ -212,6 +224,7 @@ async def add_card(
             found_at=found_at,
             state=state,
             fit=None if state == "pending" else "high",
+            application_id=application_id,
         )
         session.add(card)
         await session.flush()
@@ -287,6 +300,26 @@ class TestCleanup:
         assert set(await card_sources(db)) == keep
         assert (report.cards_deleted, report.pending_deleted) == (2, 1)
         assert len(await seen_keys(db)) == 7
+
+    async def test_added_card_whose_application_was_deleted_goes(
+        self, factory, db
+    ) -> None:
+        """Deleting an application clears the card's link; cleanup then drops
+        the card and its sources whatever its age. Its seen key stays."""
+        user_id = await make_user(db)
+        orphan = await add_card(
+            db, user_id, "tg:c/1", state="added", found_at=NOW, with_application=False
+        )
+        linked = await add_card(db, user_id, "tg:c/2", state="added", found_at=NOW)
+
+        report = await cleanup(factory, at(NOW))
+
+        assert [c.id for c in await vacancies(db)] == [linked]
+        assert await card_sources(db) == {linked: [CHANNEL]}
+        assert report.cards_deleted == 1
+        assert report.card_sources_deleted == 1
+        assert orphan not in {c.id for c in await vacancies(db)}
+        assert set(await seen_keys(db)) == {"tg:c/1", "tg:c/2"}
 
     async def test_deleted_dismissed_card_never_reappears_while_board_lists_job(
         self, factory, db, respx_mock, http, ai, sleep
@@ -463,6 +496,62 @@ class TestRepostMerge:
         assert await card_sources(db) == {card.id: sorted([CHANNEL, SECOND])}
         assert report.new_card_ids == {user_id: [card.id]}
         assert report.posts_merged == 1
+
+    @pytest.mark.parametrize("user_state", ["new", "seen", "dismissed"])
+    async def test_first_post_rated_late_takes_over_the_later_card(
+        self, factory, db, channels, http, ai, sleep, bot, user_state
+    ) -> None:
+        """Cold-round probe: P is found first but left out of the AI answer;
+        Q (same job, found later) becomes the card; when P is finally rated,
+        the card keeps P's key, date, fit and text (spec 2.2), the user's
+        state on Q, both sources, and Q's alert is not repeated."""
+        first, second = channels
+        user_id = await two_sources(db)
+        await link_telegram(db, user_id)
+        first.add(10, with_link("MATCH HIGH first SKIP"), NOW - timedelta(hours=3))
+        await check_all(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep)
+        [p_row] = await vacancies(db)
+        assert p_row.state == "pending"
+
+        second.add(20, with_link("MATCH LOW repost"), NOW + timedelta(minutes=30))
+        run2 = NOW + timedelta(hours=1)
+        await check_all(
+            factory, http, ai, at(run2), config=CONFIG, sleep=sleep, bot=bot
+        )
+        states = {c.external_key: c.state for c in await vacancies(db)}
+        assert states == {f"tg:{CHANNEL}/10": "pending", f"tg:{SECOND}/20": "new"}
+        q_id = next(c.id for c in await vacancies(db) if c.state == "new")
+        await set_state(db, q_id, user_state)
+        assert len(bot.texts) == 1
+        # The AI answers P this time.
+        async with db() as session:
+            row = await session.get(Vacancy, p_row.id)
+            row.text = "MATCH HIGH first"
+            await session.commit()
+
+        report = await check_all(
+            factory,
+            http,
+            ai,
+            at(run2 + timedelta(hours=1)),
+            config=CONFIG,
+            sleep=sleep,
+            bot=bot,
+        )
+
+        [card] = await vacancies(db)
+        assert card.id == p_row.id
+        assert card.external_key == f"tg:{CHANNEL}/10"
+        assert card.posted_at == NOW - timedelta(hours=3)
+        assert card.found_at == NOW
+        assert (card.fit, card.text) == ("high", "MATCH HIGH first")
+        assert card.state == user_state
+        assert card.alert_handled_at is not None
+        assert await card_sources(db) == {card.id: sorted([CHANNEL, SECOND])}
+        assert set(await seen_keys(db)) == {f"tg:{CHANNEL}/10", f"tg:{SECOND}/20"}
+        assert report.posts_merged == 1
+        assert len(bot.texts) == 1  # Q's alert is not repeated
+        assert ai.violations == 0 and bot.violations == 0
 
     async def test_posts_without_external_link_never_merge(
         self, factory, db, channels, http, ai, sleep

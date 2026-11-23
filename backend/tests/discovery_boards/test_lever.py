@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 import pytest
 import respx
+import structlog
 
 from app.discovery.fetchers import lever
 from app.discovery.fetchers.errors import UNKNOWN_POSTED_AT, BoardReadError
@@ -168,6 +169,34 @@ async def test_list_postings_drops_items_without_id_or_url(
     assert [p["id"] for p in postings] == ["id-0"]
 
 
+@respx.mock
+async def test_list_postings_drops_non_http_urls(client: httpx.AsyncClient) -> None:
+    respx.get(US_ACME).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"id": "js", "hostedUrl": "javascript:alert(1)"},
+                {"id": "data", "hostedUrl": "data:text/html,hi"},
+                {"id": "rel", "hostedUrl": "/acme/rel"},
+                {"id": "upper", "hostedUrl": "HTTPS://Jobs.Lever.co/acme/upper"},
+                *_postings(1),
+            ],
+        )
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        postings = await lever.list_postings(client, "lever", "acme")
+
+    assert [p["id"] for p in postings] == ["upper", "id-0"]
+    rejected = [e for e in logs if e["event"] == "lever_posting_url_rejected"]
+    assert [(e["board"], e["job_id"], e["log_level"]) for e in rejected] == [
+        ("acme", "js", "info"),
+        ("acme", "data", "info"),
+        ("acme", "rel", "info"),
+    ]
+    assert all("javascript" not in str(e) for e in rejected)
+
+
 @pytest.mark.parametrize("company", ["../admin", "a/b", "a.b", ""])
 async def test_unsafe_company_is_rejected_without_request(
     client: httpx.AsyncClient, company: str
@@ -290,3 +319,50 @@ async def test_check_company_failures(
         await lever.check_company(client, "lever", "acme")
 
     assert exc_info.value.reason == reason
+
+
+# ---------------------------------------------------------------------------
+# Length caps vs the DB columns (pre-merge 009): key 255, url/job_link 2048
+# ---------------------------------------------------------------------------
+
+
+@respx.mock
+async def test_list_postings_skips_too_long_key_or_url(
+    client: httpx.AsyncClient,
+) -> None:
+    long_id = "i" * 300
+    long_url = "https://jobs.lever.co/acme/" + "u" * 2100
+    respx.get(US_ACME).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"id": long_id, "hostedUrl": "https://jobs.lever.co/acme/x"},
+                {"id": "long-url", "hostedUrl": long_url},
+                *_postings(1),
+            ],
+        )
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        postings = await lever.list_postings(client, "lever", "acme")
+
+    assert [p["id"] for p in postings] == ["id-0"]
+    skipped = [e for e in logs if e["event"] == "lever_posting_too_long"]
+    assert [e["log_level"] for e in skipped] == ["info", "info"]
+    assert skipped[1]["job_id"] == "long-url"
+    # id-only logging: the URL never lands in the log, a huge id is clipped.
+    assert all("u" * 100 not in str(e) for e in skipped)
+    assert len(skipped[0]["job_id"]) <= 64
+
+
+def test_to_raw_post_truncates_title_to_255() -> None:
+    posting = {
+        "id": "x",
+        "hostedUrl": "https://jobs.lever.co/acme/x",
+        "text": "T" * 400,
+    }
+
+    post = lever.to_raw_post("lever", "acme", posting)
+
+    assert post.title == "T" * 255
+    assert post.company is not None and len(post.company) <= 255

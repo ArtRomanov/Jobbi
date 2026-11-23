@@ -1,5 +1,10 @@
-import type { VacancyCardSource } from "../model/types";
-import { POSTED_IN_LABEL, VACANCY_PREVIEW_LENGTH } from "./constants";
+import type { Vacancy, VacancyCardSource } from "../model/types";
+import {
+  POSTED_IN_LABEL,
+  UNKNOWN_COMPANY,
+  UNKNOWN_ROLE,
+  VACANCY_PREVIEW_LENGTH,
+} from "./constants";
 
 interface TextPreview {
   /** First 300 characters (with "…" when cut), or the whole text. */
@@ -17,4 +22,12 @@ export function getTextPreview(text: string): TextPreview {
 export function formatCardSources(sources: readonly VacancyCardSource[]): string {
   const labels = sources.map((source) => source.label).join(", ");
   return sources.length > 1 ? `${POSTED_IN_LABEL} ${labels}` : labels;
+}
+
+/**
+ * "<role> at <company>" (with the Unknown fallbacks). Gives per-card buttons a
+ * distinct accessible name, e.g. "Dismiss Senior Dev at Acme" (WCAG 2.4.6).
+ */
+export function getVacancyLabel(vacancy: Pick<Vacancy, "title" | "company">): string {
+  return `${vacancy.title ?? UNKNOWN_ROLE} at ${vacancy.company ?? UNKNOWN_COMPANY}`;
 }

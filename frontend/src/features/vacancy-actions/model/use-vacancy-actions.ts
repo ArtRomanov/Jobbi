@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { handleApiError } from "@/shared/api";
 import { useToast } from "@/shared/ui";
+import { isSafeExternalUrl } from "@/shared/lib";
 import {
   dismissVacancy,
   markVacancySeen,
@@ -15,7 +16,6 @@ import {
   UNDO_LABEL,
   UNDO_WINDOW_MS,
 } from "../lib/constants";
-import { isSafeExternalUrl } from "../lib/helpers";
 import type { UseVacancyActionsResult, VacancyActionsCallbacks } from "./types";
 
 /**

@@ -9,9 +9,7 @@ from app.models.cv import Cv
 from app.services.groq_client import build_system_prompt, stream_llm_response
 
 
-async def get_chat_history(
-    db: AsyncSession, application_id: str
-) -> list[ChatMessage]:
+async def get_chat_history(db: AsyncSession, application_id: str) -> list[ChatMessage]:
     result = await db.execute(
         select(ChatMessage)
         .where(ChatMessage.application_id == application_id)
@@ -47,7 +45,13 @@ async def get_application_context(
     """Build system prompt from application + linked CV."""
     cv = None
     if application.cv_id:
-        result = await db.execute(select(Cv).where(Cv.id == application.cv_id))
+        # Only the application owner's CV: a stale or forged link to another
+        # user's CV must never reach the prompt.
+        result = await db.execute(
+            select(Cv).where(
+                Cv.id == application.cv_id, Cv.user_id == application.user_id
+            )
+        )
         cv = result.scalar_one_or_none()
 
     system_prompt = build_system_prompt(application, cv)
@@ -68,10 +72,7 @@ async def stream_chat_response(
 
     # Get conversation history for Claude
     history = await get_chat_history(db, application.id)
-    messages = [
-        {"role": msg.role, "content": msg.content}
-        for msg in history
-    ]
+    messages = [{"role": msg.role, "content": msg.content} for msg in history]
 
     # Stream response
     full_response = []

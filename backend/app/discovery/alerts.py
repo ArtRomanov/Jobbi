@@ -11,6 +11,7 @@ Same invariant as `service.py`: no network I/O while a transaction is open
 
 import asyncio
 import logging
+import unicodedata
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -79,7 +80,29 @@ def _telegram_len(text: str) -> int:
     return len(text.encode("utf-16-le")) // 2
 
 
+# Kept although it is a format char: joins emoji sequences such as 👩‍💻.
+_ZERO_WIDTH_JOINER = "\u200d"
+
+
+def _strip_controls(value: str) -> str:
+    """Drop control (Cc) and invisible format (Cf) characters.
+
+    Titles and companies come from strangers' posts. Bidi overrides
+    (U+202A–U+202E, U+2066–U+2069, U+200E/F, U+061C) could reorder the trusted
+    bot's message ("gnp.exe" shown as "exe.png"); zero-width and terminal
+    control characters only hide text.
+    """
+    return "".join(
+        char
+        for char in value
+        if char == _ZERO_WIDTH_JOINER
+        or unicodedata.category(char) not in ("Cc", "Cf")
+        or char in "\t\n\r"  # whitespace: collapsed below
+    )
+
+
 def _clip(value: str, limit: int = MAX_FIELD_CHARS) -> str:
+    value = _strip_controls(value)
     value = " ".join(value.split())  # no line breaks inside one alert line
     return value if len(value) <= limit else f"{value[: limit - 1].rstrip()}…"
 

@@ -106,18 +106,18 @@ describe("Inbox vacancy list", () => {
     expect(within(card!).queryByText(/TAIL_TEXT/)).not.toBeInTheDocument();
     expect(within(card!).getByText(`${"a".repeat(300)}…`)).toBeInTheDocument();
 
-    const toggle = within(card!).getByRole("button", { name: "Show more" });
+    const toggle = within(card!).getByRole("button", { name: /^Show more/ });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     await user.click(toggle);
 
     expect(within(card!).getByText(longText)).toBeInTheDocument();
-    expect(within(card!).getByRole("button", { name: "Show less" })).toHaveAttribute(
+    expect(within(card!).getByRole("button", { name: /^Show less/ })).toHaveAttribute(
       "aria-expanded",
       "true",
     );
     expect(within(card!).getByText("New")).toBeInTheDocument();
 
-    await user.click(within(card!).getByRole("button", { name: "Show less" }));
+    await user.click(within(card!).getByRole("button", { name: /^Show less/ }));
     expect(within(card!).queryByText(/TAIL_TEXT/)).not.toBeInTheDocument();
     expect(requestsAfterLoad).toBe(0);
     server.events.removeAllListeners();
@@ -128,7 +128,7 @@ describe("Inbox vacancy list", () => {
     renderWithProviders(<InboxPage />);
 
     const [card] = await findCards();
-    expect(within(card!).queryByRole("button", { name: "Show more" })).not.toBeInTheDocument();
+    expect(within(card!).queryByRole("button", { name: /^Show more/ })).not.toBeInTheDocument();
   });
 
   it("shows the empty state when there are no vacancies", async () => {

@@ -1,6 +1,6 @@
 import pytest
 
-from app.discovery.normalize import normalize_url
+from app.discovery.normalize import is_http_url, normalize_url
 
 
 @pytest.mark.parametrize(
@@ -41,3 +41,26 @@ def test_non_absolute_input_is_returned_stripped(raw: str) -> None:
 
 def test_invalid_port_does_not_raise() -> None:
     assert normalize_url("https://example.com:99999/x") == "https://example.com:99999/x"
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://jobs.example.com/1", True),
+        ("http://jobs.example.com/1", True),
+        ("HTTPS://Jobs.Example.com/1", True),
+        ("  https://jobs.example.com/1  ", True),
+        ("javascript:alert(1)", False),
+        ("JavaScript:alert(1)", False),
+        ("data:text/html,<script>alert(1)</script>", False),
+        ("/jobs/1", False),
+        ("jobs.example.com/1", False),
+        ("//jobs.example.com/1", False),
+        ("https://", False),
+        ("ftp://jobs.example.com/1", False),
+        ("https://[::1", False),
+        ("", False),
+    ],
+)
+def test_is_http_url(url: str, expected: bool) -> None:
+    assert is_http_url(url) is expected

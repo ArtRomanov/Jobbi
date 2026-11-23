@@ -128,6 +128,38 @@ class TestFormatAlert:
         assert company.startswith("C Corp C Corp")
         assert len(company) <= 80 and company.endswith("…")
 
+    @pytest.mark.parametrize(
+        ("title", "company", "expected"),
+        [
+            # U+202E (right-to-left override) would show "exe.png" reversed.
+            ("Dev\u202egnp.exe", "Acme", "Medium · Devgnp.exe — Acme"),
+            (
+                "\u202a\u202b\u202c\u202d\u2066\u2067\u2068\u2069Dev",
+                "\u200e\u200f\u061cAcme",
+                "Medium · Dev — Acme",
+            ),
+            (
+                "De\x00v\x07\x1b[31m",
+                "Ac\x7f\x9bme\u200b\ufeff",
+                "Medium · Dev[31m — Acme",
+            ),
+            ("\u202e\u2066", "\x07", "Medium · Unknown role — Unknown company"),
+            # ZWJ inside an emoji sequence stays.
+            (
+                "\U0001f469\u200d\U0001f4bb Dev",
+                "Acme",
+                "Medium · \U0001f469\u200d\U0001f4bb Dev — Acme",
+            ),
+        ],
+        ids=["rlo", "all-bidi", "c0-c1-zero-width", "controls-only", "emoji-zwj"],
+    )
+    def test_bidi_and_control_chars_are_stripped(
+        self, title: str, company: str, expected: str
+    ) -> None:
+        text = format_alert([card("medium", title, company)], INBOX)
+
+        assert text.splitlines()[2] == expected
+
     def test_ten_huge_cards_fit_telegram_limit(self) -> None:
         cards = [card("high", "R" * 200, "C" * 200) for _ in range(10)]
 

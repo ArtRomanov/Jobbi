@@ -2,9 +2,22 @@
 
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-__all__ = ["normalize_url"]
+__all__ = ["is_http_url", "normalize_url"]
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def is_http_url(url: str) -> bool:
+    """True if `url` is an absolute http(s) URL with a host (scheme case-insensitive).
+
+    Rejects `javascript:`, `data:`, relative and malformed URLs, so a link from a
+    remote board can never become a script or data link in the UI.
+    """
+    try:
+        parts = urlsplit(url.strip())
+    except ValueError:
+        return False
+    return parts.scheme.lower() in _DEFAULT_PORTS and bool(parts.hostname)
 
 
 def normalize_url(url: str) -> str:

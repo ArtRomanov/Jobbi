@@ -23,8 +23,9 @@ export interface UseVacancyListResult {
   /** Take a card out; its position is remembered for `restoreItem`. */
   removeItem: (id: string) => void;
   /**
-   * Put a removed card back where it was. No-op if it is already listed or if
-   * page 1 was reloaded since it was removed.
+   * Put a removed card back where it was. No-op if it is already listed, if a
+   * page-1 load since the remove no longer lists it, or if its state does not
+   * match the current state filter.
    */
   restoreItem: (vacancy: Vacancy) => void;
 }

@@ -126,7 +126,14 @@ def parse_channel_page(html: str, channel: str) -> tuple[list[RawPost], int | No
 
     for message in soup.select(".tgme_widget_message[data-post]"):
         post_channel, _, raw_id = str(message["data-post"]).rpartition("/")
-        if post_channel.lower() != channel_lc or not raw_id.isdigit():
+        # ASCII only: str.isdigit() also accepts "²" (int() then raises and the
+        # whole channel fails) and Arabic-Indic digits (int() maps them onto
+        # another post's key).
+        if (
+            post_channel.lower() != channel_lc
+            or not raw_id.isascii()
+            or not raw_id.isdigit()
+        ):
             continue
         post_id = int(raw_id)
         oldest_id = post_id if oldest_id is None else min(oldest_id, post_id)
