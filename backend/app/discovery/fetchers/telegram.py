@@ -20,10 +20,10 @@ from app.discovery.types import RawPost
 __all__ = [
     "MAX_RESPONSE_BYTES",
     "MAX_TEXT_CHARS",
-    "is_telegram_host",
     "ReadFailureReason",
     "SourceReadError",
     "fetch_channel_posts",
+    "is_telegram_host",
     "parse_channel_page",
 ]
 
