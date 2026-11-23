@@ -24,8 +24,9 @@ export interface UnsavedChangesGuard {
  * - after the first save, `/cvs/new` → `/cvs/<id>/edit`. The navigate call runs
  *   in the save handler before the saved values re-render into this hook, so
  *   `isDirty` is still true at that moment;
- * - `UploadNotice` (`features/cv-upload`) clears its router state with a
- *   same-URL replace (also skipped by the pathname/search check below).
+ * - `useUploadDraft` (`features/cv-upload`) clears the upload draft's router
+ *   state with a same-URL replace right after `/cvs/new` opens it, while the
+ *   draft is already dirty (also skipped by the pathname/search check below).
  * Accepted trade-off: other app replaces (e.g. the auth redirect to `/login`)
  * are not guarded either.
  */

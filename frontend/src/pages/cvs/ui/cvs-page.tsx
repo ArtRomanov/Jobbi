@@ -11,6 +11,8 @@ import {
   NO_CVS_TEXT,
   PAGE_SUBTITLE,
   PAGE_TITLE,
+  CV_DELETED_MESSAGE,
+  CV_DUPLICATED_MESSAGE,
   REFRESH_ERROR_MESSAGE,
   TAILORED_TITLE,
 } from "../lib/constants";
@@ -78,7 +80,7 @@ export function CvsPage() {
       setDeletingId(cv.id);
       try {
         await deleteCv(cv.id);
-        showToast("CV deleted.", "success");
+        showToast(CV_DELETED_MESSAGE, "success");
         void fetchCvs();
       } catch (err: unknown) {
         handleApiError(err, showToast);
@@ -94,7 +96,7 @@ export function CvsPage() {
       setDuplicatingId(cv.id);
       try {
         await duplicateCv(cv.id);
-        showToast("CV duplicated.", "success");
+        showToast(CV_DUPLICATED_MESSAGE, "success");
         void fetchCvs();
       } catch (err: unknown) {
         handleApiError(err, showToast);

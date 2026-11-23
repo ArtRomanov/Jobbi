@@ -5,18 +5,24 @@ import type { CvTextEditorValues } from "./types";
 export interface CvTextDraft {
   name: string;
   content: string;
+  isBase: boolean;
   nameError: string | null;
-  /** The draft differs from `saved` (the name compared trimmed, as it is saved). */
+  /**
+   * The draft differs from `saved` (the name compared trimmed, as it is
+   * saved), or the "Base CV" switch does.
+   */
   isDirty: boolean;
   setName: (name: string) => void;
   setContent: (content: string) => void;
+  setIsBase: (isBase: boolean) => void;
   /** Shows "Required" and returns null for a blank name, else the values to save. */
   validate: () => CvTextEditorValues | null;
 }
 
 /**
- * The editor's unsaved name and text, and whether they differ from the last
- * saved version. `initial` is read once; `saved` follows every save.
+ * The editor's unsaved name, text and "Base CV" switch, and whether they
+ * differ from the last saved version. `initial` is read once; `saved`
+ * follows every save.
  */
 export function useCvTextDraft(
   initial: CvTextEditorValues,
@@ -24,6 +30,7 @@ export function useCvTextDraft(
 ): CvTextDraft {
   const [name, setNameState] = useState(initial.name);
   const [content, setContent] = useState(initial.content);
+  const [isBase, setIsBase] = useState(initial.isBase);
   const [nameError, setNameError] = useState<string | null>(null);
 
   const setName = useCallback((next: string) => {
@@ -38,10 +45,21 @@ export function useCvTextDraft(
       setNameError(CV_NAME_REQUIRED_MESSAGE);
       return null;
     }
-    return { name: trimmed, content };
-  }, [name, content]);
+    return { name: trimmed, content, isBase };
+  }, [name, content, isBase]);
 
-  const isDirty = name.trim() !== saved.name || content !== saved.content;
+  const isDirty =
+    name.trim() !== saved.name || content !== saved.content || isBase !== saved.isBase;
 
-  return { name, content, nameError, isDirty, setName, setContent, validate };
+  return {
+    name,
+    content,
+    isBase,
+    nameError,
+    isDirty,
+    setName,
+    setContent,
+    setIsBase,
+    validate,
+  };
 }

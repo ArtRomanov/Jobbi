@@ -7,6 +7,7 @@ import { parseCardsEvent } from "@/entities/chat";
 import { CvChangeCard, mergeCardStates } from "@/features/chat-interface";
 import { buildCardDiff } from "@/features/chat-interface/lib/build-diff-rows";
 import { getInsertLabel } from "@/features/chat-interface/lib/card-labels";
+import { ToastProvider } from "@/shared/ui";
 import { mockChangeCards } from "./mocks/handlers";
 import { server } from "./setup";
 
@@ -49,7 +50,12 @@ function Harness({ initial }: { initial: ChangeCard[] }) {
 }
 
 function renderCards(...cards: ChangeCard[]) {
-  return render(<Harness initial={cards} />);
+  // The card toasts "Change applied to your CV" after Accept
+  return render(
+    <ToastProvider>
+      <Harness initial={cards} />
+    </ToastProvider>,
+  );
 }
 
 function failAccept(status: number, detail: string): void {
@@ -159,8 +165,10 @@ describe("CvChangeCard decisions", () => {
     await user.click(screen.getByRole("button", { name: ACCEPT }));
 
     expect(await screen.findByText("Accepted")).toBeInTheDocument();
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: ACCEPT })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: REJECT })).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("Change applied to your CV")).toBeInTheDocument();
   });
 
   it("rejects: the card becomes Rejected", async () => {
@@ -171,6 +179,8 @@ describe("CvChangeCard decisions", () => {
 
     expect(await screen.findByText("Rejected")).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    // Reject saves nothing, so no toast
+    expect(screen.queryByText("Change applied to your CV")).not.toBeInTheDocument();
   });
 
   it("disables both buttons while the request runs", async () => {
@@ -274,6 +284,8 @@ describe("CvChangeCard decisions", () => {
 
     expect(await screen.findByText("Rejected")).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    // Reject saves nothing, so no toast
+    expect(screen.queryByText("Change applied to your CV")).not.toBeInTheDocument();
   });
 
   it("decides each card on its own", async () => {

@@ -93,4 +93,26 @@ describe("ApplicationPanel — CV section", () => {
       expect(screen.getByText("No CV linked")).toBeInTheDocument();
     });
   });
+
+  it('"Duplicate & Customize" confirms with the toast "CV duplicated"', async () => {
+    server.use(
+      http.get("http://localhost:8000/api/v1/applications/:id", () =>
+        HttpResponse.json({
+          ...mockApplicationDetail,
+          cv_id: "cv-1",
+          cv_name: "Software Engineer CV",
+          status_history: mockApplicationDetail.status_history,
+        }),
+      ),
+    );
+    const { router } = renderWithProviders(
+      <ApplicationPanel applicationId="app-1" onClose={noopClose} onUpdate={noopUpdate} />,
+    );
+
+    const button = await screen.findByRole("button", { name: /duplicate & customize/i });
+    button.click();
+
+    expect(await screen.findByText("CV duplicated")).toBeInTheDocument();
+    await waitFor(() => expect(router.state.location.pathname).toBe("/cvs/cv-duplicated/edit"));
+  });
 });

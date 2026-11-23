@@ -2,6 +2,8 @@
 
 CV types (aliases of the generated OpenAPI schemas), CRUD API functions, and the CV text formatting shared by the preview and the PDF.
 
+- Temporary (spec 011 slice 9, marked TODO in `model/types.ts`): `CvCreate`, `CvUpdate` (both with optional `is_base`) and `CvUploadResult` (`{name, content, truncated}`; upload is extract-only and creates nothing) are hand-written until the backend contract lands and `schema.d.ts` is regenerated.
+
 - `parseCvMarkdown(content)` (`lib/cv-markdown.ts`) is the ONE place CV Markdown is parsed: a `marked` lexer (GFM, `breaks: true`) walked into a renderer-neutral block model (`CvBlock` / `CvInline`). Supported: heading 1–3, paragraph, bold, italic, bullet/ordered lists, links, line breaks. Everything else (tables, HTML, images, code, quotes, rules, heading 4+) becomes a `raw` block / text with the token's `raw`, i.e. shown exactly as typed. `features/cv-pdf` renders the same model — add formatting here, never in one renderer only.
 - Reference definitions (`[1]: https://…`) are not printed. Display text decodes only `&amp; &lt; &gt; &quot;` and numeric entities; `raw` text is kept as typed.
 - Links: only `isSafeCvLinkUrl` (http, https, mailto) becomes a `link` node; any other link is kept as its typed text. The check runs on the href as typed, never entity-decoded (`&#106;avascript:` stays unsafe). Renderers re-check it.
