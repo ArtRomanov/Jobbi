@@ -1,0 +1,342 @@
+"""CV change cards: store, list, accept and reject (spec 011, functional 2.7).
+
+A card is matched against the RAW stored CV text, never the defanged copy the
+model saw (tech spec 2.5): a passage containing "<<<" therefore goes stale.
+"""
+
+from collections import defaultdict
+from collections.abc import Sequence
+from datetime import UTC, datetime
+from typing import ClassVar
+
+from fastapi import status
+from sqlalchemy import delete, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.application import Application
+from app.models.chat_change_card import ChatChangeCard
+from app.models.cv import Cv
+from app.schemas.cv import CV_CONTENT_MAX_CHARS
+from app.services import cv_service
+from app.services.chat_tools import CvEdit
+
+HISTORY_QUOTE_CHARS = 60
+
+# The CV write is `cv_service.update_cv_content_if_version`. Both modules
+# import each other as modules (cv_service needs `mark_cv_cards_stale`), so
+# neither import order breaks. A guarded write that loses a race is retried
+# this many times, from a fresh read of the CV, before the Accept gives up.
+_ACCEPT_ATTEMPTS = 2
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+# ---------------------------------------------------------------------------
+# Errors: each maps to one HTTP status and `detail` code
+# ---------------------------------------------------------------------------
+
+
+class CardError(Exception):
+    code: ClassVar[str]
+    status_code: ClassVar[int]
+
+
+class CardNotFoundError(CardError):
+    code = "CARD_NOT_FOUND"
+    status_code = status.HTTP_404_NOT_FOUND
+
+
+class CardDecidedError(CardError):
+    code = "CARD_DECIDED"
+    status_code = status.HTTP_409_CONFLICT
+
+
+class CardStaleError(CardError):
+    code = "CARD_STALE"
+    status_code = status.HTTP_409_CONFLICT
+
+
+class PassageNotUniqueError(CardError):
+    code = "PASSAGE_NOT_UNIQUE"
+    status_code = status.HTTP_409_CONFLICT
+
+
+class CardTooLongError(CardError):
+    code = "TOO_LONG"
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+class _PassageMissing(Exception):
+    """The quoted passage or anchor is not in the CV."""
+
+
+class _PassageNotUnique(Exception):
+    """The quoted passage or anchor appears more than once in the CV."""
+
+
+# ---------------------------------------------------------------------------
+# Applying an edit to the CV text (pure)
+# ---------------------------------------------------------------------------
+
+
+def _find_once(content: str, needle: str) -> int:
+    """Index of the only occurrence of `needle` (overlaps count as repeats)."""
+    first = content.find(needle)
+    if first == -1:
+        raise _PassageMissing
+    if content.find(needle, first + 1) != -1:
+        raise _PassageNotUnique
+    return first
+
+
+def apply_card_edit(
+    content: str,
+    *,
+    op: str,
+    before_text: str,
+    after_text: str,
+    position: str | None,
+    anchor_text: str | None,
+) -> str:
+    """Return `content` with the card's edit applied; nothing else changes.
+
+    Raises _PassageMissing / _PassageNotUnique for the quoted passage or anchor.
+    """
+    match op:
+        case "replace":
+            start = _find_once(content, before_text)
+            return content[:start] + after_text + content[start + len(before_text) :]
+        case "remove":
+            start = _find_once(content, before_text)
+            end = start + len(before_text)
+            # Removing whole lines also removes their line break, so no blank
+            # line is left behind.
+            at_line_start = start == 0 or content[start - 1] == "\n"
+            if at_line_start and content[end : end + 1] == "\n":
+                end += 1
+            elif at_line_start and end == len(content) and start > 0:
+                start -= 1
+            return content[:start] + content[end:]
+        case "insert":
+            block = after_text.strip("\n")
+            match position:
+                case "start":
+                    return f"{block}\n{content}" if content else block
+                case "end":
+                    if not content:
+                        return block
+                    separator = "" if content.endswith("\n") else "\n"
+                    return f"{content}{separator}{block}"
+                case "after_line":
+                    anchor = anchor_text or ""
+                    start = _find_once(content, anchor)
+                    line_end = content.find("\n", start + len(anchor))
+                    if line_end == -1:
+                        return f"{content}\n{block}"
+                    return (
+                        f"{content[: line_end + 1]}{block}\n{content[line_end + 1 :]}"
+                    )
+    raise ValueError(f"unknown card edit: op={op!r} position={position!r}")
+
+
+# ---------------------------------------------------------------------------
+# Store and list
+# ---------------------------------------------------------------------------
+
+
+def add_cards(
+    db: AsyncSession,
+    *,
+    application_id: str,
+    message_id: str,
+    cv_id: str,
+    edits: Sequence[CvEdit],
+) -> list[ChatChangeCard]:
+    """Add one pending card per edit. Does not commit: the caller does.
+
+    `created_at` is set here (microseconds) so the cards of one reply keep
+    their order; the server default has 1-second resolution on SQLite.
+    """
+    cards: list[ChatChangeCard] = []
+    for edit in edits:
+        card = ChatChangeCard(
+            application_id=application_id,
+            message_id=message_id,
+            cv_id=cv_id,
+            op=edit.op,
+            before_text=edit.before_text,
+            after_text=edit.after_text,
+            position=edit.position,
+            anchor_text=edit.anchor_text,
+            state="pending",
+            created_at=_utcnow(),
+        )
+        db.add(card)
+        cards.append(card)
+    return cards
+
+
+async def cards_by_message(
+    db: AsyncSession, application_id: str
+) -> dict[str, list[ChatChangeCard]]:
+    """All of the application's cards, grouped by assistant message, in order."""
+    result = await db.execute(
+        select(ChatChangeCard)
+        .where(ChatChangeCard.application_id == application_id)
+        .order_by(ChatChangeCard.created_at.asc(), ChatChangeCard.id.asc())
+    )
+    grouped: dict[str, list[ChatChangeCard]] = defaultdict(list)
+    for card in result.scalars().all():
+        grouped[card.message_id].append(card)
+    return grouped
+
+
+def card_history_line(card: ChatChangeCard) -> str:
+    """One line telling the model what became of a card it proposed."""
+    quoted = card.after_text if card.op == "insert" else card.before_text
+    quoted = " ".join(quoted.split())
+    if len(quoted) > HISTORY_QUOTE_CHARS:
+        quoted = quoted[:HISTORY_QUOTE_CHARS] + "…"
+    return f"[Card {card.state}: {card.op} '{quoted}']"
+
+
+async def delete_application_cards(db: AsyncSession, application_id: str) -> None:
+    """Delete the application's cards. Does not commit.
+
+    SQLite does not enforce the FKs, so chat clear and application delete call
+    this by hand.
+    """
+    await db.execute(
+        delete(ChatChangeCard).where(ChatChangeCard.application_id == application_id)
+    )
+
+
+async def mark_cv_cards_stale(db: AsyncSession, cv_id: str) -> None:
+    """Make every pending card on a CV stale (the CV is being deleted).
+
+    Does not commit.
+    """
+    await db.execute(
+        update(ChatChangeCard)
+        .where(ChatChangeCard.cv_id == cv_id, ChatChangeCard.state == "pending")
+        .values(state="stale")
+    )
+
+
+# ---------------------------------------------------------------------------
+# Accept / reject
+# ---------------------------------------------------------------------------
+
+
+async def _get_card(
+    db: AsyncSession, application: Application, card_id: str
+) -> ChatChangeCard:
+    """The card, scoped to an application the caller already owns."""
+    result = await db.execute(
+        select(ChatChangeCard).where(
+            ChatChangeCard.id == card_id,
+            ChatChangeCard.application_id == application.id,
+        )
+    )
+    card = result.scalar_one_or_none()
+    if card is None:
+        raise CardNotFoundError
+    return card
+
+
+async def _mark_stale(db: AsyncSession, card: ChatChangeCard) -> None:
+    card.state = "stale"
+    await db.commit()
+    await db.refresh(card)
+
+
+async def accept_card(
+    db: AsyncSession, application: Application, card_id: str
+) -> ChatChangeCard:
+    """Apply the card's edit to its CV and mark it accepted, in one transaction.
+
+    Raises:
+        CardNotFoundError: no such card on this application.
+        CardDecidedError: the card was already accepted or rejected.
+        CardStaleError: the CV is gone, is no longer linked to the application,
+            or no longer contains the passage (the card becomes stale); or the
+            CV kept changing under us (the card stays pending).
+        PassageNotUniqueError: the passage appears more than once (stays pending).
+        CardTooLongError: the result is over the CV limit (stays pending).
+    """
+    card = await _get_card(db, application, card_id)
+    if card.state == "stale":
+        raise CardStaleError
+    if card.state != "pending":
+        raise CardDecidedError
+
+    for _ in range(_ACCEPT_ATTEMPTS):
+        linked_cv_id = await db.scalar(
+            select(Application.cv_id).where(Application.id == application.id)
+        )
+        row = (
+            await db.execute(
+                select(Cv.content, Cv.version).where(
+                    Cv.id == card.cv_id, Cv.user_id == application.user_id
+                )
+            )
+        ).one_or_none()
+        if row is None or linked_cv_id != card.cv_id:
+            await _mark_stale(db, card)
+            raise CardStaleError
+        content, version = row
+
+        try:
+            new_content = apply_card_edit(
+                content,
+                op=card.op,
+                before_text=card.before_text,
+                after_text=card.after_text,
+                position=card.position,
+                anchor_text=card.anchor_text,
+            )
+        except _PassageMissing:
+            await _mark_stale(db, card)
+            raise CardStaleError from None
+        except _PassageNotUnique:
+            raise PassageNotUniqueError from None
+        if len(new_content) > CV_CONTENT_MAX_CHARS:
+            raise CardTooLongError
+
+        try:
+            await cv_service.update_cv_content_if_version(
+                db, application.user_id, card.cv_id, version, content=new_content
+            )
+        except cv_service.CvVersionConflict:
+            continue  # Another write landed after our read: re-read and retry.
+        except cv_service.CvNotFoundError:
+            await _mark_stale(db, card)
+            raise CardStaleError from None
+        # Same transaction as the CV write: both land or neither does.
+        card.state = "accepted"
+        card.decided_at = _utcnow()
+        await db.commit()
+        await db.refresh(card)
+        return card
+
+    await db.rollback()
+    raise CardStaleError
+
+
+async def reject_card(
+    db: AsyncSession, application: Application, card_id: str
+) -> ChatChangeCard:
+    """Mark a pending or stale card rejected; the CV is not touched.
+
+    Raises CardNotFoundError, or CardDecidedError if already accepted/rejected.
+    """
+    card = await _get_card(db, application, card_id)
+    if card.state not in ("pending", "stale"):
+        raise CardDecidedError
+    card.state = "rejected"
+    card.decided_at = _utcnow()
+    await db.commit()
+    await db.refresh(card)
+    return card
