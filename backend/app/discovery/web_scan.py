@@ -199,7 +199,7 @@ async def read_listing(
             if new_jobs:
                 if await _should_stop(stop_after, new_jobs):
                     break
-            elif site is None or listing.item_count == 0:
+            elif site is None or listing.skipped_count == 0:
                 break
             # else: an adapter page whose entries were all unusable (e.g.
             # archived) is not the end of the listing; keep paging.

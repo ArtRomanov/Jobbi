@@ -1,5 +1,6 @@
 """PR #39 pre-merge findings at fetcher level (M1, M2, LOWs)."""
 
+import json
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -7,7 +8,7 @@ import httpx
 import pytest
 import respx
 
-from app.discovery import web_scan
+from app.discovery import normalize, web_scan
 from app.discovery.board_scan import fetch_board
 from app.discovery.fetchers import ashby, board_http, site_listing
 from app.discovery.fetchers.errors import BoardReadError
@@ -100,7 +101,7 @@ def test_adapter_reports_items_separately_from_usable_jobs() -> None:
     )
 
     assert page.jobs == []
-    assert page.item_count == 2
+    assert page.skipped_count == 2
     assert page.next_url == listing.page_url(2)
 
 
@@ -290,3 +291,108 @@ async def test_board_api_plain_403_stays_unreachable() -> None:
             await board_http.get_bytes(client, ASHBY_API)
 
     assert exc_info.value.reason == "unreachable"
+
+
+# --- R1: invisible and unencodable characters -------------------------------------
+
+# Lone surrogate, C0, DEL, C1, zero-width, BOM, word joiner and invisible
+# operators, a tag character, bidi controls.
+HOSTILE = (
+    "\udfff\ud800\x00\x07\x7f\x85\x9b\u200b\u200c\u200d\ufeff"
+    "\u2060\u2061\u2064\U000e0041\u202e\u2066\u061c"
+)
+
+
+def test_strip_invisible_removes_unencodable_and_format_characters() -> None:
+    cleaned = normalize.strip_invisible(f"Re{HOSTILE}act")
+
+    assert cleaned == "React"
+    cleaned.encode("utf-8")  # never raises
+
+
+def test_strip_invisible_keeps_whitespace_and_letters() -> None:
+    text = "Senior\tReact dev\nВакансия 🚀 €"
+
+    assert normalize.strip_invisible(text) == text
+
+
+def test_strip_invisible_for_text_keeps_format_characters_of_emoji() -> None:
+    # Body text keeps Cf (ZWJ in emoji sequences) but loses Cs and Cc.
+    family = "\U0001f468\u200d\U0001f469"
+    text = f"a{family}\ud800\x00b"
+
+    assert normalize.strip_invisible(text, keep_format=True) == f"a{family}b"
+
+
+def test_geekjob_title_from_hostile_json_is_encodable() -> None:
+    listing = site_listing.find_site_listing(SEARCH)
+    assert listing is not None
+    data = json.loads(
+        b'{"nextpage": 0, "data": [{"id": "a1", "position": "x\\ud800y\\u200b z"}]}'
+    )
+
+    [job] = listing.parse_page(data, 1, None).jobs
+
+    assert job.title == "xy z"
+    job.title.encode("utf-8")
+
+
+def test_board_titles_and_texts_are_cleaned_the_same_way() -> None:
+    job = _ashby_job("j1", "2026-11-20T10:00:00Z")
+    job["title"] = f"Dev{HOSTILE} Lead"
+    job["descriptionPlain"] = "Line\ud800 one\x00\nLine two"
+
+    post = ashby.to_raw_post("acme", job)
+
+    assert post.title == "Dev Lead"
+    assert post.text == "Line one\nLine two"
+    assert board_http.cap_name("\ud800\u200b") is None
+
+
+def test_web_job_json_ld_title_is_cleaned() -> None:
+    from app.discovery.fetchers import web_job
+
+    html = (
+        '<html><head><script type="application/ld+json">'
+        '{"@type": "JobPosting", "title": "Dev\\ud800 Ops", '
+        '"description": "<p>Te\\ud800xt</p>"}'
+        "</script></head><body></body></html>"
+    )
+
+    page = web_job.parse_job_page(html, "https://example.com/vacancy/1")
+
+    assert page.title == "Dev Ops"
+    assert "\ud800" not in page.text
+    page.text.encode("utf-8")
+
+
+# --- LOW: a pattern that filters every usable job ends the listing ------------------
+
+
+async def test_pattern_filtering_every_job_stops_paging(
+    respx_mock: respx.MockRouter,
+) -> None:
+    route = _api(
+        respx_mock,
+        {
+            1: _gj_answer([_gj("a1"), _gj("a2")], 1, 2),
+            2: _gj_answer([_gj("b1")], 2, 0),
+        },
+    )
+
+    result = await web_scan.read_listing(
+        SEARCH, "no-such-text", total_timeout_s=30, resolver=_resolve, pause_s=0
+    )
+
+    assert result.jobs == []
+    assert route.call_count == 1
+
+
+def test_pattern_filtered_page_reports_nothing_skipped() -> None:
+    listing = site_listing.find_site_listing(SEARCH)
+    assert listing is not None
+    data = _gj_answer([_gj("a1"), _gj("x1", archived=True)], 1, 2)
+
+    page = listing.parse_page(data, 1, "no-such-text")
+
+    assert page.jobs == [] and page.skipped_count == 0

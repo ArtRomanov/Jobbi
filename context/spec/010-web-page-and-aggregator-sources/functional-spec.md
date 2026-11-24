@@ -92,7 +92,9 @@ Spec 009 watches Telegram channels and Greenhouse/Lever boards. Most vacancies t
     - [ ] **Blocked sites.** A site that answers with a bot-protection challenge (e.g. Cloudflare "Just a moment…") → preview, Add and Edit show "This site blocks automated readers"; nothing is saved. The same text is shown when a job board's API answers with such a challenge. `careers.manychat.com/positions` → this text.
     - [ ] A saved web page that starts answering with such a challenge → after 24 hours of failed checks the row shows "Unavailable — This site blocks automated readers". A job page behind such a challenge is not retried again in the same check.
     - [ ] Every spelling of one geekjob.ru search (`www.`, `/vacancies/2`, parameters the site ignores such as `or`, `money`, `f`, a repeated `qs`) is the same source: adding it a second time shows "Already in your sources", and editing a source to another spelling of the same search changes nothing.
-    - [ ] A geekjob.ru results page that lists only archived vacancies does not end the listing: the next pages are still read (up to 5).
+    - [ ] A geekjob.ru results page that lists only archived vacancies does not end the listing: the next pages are still read (up to 5). The preview also reads on to the first page with vacancies, so such a search shows its titles instead of "No vacancies found".
+    - [ ] Vacancy titles and texts never keep invisible or broken characters (control, zero-width, direction marks, broken surrogates): a geekjob title such as `x\ud800y` previews as "xy" and is stored the same way.
+    - [ ] When a site blocks its job pages, every waiting vacancy of that source counts the failed read in the same check, so after three checks they are all rated by their titles.
     - **Known limitation:** geekjob.ru's "by date" order is by last edit, not by first publication. An old vacancy that was beyond the pages read when the source was saved, and that the employer later edits, moves to the top and arrives in the Inbox as new. This cannot be avoided from our side (the search results carry no creation date).
 
 ---

@@ -40,7 +40,7 @@ import structlog
 
 from app.discovery.fetchers.safe_http import PageFetchError
 from app.discovery.fetchers.web_listing import MAX_TITLE_CHARS, ListingJob, ListingPage
-from app.discovery.normalize import normalize_url
+from app.discovery.normalize import normalize_url, strip_invisible
 
 __all__ = [
     "MAX_ITEMS_PER_PAGE",
@@ -119,12 +119,6 @@ _GEEKJOB_DEFAULT_MONEY = "120000"
 _GEEKJOB_NEWEST_FIRST = ("sort", "1")
 _TAG_LIST_RE = re.compile(r"\d{1,6}(?:,\d{1,6}){0,49}", re.ASCII)
 _ITEM_ID_RE = re.compile(r"[A-Za-z0-9]{1,64}", re.ASCII)
-# Removed from titles: control characters other than whitespace (NUL breaks
-# PostgreSQL text) and bidi controls (they can reorder what the user reads).
-_INVISIBLE_RE = re.compile(
-    "[\x00-\x08\x0b\x0c\x0e-\x1f\x7f"  # C0 controls (not tab/newlines) and DEL
-    "\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]"  # bidi controls
-)
 
 
 def _geekjob_params(query: str) -> list[tuple[str, str]]:
@@ -183,7 +177,7 @@ def _match_geekjob(url: str) -> SiteListing | None:
 def _clean_title(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
-    visible = _INVISIBLE_RE.sub("", value)
+    visible = strip_invisible(value[: MAX_TITLE_CHARS * 4])
     title = " ".join(visible.split())[:MAX_TITLE_CHARS]
     return title or None
 
@@ -196,27 +190,42 @@ def _is_archived(item: dict[str, Any]) -> bool:
     return not isinstance(log, dict) or bool(log.get("archived"))
 
 
-def _geekjob_jobs(data: Any, job_link_contains: str | None) -> list[ListingJob]:
+@dataclass(frozen=True, slots=True)
+class _GeekjobItems:
+    jobs: list[ListingJob]
+    # Entries that were valid open jobs before `job_link_contains` was applied.
+    usable: int
+    # Entries dropped as archived or invalid.
+    skipped: int
+
+
+def _geekjob_jobs(data: Any, job_link_contains: str | None) -> _GeekjobItems:
     if not isinstance(data, dict) or not isinstance(data.get("data"), list):
-        return []
+        return _GeekjobItems(jobs=[], usable=0, skipped=0)
     pattern = job_link_contains.lower() if job_link_contains else None
     jobs: list[ListingJob] = []
     seen: set[str] = set()
+    usable = skipped = 0
     for item in data["data"][:MAX_ITEMS_PER_PAGE]:
         if not isinstance(item, dict) or _is_archived(item):
+            skipped += 1
             continue
         item_id = item.get("id")
         title = _clean_title(item.get("position"))
-        if not isinstance(item_id, str) or not _ITEM_ID_RE.fullmatch(item_id):
+        if (
+            not isinstance(item_id, str)
+            or not _ITEM_ID_RE.fullmatch(item_id)
+            or title is None
+        ):
+            skipped += 1
             continue
-        if title is None:
-            continue
+        usable += 1
         url = _GEEKJOB_JOB_URL.format(id=item_id)
         if url in seen or (pattern is not None and pattern not in url.lower()):
             continue
         seen.add(url)
         jobs.append(ListingJob(url=url, title=title))
-    return jobs
+    return _GeekjobItems(jobs=jobs, usable=usable, skipped=skipped)
 
 
 def _geekjob_next(listing: SiteListing, data: Any, page: int) -> str | None:
@@ -231,15 +240,13 @@ def _geekjob_next(listing: SiteListing, data: Any, page: int) -> str | None:
 def _geekjob_page(
     listing: SiteListing, data: Any, page: int, job_link_contains: str | None
 ) -> ListingPage:
-    jobs = _geekjob_jobs(data, job_link_contains)
-    entries = data.get("data") if isinstance(data, dict) else None
-    item_count = (
-        min(len(entries), MAX_ITEMS_PER_PAGE) if isinstance(entries, list) else 0
-    )
+    items = _geekjob_jobs(data, job_link_contains)
+    # Only a page whose entries were all archived/invalid continues the
+    # listing; usable jobs filtered out by the pattern end it as usual.
     return ListingPage(
-        jobs=jobs,
+        jobs=items.jobs,
         next_url=_geekjob_next(listing, data, page),
-        item_count=item_count,
+        skipped_count=items.skipped if items.usable == 0 else 0,
     )
 
 

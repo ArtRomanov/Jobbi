@@ -3,6 +3,8 @@
 import asyncio
 import hashlib
 import json
+import threading
+import time
 from pathlib import Path
 
 import httpx
@@ -226,19 +228,127 @@ async def test_preview_pages_past_an_all_archived_page(
             200, headers={"content-type": "application/json"}, json=body
         )
 
-    respx_mock.get(f"https://{PUBLIC_IP}/json/find/vacancy").mock(side_effect=handler)
+    route = respx_mock.get(f"https://{PUBLIC_IP}/json/find/vacancy").mock(
+        side_effect=handler
+    )
 
     resp = await client.post(
         PREVIEW_URL, json={"input": CANONICAL}, headers=_auth(token)
     )
 
-    # Preview reads page 1 only: no jobs there, so the usual 400.
-    assert resp.status_code == 400
+    # For an adapter link the preview pages on to the first page with jobs.
+    assert resp.status_code == 200
+    assert resp.json()["titles"] == ["React Dev"]
+    assert resp.json()["found_count"] == 1
+    assert route.call_count == 2
 
     saved = await client.post(URL, json={"input": CANONICAL}, headers=_auth(token))
 
-    # Saving reads up to 5 pages and finds the job on page 2.
     assert saved.status_code == 201
+
+
+async def test_preview_of_an_adapter_link_stops_at_the_first_page_with_jobs(
+    client: httpx.AsyncClient, token: str, respx_mock: respx.MockRouter
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params["page"])
+        body = {"nextpage": page + 1, "data": [{"id": f"p{page}", "position": "Dev"}]}
+        return httpx.Response(
+            200, headers={"content-type": "application/json"}, json=body
+        )
+
+    route = respx_mock.get(f"https://{PUBLIC_IP}/json/find/vacancy").mock(
+        side_effect=handler
+    )
+
+    resp = await client.post(
+        PREVIEW_URL, json={"input": CANONICAL}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["found_count"] == 1
+    assert route.call_count == 1
+
+
+async def test_preview_of_an_html_page_still_reads_one_page(
+    client: httpx.AsyncClient, token: str, respx_mock: respx.MockRouter
+) -> None:
+    page_1 = respx_mock.get(f"https://{PUBLIC_IP}/jobs").respond(
+        200,
+        headers={"content-type": "text/html"},
+        text='<a rel="next" href="/jobs?page=2">next</a>',
+    )
+
+    resp = await client.post(
+        PREVIEW_URL, json={"input": "https://example.com/jobs"}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 400
+    assert page_1.call_count == 1
+
+
+# --- R1: hostile titles through the preview ---------------------------------------------
+
+
+async def test_preview_cleans_lone_surrogates_and_controls(
+    client: httpx.AsyncClient, token: str, respx_mock: respx.MockRouter
+) -> None:
+    body = (
+        b'{"nextpage": 0, "data": [{"id": "a1", '
+        b'"position": "x\\ud800y\\u0000\\u200b\\u202e z"}]}'
+    )
+    respx_mock.get(f"https://{PUBLIC_IP}/json/find/vacancy").respond(
+        200, headers={"content-type": "application/json"}, content=body
+    )
+
+    resp = await client.post(
+        PREVIEW_URL, json={"input": CANONICAL}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["titles"] == ["xy z"]
+
+
+# --- missing coverage: replace into a geekjob search ------------------------------------
+
+
+async def test_replace_telegram_with_a_geekjob_search_stores_the_canonical_url(
+    client: httpx.AsyncClient,
+    token: str,
+    user_id: str,
+    geekjob_api: respx.Route,
+    db_session: AsyncSession,
+) -> None:
+    channel = VacancySource(
+        user_id=user_id,
+        kind="telegram",
+        handle="frontend_jobs",
+        default_name="@frontend_jobs",
+        display_name="@frontend_jobs",
+    )
+    db_session.add(channel)
+    await db_session.commit()
+    channel_id = channel.id
+
+    resp = await client.patch(
+        f"{URL}/{channel_id}",
+        json={"input": "https://www.geekjob.ru/vacancies/2?qs=react&or=1"},
+        headers=_auth(token),
+    )
+
+    assert resp.status_code == 200
+    db_session.expire_all()
+    [source] = (
+        (
+            await db_session.execute(
+                select(VacancySource).where(VacancySource.kind == "web")
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert source.url == CANONICAL
+    assert source.url_hash == _sha(CANONICAL)
 
 
 # --- LOW: parser failure reads as "could not open" -----------------------------------
@@ -327,3 +437,41 @@ async def test_ashby_live_checks_run_one_at_a_time(
 
     assert names == ["Org0", "Org1", "Org2"]
     assert peak == 1
+
+
+async def test_timed_out_ashby_checks_never_parse_in_parallel(
+    monkeypatch: pytest.MonkeyPatch, respx_mock: respx.MockRouter
+) -> None:
+    """The slot is held until the parse thread ends, not just until the timeout."""
+    lock = threading.Lock()
+    state = {"running": 0, "peak": 0, "done": 0}
+    real_decode = ashby._decode_board
+
+    def slow_decode(org: str, body: bytes) -> list:
+        with lock:
+            state["running"] += 1
+            state["peak"] = max(state["peak"], state["running"])
+        time.sleep(0.3)  # a 32 MB parse, longer than the check's budget
+        with lock:
+            state["running"] -= 1
+            state["done"] += 1
+        return real_decode(org, body)
+
+    monkeypatch.setattr(ashby, "_decode_board", slow_decode)
+    monkeypatch.setattr(vacancy_source_check, "CHECK_TIMEOUT_SECONDS", 0.1)
+    respx_mock.get(url__startswith="https://api.ashbyhq.com/").respond(
+        200, json={"jobs": []}
+    )
+
+    started = time.monotonic()
+    for round_ in range(4):
+        with pytest.raises(vacancy_source_check.BoardUnreadableError):
+            await vacancy_source_check.check_ashby_board(f"org{round_}")
+        # Each user still gets the error at about the check's budget.
+        assert time.monotonic() - started < 0.1 * (round_ + 1) + 0.25
+    for _ in range(100):  # let the background parse finish
+        if state["running"] == 0 and state["done"] >= 1:
+            break
+        await asyncio.sleep(0.05)
+
+    assert state["peak"] == 1

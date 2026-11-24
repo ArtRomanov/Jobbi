@@ -1419,7 +1419,8 @@ async def _read_job_pages(
     source was edited or deleted meanwhile, the step stops for this source.
     """
     failures_in_row = 0
-    for index, row in enumerate(await _detail_rows(session_factory, source)):
+    rows = await _detail_rows(session_factory, source)
+    for index, row in enumerate(rows):
         if index:
             await sleep(WEB_DETAIL_PAUSE_S)
         if monotonic() >= deadline:
@@ -1434,13 +1435,18 @@ async def _read_job_pages(
                 if not await _drop_detail_row(session_factory, source, row):
                     return _stop_edited(source)
                 continue
-            if not await _count_detail_failure(session_factory, source, row):
-                return _stop_edited(source)
             if exc.reason == "blocked":
                 # The site challenges automated readers: the other job pages
-                # would be challenged too. They wait for the next check.
-                logger.info("Web source %s: job pages wait (blocked)", source.id)
+                # would be challenged too. Every row due in this check counts
+                # a failed read without a request, so the backlog is released
+                # to title-only rating after WEB_DETAIL_MAX_ATTEMPTS checks.
+                logger.info("Web source %s: job pages blocked", source.id)
+                for due in rows[index:]:
+                    if not await _count_detail_failure(session_factory, source, due):
+                        return _stop_edited(source)
                 return None
+            if not await _count_detail_failure(session_factory, source, row):
+                return _stop_edited(source)
             failures_in_row += 1
         except UnsafeUrlError:
             if not await _count_detail_failure(session_factory, source, row):

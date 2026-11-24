@@ -1,10 +1,36 @@
-"""URL normalization shared by job-link extraction and duplicate detection."""
+"""URL normalization shared by job-link extraction and duplicate detection,
+and the cleaner for remote titles and texts."""
 
+import unicodedata
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-__all__ = ["is_http_url", "normalize_url"]
+__all__ = ["is_http_url", "normalize_url", "strip_invisible"]
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}
+# Cc = control (NUL breaks PostgreSQL text), Cf = format (zero-width, BOM,
+# bidi, tag characters), Cs = lone surrogates (not encodable as UTF-8: a
+# JSON response or a DB insert would fail). Whitespace is always kept.
+_TITLE_DROP = frozenset({"Cc", "Cf", "Cs"})
+_TEXT_DROP = frozenset({"Cc", "Cs"})
+_KEPT_CONTROLS = frozenset("\t\n\r")
+
+
+def strip_invisible(value: str, *, keep_format: bool = False) -> str:
+    """Remove control, format and surrogate characters from remote text.
+
+    Tab, newline and carriage return are kept (other controls, including the
+    C1 range and NEL, are not); space characters (``Zs``) are never touched.
+    With ``keep_format`` (body text) format characters stay, so emoji
+    sequences joined by U+200D are not broken; lone surrogates and controls
+    still go. The result always encodes as UTF-8. Linear in the length of
+    ``value``.
+    """
+    drop = _TEXT_DROP if keep_format else _TITLE_DROP
+    return "".join(
+        ch
+        for ch in value
+        if ch in _KEPT_CONTROLS or unicodedata.category(ch) not in drop
+    )
 
 
 def is_http_url(url: str) -> bool:

@@ -387,12 +387,17 @@ async def preview_source(
     # End the read transaction before going to the network (see add_source).
     await db.commit()
 
+    # An HTML page previews page 1 only. A site-adapter link (geekjob search)
+    # may start with pages of only archived entries: read on to the first
+    # page with jobs (up to MAX_LISTING_PAGES, same preview time budget).
+    is_adapter = find_site_listing(parsed.url) is not None
     listing = await read_web_listing(
         parsed.url,
         pattern,
-        max_pages=1,
+        max_pages=MAX_LISTING_PAGES if is_adapter else 1,
         total_timeout_s=PREVIEW_TIMEOUT_SECONDS,
         allow_empty_with_hint=True,
+        stop_at_first_jobs=is_adapter,
     )
     return SourcePreview(
         kind=parsed.kind,

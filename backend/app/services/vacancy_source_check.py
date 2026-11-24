@@ -7,6 +7,7 @@ fetched only through the SSRF-guarded `safe_http` (via `web_scan`).
 """
 
 import asyncio
+import functools
 import weakref
 
 import httpx
@@ -230,29 +231,46 @@ async def check_ashby_board(org: str) -> str:
     The Posting API has no organization-name field, so the name is derived
     from the slug (`manychat` -> "Manychat").
 
-    Checks run one at a time (``_ashby_slot``); the 10 s budget starts when
-    this check gets its turn.
+    Checks run one at a time (``_ashby_slot``). The read runs as its own
+    task that holds the slot until it ends, including its JSON parse thread
+    (a thread cannot be cancelled): when the 10 s budget (which also covers
+    waiting for the slot) runs out, the user gets the error at once while
+    the read finishes in the background, and only then may the next check
+    start reading. So at most one Ashby parse thread runs at a time.
 
     Raises:
         BoardUnreadableError: unknown board (404), network error, timeout, an
             unexpected response, or the 10 s total budget ran out.
         SiteBlockedError: the API answered with a bot-protection challenge.
     """
-    async with _ashby_slot():
-        try:
-            async with (
-                asyncio.timeout(CHECK_TIMEOUT_SECONDS),
-                httpx.AsyncClient(timeout=CHECK_TIMEOUT_SECONDS) as client,
-            ):
-                await ashby.check_board(client, org)
-        except (TimeoutError, BoardReadError) as exc:
-            logger.warning(
-                "ashby_board_check_failed",
-                org=org,
-                error=getattr(exc, "reason", type(exc).__name__),
-            )
-            raise _board_check_error(exc) from exc
+    slot = _ashby_slot()
+    try:
+        async with asyncio.timeout(CHECK_TIMEOUT_SECONDS):
+            await slot.acquire()
+            # No await between acquiring and handing the slot to the task.
+            read = asyncio.create_task(_read_ashby_board(org))
+            read.add_done_callback(functools.partial(_release_ashby_slot, slot))
+            await asyncio.shield(read)
+    except (TimeoutError, BoardReadError) as exc:
+        logger.warning(
+            "ashby_board_check_failed",
+            org=org,
+            error=getattr(exc, "reason", type(exc).__name__),
+        )
+        raise _board_check_error(exc) from exc
     return ashby.display_name(org)[:MAX_DISPLAY_NAME_LENGTH]
+
+
+async def _read_ashby_board(org: str) -> None:
+    async with httpx.AsyncClient(timeout=CHECK_TIMEOUT_SECONDS) as client:
+        await ashby.check_board(client, org)
+
+
+def _release_ashby_slot(slot: asyncio.Semaphore, read: asyncio.Task[None]) -> None:
+    """Free the slot when the read (and its parse thread) is over."""
+    slot.release()
+    if not read.cancelled():
+        read.exception()  # mark a late failure as seen (already reported)
 
 
 # --- web pages -----------------------------------------------------------------
@@ -292,11 +310,15 @@ async def read_web_listing(
     max_pages: int,
     total_timeout_s: float,
     allow_empty_with_hint: bool = False,
+    stop_at_first_jobs: bool = False,
 ) -> web_scan.ListingRead:
     """Read the listing for the API; the result holds at least one job.
 
     With `allow_empty_with_hint` (preview only) a page 1 without jobs is still
     returned when it links to a job board, so the ATS hint can be shown.
+    With `stop_at_first_jobs` (preview of a site-adapter link) reading stops
+    after the first page that has jobs, so pages of only archived entries
+    are skipped without reading the whole listing.
 
     Raises:
         UnsafeLinkError: the URL or a redirect on page 1 breaks the SSRF guard.
@@ -311,6 +333,7 @@ async def read_web_listing(
             job_link_contains,
             max_pages=max_pages,
             total_timeout_s=total_timeout_s,
+            stop_after=(lambda jobs: True) if stop_at_first_jobs else None,
         )
     except UnsafeUrlError as exc:
         logger.info("web_page_check_refused")

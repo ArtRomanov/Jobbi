@@ -17,7 +17,7 @@ from lxml import etree
 from lxml import html as lxml_html
 
 from app.discovery.fetchers.errors import BoardReadError
-from app.discovery.normalize import normalize_url
+from app.discovery.normalize import normalize_url, strip_invisible
 
 USER_AGENT = "Jobbi/1.0"
 REQUEST_TIMEOUT_SECONDS = 15.0
@@ -199,8 +199,11 @@ def html_to_text(markup: str) -> str:
 
 
 def cap_text(text: str) -> str:
-    """Cut stored post text to ``MAX_TEXT_CHARS``."""
-    return text[:MAX_TEXT_CHARS]
+    """Stored post text: controls and lone surrogates removed, then cut to
+    ``MAX_TEXT_CHARS`` (format characters such as emoji joiners stay)."""
+    return strip_invisible(text[: MAX_TEXT_CHARS * 2], keep_format=True)[
+        :MAX_TEXT_CHARS
+    ]
 
 
 def fits_columns(key: str, url: str) -> bool:
@@ -213,8 +216,12 @@ def fits_columns(key: str, url: str) -> bool:
 
 
 def cap_name(value: Any) -> str | None:
-    """A non-empty string cut to ``MAX_NAME_CHARS``; None otherwise."""
-    return value[:MAX_NAME_CHARS] if isinstance(value, str) and value else None
+    """A non-empty string without control, format or surrogate characters,
+    cut to ``MAX_NAME_CHARS``; None otherwise (also when nothing is left)."""
+    if not isinstance(value, str):
+        return None
+    cleaned = strip_invisible(value[: MAX_NAME_CHARS * 4])[:MAX_NAME_CHARS]
+    return cleaned or None
 
 
 def loggable_id(value: Any) -> str:

@@ -140,10 +140,11 @@ class ListingPage:
     jobs: list[ListingJob] = field(default_factory=list)
     next_url: str | None = None
     ats_hint: AtsHint | None = None
-    # Site listing adapters only: entries the source listed on this page,
-    # usable or not (e.g. archived). A page of only archived entries has no
-    # jobs but is not the end of the listing.
-    item_count: int = 0
+    # Site listing adapters only: entries skipped as archived or invalid on a
+    # page that had no usable job at all. Such a page has no jobs but is not
+    # the end of the listing (> 0 = keep paging). A page whose usable jobs
+    # were all filtered out by `job_link_contains` reports 0.
+    skipped_count: int = 0
 
 
 def _bare_host(host: str) -> str:
