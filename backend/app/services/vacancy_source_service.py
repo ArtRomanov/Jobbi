@@ -55,12 +55,8 @@ BAD_JOB_LINK_CONTAINS_MESSAGE = "'Job link contains' must be 1–100 characters"
 SOURCE_BUSY_MESSAGE = "This source is being scanned — try again in a moment"
 
 MAX_DESCRIPTION_LENGTH = 500
-MAX_EXCLUDE_TERMS = 50
-MAX_EXCLUDE_TERM_LENGTH = 64
 
 DESCRIPTION_TOO_LONG_MESSAGE = "Description can be up to 500 characters"
-TOO_MANY_EXCLUDE_TERMS_MESSAGE = "You can add up to 50 exclude words"
-BAD_EXCLUDE_TERM_MESSAGE = "Exclude words must be 1–64 characters"
 
 
 class _Unset(Enum):
@@ -163,31 +159,11 @@ def normalize_description(raw: str | None) -> str | None:
     return description
 
 
-def normalize_exclude_terms(raw: list[str]) -> list[str]:
-    """Trim, collapse inner whitespace, lowercase, de-duplicate keeping order.
-
-    Raises:
-        SearchSettingsError: a term is empty or too long, or too many terms
-            remain after de-duplication.
-    """
-    terms: list[str] = []
-    for item in raw:
-        term = " ".join(item.split()).lower()
-        if not term or len(term) > MAX_EXCLUDE_TERM_LENGTH:
-            raise SearchSettingsError(BAD_EXCLUDE_TERM_MESSAGE)
-        if term not in terms:
-            terms.append(term)
-    if len(terms) > MAX_EXCLUDE_TERMS:
-        raise SearchSettingsError(TOO_MANY_EXCLUDE_TERMS_MESSAGE)
-    return terms
-
-
 async def update_search_settings(
     db: AsyncSession,
     user_id: str,
     *,
     description: str | None | _Unset = UNSET,
-    exclude: list[str] | _Unset = UNSET,
 ) -> VacancySearchSettings:
     """Partially update the user's settings, creating the row on first use.
 
@@ -200,22 +176,16 @@ async def update_search_settings(
     new_description = (
         UNSET if isinstance(description, _Unset) else normalize_description(description)
     )
-    new_exclude = (
-        UNSET if isinstance(exclude, _Unset) else normalize_exclude_terms(exclude)
-    )
 
     # Two attempts: a concurrent first PATCH may insert the row between our
     # SELECT and INSERT; the primary key rejects ours and we update theirs.
     for attempt in range(2):
         settings_row = await get_search_settings(db, user_id)
         if settings_row is None:
-            settings_row = VacancySearchSettings(user_id=user_id, exclude_terms=[])
+            settings_row = VacancySearchSettings(user_id=user_id)
             db.add(settings_row)
         if not isinstance(new_description, _Unset):
             settings_row.description = new_description
-        if not isinstance(new_exclude, _Unset):
-            # A new list object, so the JSON column change is detected.
-            settings_row.exclude_terms = list(new_exclude)
         try:
             await db.commit()
         except IntegrityError:

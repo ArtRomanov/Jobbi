@@ -14,7 +14,7 @@ Everything stays inside the existing discovery pipeline (fetch → pending card 
 - When applying verdicts, the worker turns one pending post into up to 20 cards, each with its own fragment, job link and fit.
 - Forwarded posts lose the PR #35 "kept as low fit" rule; after rating, the worker replies to the forwarded message with the result.
 - The AI window grows from 1,500 to 3,000 characters; cut posts are flagged and reported in the daily summary.
-- Exclude words are hidden in the UI and no longer applied anywhere (stored data and API kept; full removal is backlog #12).
+- Exclude words are hidden in the UI and no longer applied anywhere (stored data and API kept; full removal is backlog #12). *Update 2026-11-24: backlog #12 done: `prefilter.py`, the API `exclude` field and the `exclude_terms` column (migration `9e2b4d6f8a10`) are removed.*
 
 ---
 
