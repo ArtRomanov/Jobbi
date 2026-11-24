@@ -106,8 +106,9 @@ class VacancySearchSettingsUpdate(BaseModel):
 
     # Explicit null (or blank text) turns the search off.
     description: str | None = None
-    # Trimmed, lowercased and de-duplicated by the service; [] clears them.
-    keywords: list[StrictStr] = Field(default_factory=list)
+    # Trimmed, lowercased and de-duplicated by the service (at most 50 after
+    # that, 400); the raw list is bounded so an absurd body is a 422. [] clears.
+    keywords: list[StrictStr] = Field(default_factory=list, max_length=200)
     # Strict: "yes" or 1 is a 422, not silently true.
     keyword_filter: StrictBool = True
 

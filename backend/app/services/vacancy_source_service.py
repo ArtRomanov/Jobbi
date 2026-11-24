@@ -63,6 +63,7 @@ MAX_KEYWORD_LENGTH = 64
 
 TOO_MANY_KEYWORDS_MESSAGE = "You can add up to 50 keywords"
 BAD_KEYWORD_MESSAGE = "Keywords must be 1–64 characters"
+KEYWORD_WITHOUT_LETTERS_MESSAGE = "Keywords must contain a letter or a digit"
 
 
 class _Unset(Enum):
@@ -168,20 +169,24 @@ def normalize_description(raw: str | None) -> str | None:
 def normalize_keywords(raw: list[str]) -> list[str]:
     """Trim, collapse inner whitespace, lowercase, de-duplicate keeping order.
 
+    Stops at the first problem, and as soon as a 51st unique keyword appears
+    (the raw list is bounded by the schema too).
+
     Raises:
-        SearchSettingsError: a keyword is empty or too long, or too many
-            keywords remain after de-duplication.
+        SearchSettingsError: a keyword is empty, too long or has no letter or
+            digit, or there are more than MAX_KEYWORDS unique keywords.
     """
-    keywords: list[str] = []
+    keywords: dict[str, None] = {}  # insertion-ordered set
     for item in raw:
         keyword = " ".join(item.split()).lower()
         if not keyword or len(keyword) > MAX_KEYWORD_LENGTH:
             raise SearchSettingsError(BAD_KEYWORD_MESSAGE)
-        if keyword not in keywords:
-            keywords.append(keyword)
-    if len(keywords) > MAX_KEYWORDS:
-        raise SearchSettingsError(TOO_MANY_KEYWORDS_MESSAGE)
-    return keywords
+        if not any(char.isalnum() for char in keyword):
+            raise SearchSettingsError(KEYWORD_WITHOUT_LETTERS_MESSAGE)
+        keywords[keyword] = None
+        if len(keywords) > MAX_KEYWORDS:
+            raise SearchSettingsError(TOO_MANY_KEYWORDS_MESSAGE)
+    return list(keywords)
 
 
 async def update_search_settings(

@@ -18,6 +18,8 @@ from app.discovery.keyword_filter import keyword_matches
         ("#react #remote", ["react"]),
         ("C# developer", ["c#"]),
         ("Senior .NET developer", [".net"]),
+        ("ASP.NET Core developer", [".net"]),
+        ("Stack: Node.js", [".js"]),
         ("Python backend", ["java", "python"]),
     ],
 )

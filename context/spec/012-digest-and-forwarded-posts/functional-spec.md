@@ -81,11 +81,11 @@ Since exclude words were removed (backlog #12), every new post of every source w
 
 - **As a** user, **I want to** list words my vacancies always contain, **so that** Jobbi does not spend its daily AI quota on posts that are clearly not for me.
   - **Acceptance Criteria:**
-    - [ ] The "What are you looking for?" form in the Sources panel has a **Keywords** list (chips; up to 50, 1–64 characters each; a 51st shows "You can add up to 50 keywords") and a switch **"Only send posts with these words to the AI"** (on by default). Saving stores the description, keywords and switch together; keywords are shown as saved: trimmed, lowercased, without duplicates.
+    - [ ] The "What are you looking for?" form in the Sources panel has a **Keywords** list (chips; up to 50, 1–64 characters each with at least one letter or digit; a 51st shows "You can add up to 50 keywords") and a switch **"Only send posts with these words to the AI"** (on by default). Saving stores the description, keywords and switch together; keywords are shown as saved: trimmed, lowercased, without duplicates.
     - [ ] While the switch is on and the list is not empty, a new post (Telegram, career page or web page; after the web page is read) whose title and text contain none of the keywords is skipped: it is not sent to the AI, never shown, and never comes back, even if the keywords change later.
-    - [ ] A keyword matches at the start of a word, in any letter case, and also matches longer words ("фронт" finds "фронтенд", "react" finds "reactjs"); "front end" also finds "front-end". The form shows this hint.
+    - [ ] A keyword matches at the start of a word, in any letter case, and also matches longer words ("фронт" finds "фронтенд", "react" finds "reactjs"); "front end" also finds "front-end"; a keyword starting with a symbol also matches inside a word (".net" finds "ASP.NET"). The form shows this hint.
     - [ ] One matching line is enough: a digest naming a keyword once is rated in full (§2.1).
-    - [ ] Posts forwarded to the bot (§2.2) are never skipped by the filter.
+    - [ ] Posts forwarded to the bot (§2.2) are never skipped by the filter. Forwarding a post the filter already skipped rates it like a new forwarded post.
     - [ ] Switch off or an empty list: every new post goes to the AI, as before.
     - [ ] The form shows "Skipped by the filter in the last 24 hours: N".
     - [ ] Keywords and the switch are per user.

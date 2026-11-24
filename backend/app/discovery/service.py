@@ -587,20 +587,33 @@ async def _apply_keyword_filter(
             for row in rows
             if not keyword_matches(row.title, row.text or "", keywords)
         ]
+        deleted_keys = []
         for row in skipped:
-            await _delete_pending(session, row.id)
-        if skipped:
+            # The delete re-checks "not forwarded": a forward recorded after
+            # the SELECT above keeps its post.
+            deleted = await session.execute(
+                delete(Vacancy).where(
+                    Vacancy.id == row.id,
+                    Vacancy.state == "pending",
+                    Vacancy.external_key.not_in(forwarded_keys),
+                )
+            )
+            if not deleted.rowcount:
+                continue
+            await session.execute(
+                delete(VacancyCardSource).where(VacancyCardSource.vacancy_id == row.id)
+            )
+            deleted_keys.append(row.external_key)
+        if deleted_keys:
             await session.execute(
                 update(VacancySeenKey)
                 .where(
                     VacancySeenKey.user_id == user_id,
-                    VacancySeenKey.external_key.in_(
-                        [row.external_key for row in skipped]
-                    ),
+                    VacancySeenKey.external_key.in_(deleted_keys),
                 )
                 .values(filtered_at=clock())
             )
-            report.posts_filtered += len(skipped)
+            report.posts_filtered += len(deleted_keys)
 
 
 # --------------------------------------------------------------------------
@@ -1024,7 +1037,9 @@ async def store_forwarded_post(
     """
     try:
         async with session_factory() as session, session.begin():
-            if await _already_seen(session, user_id, [post.external_key]):
+            if await _unfilter_seen_key(session, user_id, post.external_key):
+                pass  # skipped by the keyword filter: rated like a new post
+            elif await _already_seen(session, user_id, [post.external_key]):
                 await _forward_seen_post(
                     session,
                     user_id,
@@ -1034,11 +1049,14 @@ async def store_forwarded_post(
                     message_id=message_id,
                 )
                 return ForwardOutcome.ALREADY_SEEN
-            session.add(
-                VacancySeenKey(
-                    user_id=user_id, external_key=post.external_key, first_seen_at=now
+            else:
+                session.add(
+                    VacancySeenKey(
+                        user_id=user_id,
+                        external_key=post.external_key,
+                        first_seen_at=now,
+                    )
                 )
-            )
             session.add(
                 ForwardedPost(
                     user_id=user_id,
@@ -1081,6 +1099,32 @@ async def store_forwarded_post(
     except IntegrityError:
         # The same post forwarded twice at once: the other one won.
         return ForwardOutcome.ALREADY_SEEN
+
+
+async def _unfilter_seen_key(
+    session: AsyncSession, user_id: str, external_key: str
+) -> bool:
+    """Clear `filtered_at` on a seen key the keyword filter skipped, when the
+    post has no card. True: the forward is stored as a new post (forwarded
+    posts are never filtered). Conditional UPDATE, so of two concurrent
+    forwards only one wins; the other then sees a plain seen key."""
+    has_card = await session.scalar(
+        select(Vacancy.id)
+        .where(Vacancy.user_id == user_id, Vacancy.external_key == external_key)
+        .limit(1)
+    )
+    if has_card is not None:
+        return False
+    cleared = await session.execute(
+        update(VacancySeenKey)
+        .where(
+            VacancySeenKey.user_id == user_id,
+            VacancySeenKey.external_key == external_key,
+            VacancySeenKey.filtered_at.is_not(None),
+        )
+        .values(filtered_at=None)
+    )
+    return bool(cleared.rowcount)
 
 
 async def _forward_seen_post(

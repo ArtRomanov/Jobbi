@@ -11,6 +11,7 @@ SOURCES_URL = "/api/v1/vacancy-sources"
 DESCRIPTION_TOO_LONG = "Description can be up to 500 characters"
 TOO_MANY_KEYWORDS = "You can add up to 50 keywords"
 BAD_KEYWORD = "Keywords must be 1–64 characters"
+KEYWORD_WITHOUT_LETTERS = "Keywords must contain a letter or a digit"
 
 
 def _settings(
@@ -302,6 +303,55 @@ async def test_bad_keyword_is_rejected_and_nothing_saved(
     assert resp.status_code == 400
     assert resp.json() == {"detail": BAD_KEYWORD}
     assert await _get_settings(client, token) == _settings("Frontend", ["react"])
+
+
+@pytest.mark.parametrize("bad", ["-", "--", " - ", "#", ".", "+-+"])
+async def test_keyword_without_a_letter_or_digit_is_rejected(
+    client: httpx.AsyncClient, token: str, bad: str
+) -> None:
+    resp = await _patch(client, token, {"keywords": ["react", bad]})
+
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": KEYWORD_WITHOUT_LETTERS}
+
+
+@pytest.mark.parametrize("keyword", ["c#", ".net", "c++", "1c", "фронт"])
+async def test_keyword_with_a_letter_or_digit_and_symbols_is_accepted(
+    client: httpx.AsyncClient, token: str, keyword: str
+) -> None:
+    resp = await _patch(client, token, {"keywords": [keyword]})
+
+    assert resp.status_code == 200
+    assert resp.json()["keywords"] == [keyword]
+
+
+async def test_normalising_stops_at_the_51st_unique_keyword(
+    client: httpx.AsyncClient, token: str
+) -> None:
+    # The list is over the limit before the bad item is reached.
+    keywords = [f"kw{i}" for i in range(51)] + ["a" * 65]
+
+    resp = await _patch(client, token, {"keywords": keywords})
+
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": TOO_MANY_KEYWORDS}
+
+
+async def test_200_raw_keywords_with_duplicates_are_accepted(
+    client: httpx.AsyncClient, token: str
+) -> None:
+    resp = await _patch(client, token, {"keywords": ["react"] * 200})
+
+    assert resp.status_code == 200
+    assert resp.json()["keywords"] == ["react"]
+
+
+async def test_more_than_200_raw_keywords_is_validation_error(
+    client: httpx.AsyncClient, token: str
+) -> None:
+    resp = await _patch(client, token, {"keywords": ["react"] * 201})
+
+    assert resp.status_code == 422
 
 
 @pytest.mark.parametrize(

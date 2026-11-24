@@ -2,21 +2,27 @@
 user's keywords are deleted before the AI call; their seen keys stay with
 `filtered_at` (file-backed SQLite, fake Groq, fixed clock)."""
 
+import sqlite3
+import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 import respx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.discovery import service
 from app.discovery.service import (
     ForwardedChannel,
+    ForwardOutcome,
     check_all,
     evaluate_pending,
     run_initial_scans,
     store_forwarded_post,
 )
 from app.discovery.types import RawPost
+from app.models.forwarded_post import ForwardedPost
 from app.models.vacancy_search_settings import VacancySearchSettings
 from app.models.vacancy_seen_key import VacancySeenKey
 from tests.discovery.board_stubs import GreenhouseBoard
@@ -169,9 +175,11 @@ async def test_filter_is_per_user(factory, db, ai, sleep) -> None:
 # --- forwarded posts ---------------------------------------------------------------
 
 
-async def _forward(factory, user_id: str, text: str) -> None:
+async def _forward(
+    factory, user_id: str, text: str, *, key: str = "tgc:1234567890/1"
+) -> ForwardOutcome:
     post = RawPost(
-        external_key="tgc:1234567890/1",
+        external_key=key,
         url="https://t.me/c/1234567890/1",
         job_link=None,
         title=None,
@@ -180,7 +188,7 @@ async def _forward(factory, user_id: str, text: str) -> None:
         posted_at=NOW - timedelta(hours=3),
         links=(),
     )
-    await store_forwarded_post(
+    return await store_forwarded_post(
         factory,
         user_id,
         ForwardedChannel(handle="c1234567890", label="Secret Jobs"),
@@ -222,6 +230,82 @@ async def test_forwarded_post_is_never_filtered_in_the_hourly_run(
     [card] = await vacancies(db)
     assert card.external_key == "tgc:1234567890/1"
     assert set(await filtered_keys(db)) == {"tg:other/1"}
+
+
+async def test_forwarding_a_filtered_post_rates_it(factory, db, ai, sleep) -> None:
+    user_id = await make_user(db, keywords=["react"])
+    await make_pending(db, user_id, 1, text="MATCH HIGH Java backend")
+    await _evaluate(factory, ai, sleep)
+    assert set(await filtered_keys(db)) == {"tg:other/1"}
+
+    outcome = await _forward(
+        factory, user_id, "MATCH HIGH Java backend", key="tg:other/1"
+    )
+
+    assert outcome is ForwardOutcome.ADDED
+    assert await filtered_keys(db) == {}  # no longer counted as skipped
+    [pending] = await vacancies(db)
+    assert pending.state == "pending"
+    async with db() as session:
+        [forward] = (await session.scalars(select(ForwardedPost))).all()
+    assert forward.external_key == "tg:other/1"
+
+    report = await run_initial_scans(
+        factory, None, ai, at(NOW), config=CONFIG, sleep=sleep
+    )
+
+    assert report.posts_filtered == 0
+    assert ai.posts_sent == ["MATCH HIGH Java backend"]
+    [card] = await vacancies(db)
+    assert card.state == "new"
+
+
+async def test_channel_post_forwarded_before_the_filter_runs_is_rated(
+    factory, db, ai, sleep
+) -> None:
+    user_id = await make_user(db, keywords=["react"])
+    await make_pending(db, user_id, 1, text="MATCH HIGH Java backend")
+
+    outcome = await _forward(
+        factory, user_id, "MATCH HIGH Java backend", key="tg:other/1"
+    )
+    report = await _evaluate(factory, ai, sleep)
+
+    assert outcome is ForwardOutcome.ALREADY_SEEN  # waits for its rating
+    assert report.posts_filtered == 0
+    assert ai.posts_sent == ["MATCH HIGH Java backend 1"]
+    [card] = await vacancies(db)
+    assert card.state == "new"
+    assert await filtered_keys(db) == {}
+
+
+async def test_forward_recorded_while_the_filter_runs_keeps_the_post(
+    factory, db, ai, sleep, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A forward that lands between the filter's read and its delete wins."""
+    user_id = await make_user(db, keywords=["react"])
+    await make_pending(db, user_id, 2, text="MATCH HIGH Java backend")
+    real_matches = service.keyword_matches
+
+    def forward_during_filter(*args, **kwargs):
+        with sqlite3.connect(tmp_path / "worker.db", timeout=5) as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO forwarded_posts "
+                "(id, user_id, external_key, chat_id, message_id, created_at) "
+                "VALUES (?, ?, 'tg:other/1', ?, 31, ?)",
+                (str(uuid.uuid4()), user_id, CHAT_ID, NOW.isoformat(" ")),
+            )
+        return real_matches(*args, **kwargs)
+
+    monkeypatch.setattr(service, "keyword_matches", forward_during_filter)
+
+    report = await _evaluate(factory, ai, sleep)
+
+    assert report.posts_filtered == 1
+    [card] = await vacancies(db)
+    assert card.external_key == "tg:other/1" and card.state == "new"
+    # Only the key actually deleted is marked.
+    assert set(await filtered_keys(db)) == {"tg:other/2"}
 
 
 # --- web and board sources ---------------------------------------------------------
