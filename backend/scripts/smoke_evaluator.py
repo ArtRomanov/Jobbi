@@ -8,7 +8,8 @@ Usage (from backend/; the key is never printed):
     set -a; . ../.env; set +a; python scripts/smoke_evaluator.py
     python scripts/smoke_evaluator.py --env-file ../.env
 Env: GROQ_API_KEY (required, from the environment or --env-file),
-GROQ_DISCOVERY_MODEL (default openai/gpt-oss-20b), SMOKE_PAUSE_S (default 30),
+GROQ_DISCOVERY_MODEL (default openai/gpt-oss-20b; set it to the fallback,
+e.g. openai/gpt-oss-120b, to smoke GROQ_DISCOVERY_FALLBACK_MODEL), SMOKE_PAUSE_S (default 30),
 SMOKE_DUMP=1 (print the raw JSON answer of every call), SMOKE_SCENARIOS
 (comma-separated 1-based scenario numbers to run, default all; 7,8 = digests).
 """

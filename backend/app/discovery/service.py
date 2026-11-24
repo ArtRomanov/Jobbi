@@ -61,11 +61,12 @@ from app.discovery.evaluator import (
     EvaluationFormatError,
     EvaluationRateLimitedError,
     EvaluationTransportError,
+    ModelChooser,
     PostVerdict,
     VacancyItem,
     batch_take,
     can_be_digest,
-    evaluate_batch,
+    evaluate_with_fallback,
     fragment,
     is_cut,
 )
@@ -189,15 +190,29 @@ MonotonicFn: TypeAlias = Callable[[], float]
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DiscoveryConfig:
+    """Worker settings. Build it once per process: `models` remembers which
+    model is out of its daily Groq quota across runs."""
+
     model: str
     daily_limit: int
+    # Rates posts while `model` is out of its daily quota; "" disables it.
+    fallback_model: str = ""
     eval_pause_s: float = EVAL_PAUSE_S
+    monotonic: MonotonicFn = field(default=time.monotonic, repr=False, compare=False)
+    models: ModelChooser = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        chooser = ModelChooser(
+            self.model, self.fallback_model, monotonic=self.monotonic
+        )
+        object.__setattr__(self, "models", chooser)
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> Self:
         settings = settings or get_settings()
         return cls(
             model=settings.GROQ_DISCOVERY_MODEL,
+            fallback_model=settings.GROQ_DISCOVERY_FALLBACK_MODEL,
             daily_limit=settings.DISCOVERY_DAILY_EVAL_LIMIT,
         )
 
@@ -1886,12 +1901,18 @@ class _UserEvaluation:
         await self._pacer.wait()
         self._report.ai_calls += 1
         try:
-            evaluation = await evaluate_batch(
+            evaluation = await evaluate_with_fallback(
                 self._groq,
-                self._config.model,
+                self._config.models,
                 batch.description,
                 batch.profile,
                 [row.post for row in rows],
+            )
+            logger.info(
+                "AI batch of %d post(s) for user %s rated by %s",
+                len(rows),
+                self._user_id,
+                evaluation.model,
             )
         except EvaluationRateLimitedError as exc:
             logger.warning("Groq rate limit, evaluation stops for this run: %s", exc)

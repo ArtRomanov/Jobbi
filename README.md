@@ -52,6 +52,7 @@ docker compose up -d bot discovery
 | Variable                     | Default            | Meaning                                                                 |
 |------------------------------|--------------------|-------------------------------------------------------------------------|
 | `GROQ_DISCOVERY_MODEL`       | `openai/gpt-oss-20b` | Groq model used to evaluate posts (chat uses `GROQ_MODEL`).           |
+| `GROQ_DISCOVERY_FALLBACK_MODEL` | `openai/gpt-oss-120b` | Rates posts while `GROQ_DISCOVERY_MODEL` is out of its daily Groq token quota (TPD is counted per model). Empty disables it. Do not use the chat model. |
 | `DISCOVERY_DAILY_EVAL_LIMIT` | `150`              | Max posts evaluated per user per local day. Sized for the shared Groq free-tier budget; raise only with a bigger plan. |
 
 `GROQ_API_KEY` is required for evaluation; `TELEGRAM_BOT_TOKEN` is optional (without it, no alerts are sent).

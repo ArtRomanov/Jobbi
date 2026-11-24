@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     GROQ_MODEL: str = "qwen/qwen3.8-27b"
     # Model for vacancy discovery (separate from the chat model above).
     GROQ_DISCOVERY_MODEL: str = "openai/gpt-oss-20b"
+    # Rates discovery posts while GROQ_DISCOVERY_MODEL is out of its daily token
+    # quota (Groq counts TPD per model). Not the chat model: that would spend the
+    # chat's quota. Empty string disables the fallback.
+    GROQ_DISCOVERY_FALLBACK_MODEL: str = "openai/gpt-oss-120b"
     # Posts evaluated by AI per user per local day (shared Groq token budget).
     DISCOVERY_DAILY_EVAL_LIMIT: int = Field(default=150, ge=1)
     TELEGRAM_BOT_TOKEN: str = ""
