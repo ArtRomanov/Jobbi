@@ -103,8 +103,13 @@ async def test_list_empty_with_defaults(client: httpx.AsyncClient, token: str) -
     assert resp.json() == {
         "sources": [],
         "removed_sources": [],
-        "settings": {"description": None},
-        "status": {"ai_unavailable": False, "limit_reached": False, "waiting_count": 0},
+        "settings": {"description": None, "keywords": [], "keyword_filter": True},
+        "status": {
+            "ai_unavailable": False,
+            "limit_reached": False,
+            "waiting_count": 0,
+            "filtered_last_24h": 0,
+        },
     }
 
 
@@ -115,13 +120,19 @@ async def test_list_reads_saved_settings(
         VacancySearchSettings(
             user_id=user_id,
             description="Senior frontend, remote",
+            keywords=["react", "фронт"],
+            keyword_filter_enabled=False,
         )
     )
     await db_session.commit()
 
     resp = await client.get(URL, headers=_auth(token))
 
-    assert resp.json()["settings"] == {"description": "Senior frontend, remote"}
+    assert resp.json()["settings"] == {
+        "description": "Senior frontend, remote",
+        "keywords": ["react", "фронт"],
+        "keyword_filter": False,
+    }
 
 
 async def test_list_reports_scanning_and_unavailable(

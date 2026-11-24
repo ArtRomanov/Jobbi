@@ -1,6 +1,6 @@
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StrictBool, StrictStr, StringConstraints
 
 from app.schemas.telegram import UtcDatetime
 
@@ -91,6 +91,10 @@ class VacancySourceRead(BaseModel):
 
 class VacancySearchSettingsRead(BaseModel):
     description: str | None = None
+    # Pre-AI keyword filter: a post reaches the AI only if it names a keyword
+    # (while `keyword_filter` is on and the list is not empty).
+    keywords: list[str] = Field(default_factory=list)
+    keyword_filter: bool = True
 
 
 class VacancySearchSettingsUpdate(BaseModel):
@@ -102,12 +106,18 @@ class VacancySearchSettingsUpdate(BaseModel):
 
     # Explicit null (or blank text) turns the search off.
     description: str | None = None
+    # Trimmed, lowercased and de-duplicated by the service; [] clears them.
+    keywords: list[StrictStr] = Field(default_factory=list)
+    # Strict: "yes" or 1 is a 422, not silently true.
+    keyword_filter: StrictBool = True
 
 
 class DiscoveryStatus(BaseModel):
     ai_unavailable: bool = False
     limit_reached: bool = False
     waiting_count: int = 0
+    # Posts the keyword filter skipped (never sent to the AI) in the last 24 h.
+    filtered_last_24h: int = 0
 
 
 class SourceRef(BaseModel):

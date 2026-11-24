@@ -21,7 +21,9 @@ from app.discovery.keyword_filter import keyword_matches
         ("Python backend", ["java", "python"]),
     ],
 )
-def test_post_with_a_keyword_at_a_word_start_matches(text: str, keywords: list[str]) -> None:
+def test_post_with_a_keyword_at_a_word_start_matches(
+    text: str, keywords: list[str]
+) -> None:
     assert keyword_matches(None, text, keywords)
 
 

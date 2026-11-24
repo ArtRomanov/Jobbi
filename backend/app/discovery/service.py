@@ -530,7 +530,7 @@ async def evaluate_pending(
     pacer = _Pacer(config.eval_pause_s, sleep)
     for user_id in await _users_with_pending(session_factory, user_ids):
         if user_id not in forwarded_only:
-            await _apply_keyword_filter(session_factory, user_id, clock(), report)
+            await _apply_keyword_filter(session_factory, user_id, clock, report)
         outcome = await _UserEvaluation(
             session_factory=session_factory,
             groq_client=groq_client,
@@ -547,7 +547,7 @@ async def evaluate_pending(
 
 
 async def _apply_keyword_filter(
-    session_factory: SessionFactory, user_id: str, now: datetime, report: RunReport
+    session_factory: SessionFactory, user_id: str, clock: Clock, report: RunReport
 ) -> None:
     """Skip the user's pending posts that name none of their keywords.
 
@@ -556,7 +556,9 @@ async def _apply_keyword_filter(
     is deleted like a rejected one; its seen key stays (so it never comes
     back, even if the keywords change later) and gets `filtered_at`. Posts
     the user forwarded to the bot are never filtered: they asked for a rating.
-    Off while `keyword_filter_enabled` is false or the list is empty.
+    Off while `keyword_filter_enabled` is false or the list is empty. The
+    clock is read only when a post is skipped, so a filter that is off (or
+    skips nothing) does not move a ticking test clock.
     """
     async with session_factory() as session, session.begin():
         settings_row = await session.get(VacancySearchSettings, user_id)
@@ -570,8 +572,9 @@ async def _apply_keyword_filter(
         )
         rows = (
             await session.execute(
-                select(Vacancy.id, Vacancy.external_key, Vacancy.title, Vacancy.text)
-                .where(
+                select(
+                    Vacancy.id, Vacancy.external_key, Vacancy.title, Vacancy.text
+                ).where(
                     Vacancy.user_id == user_id,
                     Vacancy.state == "pending",
                     Vacancy.needs_detail.is_(False),
@@ -595,7 +598,7 @@ async def _apply_keyword_filter(
                         [row.external_key for row in skipped]
                     ),
                 )
-                .values(filtered_at=now)
+                .values(filtered_at=clock())
             )
             report.posts_filtered += len(skipped)
 

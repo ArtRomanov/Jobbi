@@ -13,13 +13,26 @@ export type VacancySourceKind = VacancySource["kind"];
 /** A source of existing cards that matches no live source: `{key, label}` (shown "(removed)"). */
 export type RemovedVacancySource = VacancySourcesResponse["removed_sources"][number];
 
-/** The search description (null: search is off). */
+/**
+ * Search settings: description (null: search is off), pre-AI `keywords`
+ * (server-normalized: trimmed, lowercased, de-duped) and the `keyword_filter`
+ * switch. The server always sends every field, but the generated type keeps
+ * `description` / `keywords` optional (Python defaults): read them with `??`.
+ */
 export type VacancySearchSettings = components["schemas"]["VacancySearchSettingsRead"];
 
-/** Body of PATCH /api/v1/vacancy-search-settings: a field left out stays unchanged. */
-export type VacancySearchSettingsUpdate = components["schemas"]["VacancySearchSettingsUpdate"];
+/**
+ * Body of PATCH /api/v1/vacancy-search-settings: a field left out stays unchanged
+ * (the generated type marks `keyword_filter` required only because it has a default).
+ */
+export type VacancySearchSettingsUpdate = Partial<
+  components["schemas"]["VacancySearchSettingsUpdate"]
+>;
 
-/** AI availability and daily-limit state of vacancy discovery. */
+/**
+ * AI availability, daily-limit state and `filtered_last_24h` (posts the keyword
+ * filter skipped in the last 24 h) of vacancy discovery.
+ */
 export type DiscoveryStatus = components["schemas"]["DiscoveryStatus"];
 
 /** Response of GET /api/v1/vacancy-sources. */

@@ -218,6 +218,7 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
         key={settings === null ? "loading" : "loaded"}
         initialSettings={settings}
         onSaved={setSettings}
+        filteredLast24h={status?.filtered_last_24h ?? null}
       />
     </section>
   );

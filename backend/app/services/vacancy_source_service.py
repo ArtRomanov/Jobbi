@@ -58,6 +58,12 @@ MAX_DESCRIPTION_LENGTH = 500
 
 DESCRIPTION_TOO_LONG_MESSAGE = "Description can be up to 500 characters"
 
+MAX_KEYWORDS = 50
+MAX_KEYWORD_LENGTH = 64
+
+TOO_MANY_KEYWORDS_MESSAGE = "You can add up to 50 keywords"
+BAD_KEYWORD_MESSAGE = "Keywords must be 1–64 characters"
+
 
 class _Unset(Enum):
     UNSET = "unset"
@@ -159,11 +165,32 @@ def normalize_description(raw: str | None) -> str | None:
     return description
 
 
+def normalize_keywords(raw: list[str]) -> list[str]:
+    """Trim, collapse inner whitespace, lowercase, de-duplicate keeping order.
+
+    Raises:
+        SearchSettingsError: a keyword is empty or too long, or too many
+            keywords remain after de-duplication.
+    """
+    keywords: list[str] = []
+    for item in raw:
+        keyword = " ".join(item.split()).lower()
+        if not keyword or len(keyword) > MAX_KEYWORD_LENGTH:
+            raise SearchSettingsError(BAD_KEYWORD_MESSAGE)
+        if keyword not in keywords:
+            keywords.append(keyword)
+    if len(keywords) > MAX_KEYWORDS:
+        raise SearchSettingsError(TOO_MANY_KEYWORDS_MESSAGE)
+    return keywords
+
+
 async def update_search_settings(
     db: AsyncSession,
     user_id: str,
     *,
     description: str | None | _Unset = UNSET,
+    keywords: list[str] | _Unset = UNSET,
+    keyword_filter_enabled: bool | _Unset = UNSET,
 ) -> VacancySearchSettings:
     """Partially update the user's settings, creating the row on first use.
 
@@ -176,6 +203,9 @@ async def update_search_settings(
     new_description = (
         UNSET if isinstance(description, _Unset) else normalize_description(description)
     )
+    new_keywords = (
+        UNSET if isinstance(keywords, _Unset) else normalize_keywords(keywords)
+    )
 
     # Two attempts: a concurrent first PATCH may insert the row between our
     # SELECT and INSERT; the primary key rejects ours and we update theirs.
@@ -186,6 +216,11 @@ async def update_search_settings(
             db.add(settings_row)
         if not isinstance(new_description, _Unset):
             settings_row.description = new_description
+        if not isinstance(new_keywords, _Unset):
+            # A new list object, so the JSON column change is detected.
+            settings_row.keywords = list(new_keywords)
+        if not isinstance(keyword_filter_enabled, _Unset):
+            settings_row.keyword_filter_enabled = keyword_filter_enabled
         try:
             await db.commit()
         except IntegrityError:

@@ -19,12 +19,14 @@ from app.models.cv import Cv
 from app.models.user import User
 from app.models.vacancy import Vacancy, VacancyCardSource
 from app.models.vacancy_search_settings import VacancySearchSettings
+from app.models.vacancy_seen_key import VacancySeenKey
 from app.models.vacancy_source import VacancySource
 from app.schemas.application import ApplicationCreate
 from app.services import application_service, cv_service
 
 __all__ = [
     "AI_UNAVAILABLE_AFTER",
+    "FILTERED_WINDOW",
     "VISIBLE_STATES",
     "AddedToTrackerData",
     "CardSourceData",
@@ -50,6 +52,8 @@ __all__ = [
 
 VISIBLE_STATES = ("new", "seen")
 AI_UNAVAILABLE_AFTER = timedelta(hours=1)
+# Window of the "skipped by the filter" counter in the Sources panel.
+FILTERED_WINDOW = timedelta(hours=24)
 
 # Explicit order: alphabetical would put "low" before "medium".
 _FIT_ORDER = case(
@@ -71,6 +75,7 @@ class DiscoveryStatusData:
     ai_unavailable: bool
     limit_reached: bool
     waiting_count: int
+    filtered_last_24h: int
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -219,6 +224,21 @@ async def _count_waiting(db: AsyncSession, user_id: str) -> int:
     return result or 0
 
 
+async def _count_filtered(db: AsyncSession, user_id: str, now: datetime) -> int:
+    """Posts the pre-AI keyword filter skipped within FILTERED_WINDOW (their
+    seen keys keep `filtered_at`; the rows themselves are deleted)."""
+    result = await db.scalar(
+        select(func.count())
+        .select_from(VacancySeenKey)
+        .where(
+            VacancySeenKey.user_id == user_id,
+            VacancySeenKey.filtered_at.is_not(None),
+            VacancySeenKey.filtered_at > now - FILTERED_WINDOW,
+        )
+    )
+    return result or 0
+
+
 async def removed_sources(db: AsyncSession, user_id: str) -> list[CardSourceData]:
     """Sources of visible cards that are no longer watched: identity (kind +
     handle) not among the user's live sources. A re-added source (same kind
@@ -256,9 +276,13 @@ async def discovery_status(
 ) -> DiscoveryStatusData:
     now = now or _now_naive()
     waiting = await _count_waiting(db, user.id)
+    filtered = await _count_filtered(db, user.id, now)
     if settings_row is None:
         return DiscoveryStatusData(
-            ai_unavailable=False, limit_reached=False, waiting_count=waiting
+            ai_unavailable=False,
+            limit_reached=False,
+            waiting_count=waiting,
+            filtered_last_24h=filtered,
         )
     local_date, _, _ = local_day_bounds(now, zone_or_utc(user.timezone))
     failing_since = settings_row.ai_failing_since
@@ -267,6 +291,7 @@ async def discovery_status(
         and now - failing_since > AI_UNAVAILABLE_AFTER,
         limit_reached=settings_row.limit_reached_on == local_date,
         waiting_count=waiting,
+        filtered_last_24h=filtered,
     )
 
 

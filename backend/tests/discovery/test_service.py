@@ -253,7 +253,10 @@ async def make_user(
     description: str | None = DESCRIPTION,
     timezone: str | None = None,
     email: str = "u1@example.com",
+    keywords: list[str] | None = None,
+    keyword_filter_enabled: bool = True,
 ) -> str:
+    """A user with search settings; no keywords by default (filter off)."""
     async with db() as session:
         user = User(
             email=email,
@@ -264,7 +267,14 @@ async def make_user(
         )
         session.add(user)
         await session.flush()
-        session.add(VacancySearchSettings(user_id=user.id, description=description))
+        session.add(
+            VacancySearchSettings(
+                user_id=user.id,
+                description=description,
+                keywords=keywords or [],
+                keyword_filter_enabled=keyword_filter_enabled,
+            )
+        )
         await session.commit()
         return user.id
 

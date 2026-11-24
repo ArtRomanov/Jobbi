@@ -7,9 +7,10 @@ import { DESCRIPTION_MAX_LENGTH, SAVED_MESSAGE } from "../lib/constants";
 import type { UseSearchSettingsFormResult } from "./types";
 
 /**
- * Draft description for the "What are you looking for?" form. `initial` seeds
- * the draft once (the form is re-mounted when settings load). Save PATCHes
- * the description, then shows the server-normalized value,
+ * Drafts (description, keywords, keyword-filter switch) for the "What are you
+ * looking for?" form. `initial` seeds them once (the form is re-mounted when
+ * settings load). Save PATCHes all three in one request, then resets the
+ * drafts to the server-normalized values,
  * reports it via `onSaved` and toasts "Saved"; a failure becomes an inline error.
  */
 export function useSearchSettingsForm(
@@ -18,6 +19,8 @@ export function useSearchSettingsForm(
 ): UseSearchSettingsFormResult {
   const { showToast } = useToast();
   const [description, setDescriptionValue] = useState(initial?.description ?? "");
+  const [keywords, setKeywordsValue] = useState<readonly string[]>(initial?.keywords ?? []);
+  const [keywordFilter, setKeywordFilterValue] = useState(initial?.keyword_filter ?? true);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   // Guards against a second save before React re-renders with isSaving=true
@@ -29,6 +32,16 @@ export function useSearchSettingsForm(
     setSaveError(null);
   }, []);
 
+  const setKeywords = useCallback((value: readonly string[]): void => {
+    setKeywordsValue(value);
+    setSaveError(null);
+  }, []);
+
+  const setKeywordFilter = useCallback((value: boolean): void => {
+    setKeywordFilterValue(value);
+    setSaveError(null);
+  }, []);
+
   const save = useCallback(async (): Promise<boolean> => {
     if (isSavingRef.current) return false;
     isSavingRef.current = true;
@@ -37,8 +50,12 @@ export function useSearchSettingsForm(
     try {
       const saved = await updateSearchSettings({
         description: description.trim() === "" ? null : description,
+        keywords: [...keywords],
+        keyword_filter: keywordFilter,
       });
       setDescriptionValue(saved.description ?? "");
+      setKeywordsValue(saved.keywords ?? []);
+      setKeywordFilterValue(saved.keyword_filter);
       onSaved(saved);
       showToast(SAVED_MESSAGE, "success");
       return true;
@@ -49,7 +66,17 @@ export function useSearchSettingsForm(
       isSavingRef.current = false;
       setIsSaving(false);
     }
-  }, [description, onSaved, showToast]);
+  }, [description, keywords, keywordFilter, onSaved, showToast]);
 
-  return { description, setDescription, saveError, isSaving, save };
+  return {
+    description,
+    setDescription,
+    keywords,
+    setKeywords,
+    keywordFilter,
+    setKeywordFilter,
+    saveError,
+    isSaving,
+    save,
+  };
 }

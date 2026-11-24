@@ -42,25 +42,25 @@ function setVisibility(state: DocumentVisibilityState): void {
 
 describe("Sources panel status notices", () => {
   it.each<[string, Status, string[]]>([
-    ["nothing", { ai_unavailable: false, limit_reached: false, waiting_count: 0 }, []],
+    ["nothing", { ai_unavailable: false, limit_reached: false, waiting_count: 0, filtered_last_24h: 0 }, []],
     [
       "the plural limit notice",
-      { ai_unavailable: false, limit_reached: true, waiting_count: 42 },
+      { ai_unavailable: false, limit_reached: true, waiting_count: 42, filtered_last_24h: 0 },
       ["Daily limit reached — 42 posts are waiting"],
     ],
     [
       "the singular limit notice",
-      { ai_unavailable: false, limit_reached: true, waiting_count: 1 },
+      { ai_unavailable: false, limit_reached: true, waiting_count: 1, filtered_last_24h: 0 },
       ["Daily limit reached — 1 post is waiting"],
     ],
     [
       "the AI notice",
-      { ai_unavailable: true, limit_reached: false, waiting_count: 7 },
+      { ai_unavailable: true, limit_reached: false, waiting_count: 7, filtered_last_24h: 0 },
       [AI_NOTICE],
     ],
     [
       "both notices",
-      { ai_unavailable: true, limit_reached: true, waiting_count: 3 },
+      { ai_unavailable: true, limit_reached: true, waiting_count: 3, filtered_last_24h: 0 },
       ["Daily limit reached — 3 posts are waiting", AI_NOTICE],
     ],
   ])("shows %s", async (_name, status, expected) => {
@@ -91,8 +91,8 @@ describe("Sources panel refresh", () => {
         calls += 1;
         const status: Status =
           calls === 1
-            ? { ai_unavailable: false, limit_reached: false, waiting_count: 0 }
-            : { ai_unavailable: true, limit_reached: true, waiting_count: 1 };
+            ? { ai_unavailable: false, limit_reached: false, waiting_count: 0, filtered_last_24h: 0 }
+            : { ai_unavailable: true, limit_reached: true, waiting_count: 1, filtered_last_24h: 0 };
         return HttpResponse.json({ ...mockVacancySourcesEmpty, status });
       }),
     );
