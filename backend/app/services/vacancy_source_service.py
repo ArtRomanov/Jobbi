@@ -164,7 +164,7 @@ async def pending_counts(
     if source_ids is not None:
         stmt = stmt.where(Vacancy.source_id.in_(list(source_ids)))
     rows = await db.execute(stmt)
-    return {source_id: count for source_id, count in rows.tuples()}
+    return {source_id: count for source_id, count in rows}
 
 
 async def get_search_settings(

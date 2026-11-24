@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import Delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.discovery.service import (
@@ -246,3 +246,52 @@ async def test_check_all_reports_and_logs_expired_posts(
     ]
     assert "expired=1" in line
     assert "SECRET" not in caplog.text
+
+
+class _ForwardBeforeDelete:
+    """Session factory that runs `hook` (another connection) right before the
+    first DELETE on `vacancies`: a forward landing between the expiry's
+    SELECT and its DELETE."""
+
+    def __init__(self, inner, hook) -> None:
+        self.inner = inner
+        self.hook = hook
+        self.fired = False
+
+    def __call__(self) -> AsyncSession:
+        session = self.inner()
+        execute = session.execute
+
+        async def wrapped(statement, *args, **kwargs):
+            if (
+                not self.fired
+                and isinstance(statement, Delete)
+                and statement.table.name == Vacancy.__tablename__
+            ):
+                self.fired = True
+                await self.hook()
+            return await execute(statement, *args, **kwargs)
+
+        session.execute = wrapped  # type: ignore[method-assign]
+        return session
+
+
+async def test_forward_landing_during_the_expiry_keeps_the_post(
+    factory, db, ai, sleep
+) -> None:
+    user_id = await make_user(db)
+    old_id = await add_pending(db, user_id, "tg:other/1", posted_at=OLD, found_at=OLD)
+    outcomes: list[ForwardOutcome] = []
+
+    async def forward() -> None:
+        outcomes.append(await _forward(db, user_id, "tg:other/1"))
+
+    racing = _ForwardBeforeDelete(factory, forward)
+
+    report = await evaluate_pending(racing, ai, at(NOW), config=CONFIG, sleep=sleep)
+
+    assert racing.fired and outcomes == [ForwardOutcome.ALREADY_SEEN]
+    assert report.posts_expired == 0
+    # The forward asked for a rating: the post is rated, its card source kept.
+    assert ai.posts_sent == ["MATCH tg:other/1"]
+    assert old_id in await card_source_ids(db)
