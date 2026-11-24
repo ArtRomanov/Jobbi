@@ -107,7 +107,9 @@ Full-stack is a role of its own: a full-stack job does not match a frontend or \
 backend SEARCH, and only matches when SEARCH names full-stack. \
 Seniority, stack, location, remote work and salary never decide match; they only \
 lower fit. A job in the same field with the wrong stack, place or salary is still a \
-match, with a lower fit.
+match, with a lower fit. Before you set match to false, name the reason: if it is \
+not a different role or field (or a broken hard requirement below) but only \
+seniority, stack, place or salary, set match to true and lower fit instead.
    Exception - hard requirements: a point in SEARCH marked with "only", "must", \
 "strictly" or "required" (for example "remote only") is a hard requirement. If the \
 post clearly breaks a hard requirement, match is false. If the post does not \
