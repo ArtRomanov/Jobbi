@@ -337,8 +337,8 @@ function mockPreviewKind(input: string): "telegram" | "greenhouse" | "web" {
 export const mockVacancySourcesEmpty = {
   sources: [],
   removed_sources: [] as Array<{ key: string; label: string }>,
-  settings: { description: null },
-  status: { ai_unavailable: false, limit_reached: false, waiting_count: 0 },
+  settings: { description: null, keywords: [] as string[], keyword_filter: true },
+  status: { ai_unavailable: false, limit_reached: false, waiting_count: 0, filtered_last_24h: 0 },
 };
 
 // ---------------------------------------------------------------------------
@@ -828,11 +828,19 @@ export const handlers = [
   }),
 
   // Echoes the update normalized like the backend: trimmed, empty description →
-  // null (no limit checks).
+  // null; keywords trimmed, inner whitespace collapsed, lowercased, de-duped
+  // (no limit checks). Fields left out fall back to the defaults.
   http.patch(`${BASE_URL}/api/v1/vacancy-search-settings`, async ({ request }) => {
-    const body = (await request.json()) as { description?: string | null };
+    const body = (await request.json()) as {
+      description?: string | null;
+      keywords?: string[];
+      keyword_filter?: boolean;
+    };
     const description = body.description?.trim() || null;
-    return HttpResponse.json({ description });
+    const keywords = [
+      ...new Set((body.keywords ?? []).map((keyword) => keyword.split(/\s+/).filter(Boolean).join(" ").toLowerCase())),
+    ];
+    return HttpResponse.json({ description, keywords, keyword_filter: body.keyword_filter ?? true });
   }),
 
   // -------------------------------------------------------------------------

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.user import User
 from app.models.vacancy import Vacancy, VacancyCardSource
 from app.models.vacancy_search_settings import VacancySearchSettings
+from app.models.vacancy_seen_key import VacancySeenKey
 from app.models.vacancy_source import VacancySource
 
 URL = "/api/v1/vacancies"
@@ -230,6 +231,7 @@ class TestSourcesStatus:
             "ai_unavailable": False,
             "limit_reached": False,
             "waiting_count": 0,
+            "filtered_last_24h": 0,
         }
         assert body["removed_sources"] == []
 
@@ -260,7 +262,37 @@ class TestSourcesStatus:
             "ai_unavailable": True,
             "limit_reached": True,
             "waiting_count": 2,
+            "filtered_last_24h": 0,
         }
+
+    async def test_filtered_last_24h_counts_recent_filtered_keys(
+        self, client, token, user_id, db_session, other_registered_user
+    ) -> None:
+        now = _now_naive()
+        other_id = other_registered_user["user"]["id"]
+
+        def key(owner: str, n: int, filtered_at: datetime | None) -> VacancySeenKey:
+            return VacancySeenKey(
+                user_id=owner,
+                external_key=f"tg:jobs/{n}",
+                first_seen_at=now - timedelta(days=2),
+                filtered_at=filtered_at,
+            )
+
+        db_session.add_all(
+            [
+                key(user_id, 1, now - timedelta(minutes=5)),
+                key(user_id, 2, now - timedelta(hours=23)),
+                key(user_id, 3, now - timedelta(hours=25)),  # older than 24 h
+                key(user_id, 4, None),  # seen, never filtered
+                key(other_id, 5, now - timedelta(minutes=5)),  # another user
+            ]
+        )
+        await db_session.commit()
+
+        status = (await self._status(client, token))["status"]
+
+        assert status["filtered_last_24h"] == 2
 
     async def test_flags_off_for_recent_failure_and_other_day(
         self, client, token, user_id, db_session

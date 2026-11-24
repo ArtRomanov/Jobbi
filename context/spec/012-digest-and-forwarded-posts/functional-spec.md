@@ -75,6 +75,23 @@ Jobbi can only read public channels. Since PR #35 the user can forward a post fr
     - [ ] Cards from forwarded posts show the channel title as their source; in the Inbox source filter that channel appears as "<title> (forwarded)".
     - [ ] Only the private chat with the bot is handled; posts sent to the bot in groups or channels are ignored.
 
+### 2.4 Update 2026-11-24: pre-AI keyword filter
+
+Since exclude words were removed (backlog #12), every new post of every source went to the AI, and one noisy channel could use up the AI's free daily quota. The keyword filter is inclusive: a post reaches the AI only if it names at least one of the user's keywords (about 3% of queued posts passed in a measurement).
+
+- **As a** user, **I want to** list words my vacancies always contain, **so that** Jobbi does not spend its daily AI quota on posts that are clearly not for me.
+  - **Acceptance Criteria:**
+    - [ ] The "What are you looking for?" form in the Sources panel has a **Keywords** list (chips; up to 50, 1–64 characters each with at least one letter or digit; a 51st shows "You can add up to 50 keywords") and a switch **"Only send posts with these words to the AI"** (on by default). Saving stores the description, keywords and switch together; keywords are shown as saved: trimmed, lowercased, without duplicates.
+    - [ ] While the switch is on and the list is not empty, a new post (Telegram, career page or web page; after the web page is read) whose title and text contain none of the keywords is skipped: it is not sent to the AI, never shown, and never comes back, even if the keywords change later.
+    - [ ] A keyword matches at the start of a word, in any letter case, and also matches longer words ("фронт" finds "фронтенд", "react" finds "reactjs"); "front end" also finds "front-end"; a keyword starting with a symbol also matches inside a word (".net" finds "ASP.NET"). The form shows this hint.
+    - [ ] One matching line is enough: a digest naming a keyword once is rated in full (§2.1).
+    - [ ] Posts forwarded to the bot (§2.2) are never skipped by the filter. Forwarding a post the filter already skipped rates it like a new forwarded post.
+    - [ ] Switch off or an empty list: every new post goes to the AI, as before.
+    - [ ] The form shows "Skipped by the filter in the last 24 hours: N".
+    - [ ] Keywords and the switch are per user.
+
+Trade-off (option A): a skipped post keeps only its "seen" mark, so adding a keyword later does not bring old skipped posts back. Re-checking skipped posts after a keyword change is backlog #21; an AI-suggested keyword list is backlog #20.
+
 ### 2.3 Changes to spec 009
 
 Spec 009 stays Completed. These of its points are superseded by this spec, and 009 gets a pointer next to each:
@@ -92,6 +109,7 @@ Spec 009 stays Completed. These of its points are superseded by this spec, and 0
 
 - Splitting digests from watched Telegram channels and from forwarded posts.
 - Hiding and switching off exclude words (stored words are kept).
+- The pre-AI keyword filter (§2.4, added 2026-11-24).
 - The daily-summary line about posts longer than Jobbi reads.
 - The forward-to-Inbox flow, including the bot's second message with the result.
 - Pointers in spec 009; roadmap: add the Vacancy Discovery item and update "Quick Add from Telegram" (a forward from a channel now goes to the Inbox).
@@ -101,6 +119,7 @@ Spec 009 stays Completed. These of its points are superseded by this spec, and 0
 - Link-only digests: opening the link and splitting the page behind it (possible later, together with web-page sources of spec 010).
 - Splitting career-page jobs (they are always single jobs).
 - Re-rating seen posts, re-splitting old cards, re-rating after the search description changes.
+- An AI-generated keyword list (backlog #20) and re-checking posts skipped by the keyword filter after the keywords change (backlog #21).
 - Reading private channels as the user's own Telegram account; channels with "Restrict saving content" cannot be forwarded at all.
 - Managing sources from the bot.
 - Other roadmap items: HeadHunter Integration, LinkedIn Integration.

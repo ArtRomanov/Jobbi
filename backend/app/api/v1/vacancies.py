@@ -114,7 +114,11 @@ def _settings_to_read(
 ) -> VacancySearchSettingsRead:
     if settings_row is None:
         return VacancySearchSettingsRead()
-    return VacancySearchSettingsRead(description=settings_row.description)
+    return VacancySearchSettingsRead(
+        description=settings_row.description,
+        keywords=list(settings_row.keywords or []),
+        keyword_filter=settings_row.keyword_filter_enabled,
+    )
 
 
 @router.get(
@@ -140,6 +144,7 @@ async def get_vacancy_sources(
             ai_unavailable=status_data.ai_unavailable,
             limit_reached=status_data.limit_reached,
             waiting_count=status_data.waiting_count,
+            filtered_last_24h=status_data.filtered_last_24h,
         ),
     )
 
@@ -320,10 +325,12 @@ async def delete_vacancy_source(
 @router.patch(
     "/vacancy-search-settings",
     response_model=VacancySearchSettingsRead,
-    summary="Update the search description",
+    summary="Update the search description and the keyword filter",
     description=(
         "Partial update: fields left out stay unchanged. A null or blank "
-        "description turns the search off. 400 when the description is too long."
+        "description turns the search off. Keywords are trimmed, lowercased "
+        "and de-duplicated; `keyword_filter` switches the pre-AI keyword "
+        "filter. 400 when a limit is exceeded."
     ),
 )
 async def patch_vacancy_search_settings(
@@ -337,6 +344,10 @@ async def patch_vacancy_search_settings(
             db,
             current_user.id,
             description=body.description if "description" in fields else UNSET,
+            keywords=body.keywords if "keywords" in fields else UNSET,
+            keyword_filter_enabled=(
+                body.keyword_filter if "keyword_filter" in fields else UNSET
+            ),
         )
     except SearchSettingsError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=exc.message) from exc

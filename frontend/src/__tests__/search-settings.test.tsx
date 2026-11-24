@@ -10,12 +10,39 @@ const SOURCES_URL = "*/api/v1/vacancy-sources";
 const SETTINGS_URL = "*/api/v1/vacancy-search-settings";
 const HINT = "Describe what you're looking for to start finding vacancies.";
 
-function serveSettings(description: string | null): void {
+interface ServedSettings {
+  keywords?: string[];
+  keyword_filter?: boolean;
+  filtered_last_24h?: number;
+}
+
+function serveSettings(description: string | null, extra: ServedSettings = {}): void {
+  const { filtered_last_24h = 0, ...settings } = extra;
   server.use(
     http.get(SOURCES_URL, () =>
-      HttpResponse.json({ ...mockVacancySourcesEmpty, settings: { description } }),
+      HttpResponse.json({
+        ...mockVacancySourcesEmpty,
+        settings: { ...mockVacancySourcesEmpty.settings, description, ...settings },
+        status: { ...mockVacancySourcesEmpty.status, filtered_last_24h },
+      }),
     ),
   );
+}
+
+function getKeywordsInput(): HTMLElement {
+  return screen.getByRole("textbox", { name: "Keywords" });
+}
+
+function getKeywordChips(): string[] {
+  const list = screen.queryByRole("list", { name: "Keywords" });
+  if (list === null) return [];
+  return within(list)
+    .queryAllByRole("listitem")
+    .map((item) => item.textContent?.replace("×", "").trim() ?? "");
+}
+
+function getFilterSwitch(): HTMLElement {
+  return screen.getByRole("switch", { name: "Only send posts with these words to the AI" });
 }
 
 function getDescription(): HTMLElement {
@@ -51,20 +78,25 @@ describe("Search settings in the Sources panel", () => {
     expect(screen.queryByText(HINT)).not.toBeInTheDocument();
   });
 
-  it("has only the description field and sends only the description", async () => {
-    serveSettings("Frontend");
+  it("has description, keywords and the switch (no exclude words) and sends all three", async () => {
+    serveSettings("Frontend", { keywords: ["react"], keyword_filter: true });
     const bodies: unknown[] = [];
     server.use(
       http.patch(SETTINGS_URL, async ({ request }) => {
         bodies.push(await request.json());
-        return HttpResponse.json({ description: "Frontend React" });
+        return HttpResponse.json({
+          description: "Frontend React",
+          keywords: ["react"],
+          keyword_filter: true,
+        });
       }),
     );
     const user = userEvent.setup();
     await renderLoaded();
 
     const section = getSettingsSection();
-    expect(within(section).getAllByRole("textbox")).toEqual([getDescription()]);
+    expect(within(section).getAllByRole("textbox")).toEqual([getDescription(), getKeywordsInput()]);
+    expect(getFilterSwitch()).toBeChecked();
     expect(screen.queryByRole("textbox", { name: "Exclude words" })).not.toBeInTheDocument();
     expect(screen.queryByText(/exclude/i)).not.toBeInTheDocument();
 
@@ -72,8 +104,9 @@ describe("Search settings in the Sources panel", () => {
     await user.click(getSave());
 
     expect(await screen.findByText("Saved")).toBeInTheDocument();
-    expect(bodies).toEqual([{ description: "Frontend React" }]);
-    expect(screen.queryByText(/exclude/i)).not.toBeInTheDocument();
+    expect(bodies).toEqual([
+      { description: "Frontend React", keywords: ["react"], keyword_filter: true },
+    ]);
   });
 
   it("updates the counter as the user types", async () => {
@@ -109,12 +142,12 @@ describe("Search settings in the Sources panel", () => {
     expect(screen.getByText("500/500")).toBeInTheDocument();
   });
 
-  it("saves only the description and shows the server-normalized value", async () => {
+  it("saves the raw description and shows the server-normalized value", async () => {
     const bodies: unknown[] = [];
     server.use(
       http.patch(SETTINGS_URL, async ({ request }) => {
         bodies.push(await request.json());
-        return HttpResponse.json({ description: "Senior React" });
+        return HttpResponse.json({ description: "Senior React", keywords: [], keyword_filter: true });
       }),
     );
     const user = userEvent.setup();
@@ -124,7 +157,7 @@ describe("Search settings in the Sources panel", () => {
     await user.click(getSave());
 
     expect(await screen.findByText("Saved")).toBeInTheDocument();
-    expect(bodies).toEqual([{ description: "  Senior React  " }]);
+    expect(bodies).toEqual([{ description: "  Senior React  ", keywords: [], keyword_filter: true }]);
     expect(getDescription()).toHaveValue("Senior React");
     expect(screen.getByText("12/500")).toBeInTheDocument();
     await waitFor(() => expect(getSave()).toHaveFocus());
@@ -145,7 +178,7 @@ describe("Search settings in the Sources panel", () => {
 
     expect(await screen.findByText("Saved")).toBeInTheDocument();
     server.events.removeAllListeners();
-    expect(bodies).toEqual([{ description: null }]);
+    expect(bodies).toEqual([{ description: null, keywords: [], keyword_filter: true }]);
     expect(getDescription()).toHaveValue("");
     expect(screen.getByText(HINT)).toBeInTheDocument();
   });
@@ -208,5 +241,131 @@ describe("Search settings in the Sources panel", () => {
     release();
     expect(await screen.findByText("Saved")).toBeInTheDocument();
     expect(getSave()).toBeEnabled();
+  });
+
+  describe("keywords and the keyword filter", () => {
+    it("starts from the saved keywords, switch state and 24 h counter", async () => {
+      serveSettings("Frontend", {
+        keywords: ["react", "фронт"],
+        keyword_filter: false,
+        filtered_last_24h: 17,
+      });
+      await renderLoaded();
+
+      expect(getKeywordChips()).toEqual(["react", "фронт"]);
+      expect(getFilterSwitch()).not.toBeChecked();
+      expect(
+        screen.getByText("Skipped by the filter in the last 24 hours: 17"),
+      ).toBeInTheDocument();
+    });
+
+    it("shows a zero counter and links the hints to the fields", async () => {
+      await renderLoaded();
+
+      expect(screen.getByText("Skipped by the filter in the last 24 hours: 0")).toBeInTheDocument();
+      expect(getKeywordsInput()).toHaveAccessibleDescription(
+        /"фронт" finds "фронтенд".*"front end" also finds "front-end"/,
+      );
+      expect(getFilterSwitch()).toHaveAccessibleDescription(/deleted/);
+      expect(getFilterSwitch()).toBeChecked();
+    });
+
+    it("adds keywords with Enter and a comma, and removes them", async () => {
+      const user = userEvent.setup();
+      await renderLoaded();
+
+      await user.type(getKeywordsInput(), "React{Enter}");
+      await user.type(getKeywordsInput(), "фронт,front end,");
+      expect(getKeywordChips()).toEqual(["React", "фронт", "front end"]);
+      // Enter in the chip input never submits the form
+      expect(screen.queryByText("Saved")).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "Remove фронт" }));
+      expect(getKeywordChips()).toEqual(["React", "front end"]);
+      expect(getKeywordsInput()).toHaveFocus();
+    });
+
+    it("ignores case-insensitive duplicates and cuts keywords to 64 characters", async () => {
+      const user = userEvent.setup();
+      await renderLoaded();
+
+      await user.type(getKeywordsInput(), "react,REACT,");
+      await user.click(getKeywordsInput());
+      await user.paste(`${"k".repeat(70)},`);
+
+      expect(getKeywordChips()).toEqual(["react", "k".repeat(64)]);
+    });
+
+    it("disables the input at 50 keywords and says why", async () => {
+      serveSettings(null, { keywords: Array.from({ length: 50 }, (_, index) => `kw${index}`) });
+      await renderLoaded();
+
+      expect(getKeywordsInput()).toBeDisabled();
+      expect(screen.getByText("You can add up to 50 keywords")).toBeInTheDocument();
+    });
+
+    it("toggles the switch and sends description, keywords and keyword_filter in one PATCH", async () => {
+      serveSettings("Frontend", { keywords: ["vue"], keyword_filter: true });
+      const bodies: unknown[] = [];
+      server.events.on("request:start", async ({ request }) => {
+        if (request.method === "PATCH") bodies.push(await request.clone().json());
+      });
+      const user = userEvent.setup();
+      await renderLoaded();
+
+      await user.click(getFilterSwitch());
+      expect(getFilterSwitch()).not.toBeChecked();
+      await user.type(getKeywordsInput(), "  Front   End {Enter}");
+      await user.click(getSave());
+
+      expect(await screen.findByText("Saved")).toBeInTheDocument();
+      server.events.removeAllListeners();
+      expect(bodies).toEqual([
+        { description: "Frontend", keywords: ["vue", "Front   End"], keyword_filter: false },
+      ]);
+      expect(getFilterSwitch()).not.toBeChecked();
+    });
+
+    it("shows the server-normalized keywords after save", async () => {
+      server.use(
+        http.patch(SETTINGS_URL, () =>
+          HttpResponse.json({
+            description: null,
+            keywords: ["react", "front end"],
+            keyword_filter: true,
+          }),
+        ),
+      );
+      const user = userEvent.setup();
+      await renderLoaded();
+
+      await user.type(getKeywordsInput(), "React,Front  End,REACTJS,");
+      expect(getKeywordChips()).toEqual(["React", "Front  End", "REACTJS"]);
+      await user.click(getSave());
+
+      expect(await screen.findByText("Saved")).toBeInTheDocument();
+      expect(getKeywordChips()).toEqual(["react", "front end"]);
+      expect(getFilterSwitch()).toBeChecked();
+    });
+
+    it("shows the server's 400 message and keeps the keyword drafts", async () => {
+      server.use(
+        http.patch(SETTINGS_URL, () =>
+          HttpResponse.json({ detail: "Keywords must be 1–64 characters" }, { status: 400 }),
+        ),
+      );
+      const user = userEvent.setup();
+      await renderLoaded();
+
+      await user.type(getKeywordsInput(), "react{Enter}");
+      await user.click(getSave());
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("Keywords must be 1–64 characters");
+      expect(getKeywordChips()).toEqual(["react"]);
+      expect(screen.queryByText("Saved")).not.toBeInTheDocument();
+
+      await user.click(getFilterSwitch());
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    });
   });
 });

@@ -82,6 +82,7 @@ from app.discovery.forward_replies import (
     ForwardResultKind,
     send_forward_replies,
 )
+from app.discovery.keyword_filter import keyword_matches
 from app.discovery.normalize import normalize_url
 from app.discovery.types import PostLink, RawPost
 from app.discovery.web_scan import read_listing, web_seen_key
@@ -238,6 +239,8 @@ class RunReport:
     sources_read: int = 0
     sources_failed: int = 0
     posts_stored: int = 0
+    # Pending posts the pre-AI keyword filter skipped (no AI call).
+    posts_filtered: int = 0
     # Reposts added as a source to an existing card (at store or after rating).
     posts_merged: int = 0
     ai_calls: int = 0
@@ -555,6 +558,8 @@ async def evaluate_pending(
     report = report if report is not None else RunReport()
     pacer = _Pacer(config.eval_pause_s, sleep)
     for user_id in await _users_with_pending(session_factory, user_ids):
+        if user_id not in forwarded_only:
+            await _apply_keyword_filter(session_factory, user_id, clock, report)
         outcome = await _UserEvaluation(
             session_factory=session_factory,
             groq_client=groq_client,
@@ -568,6 +573,76 @@ async def evaluate_pending(
         if outcome is _Outcome.STOP_RUN:
             break
     return report
+
+
+async def _apply_keyword_filter(
+    session_factory: SessionFactory, user_id: str, clock: Clock, report: RunReport
+) -> None:
+    """Skip the user's pending posts that name none of their keywords.
+
+    Runs before the user's evaluation, so it covers every source kind at the
+    point its text is final (web rows after the detail step). A skipped post
+    is deleted like a rejected one; its seen key stays (so it never comes
+    back, even if the keywords change later) and gets `filtered_at`. Posts
+    the user forwarded to the bot are never filtered: they asked for a rating.
+    Off while `keyword_filter_enabled` is false or the list is empty. The
+    clock is read only when a post is skipped, so a filter that is off (or
+    skips nothing) does not move a ticking test clock.
+    """
+    async with session_factory() as session, session.begin():
+        settings_row = await session.get(VacancySearchSettings, user_id)
+        if settings_row is None or not settings_row.keyword_filter_enabled:
+            return
+        keywords = list(settings_row.keywords or [])
+        if not keywords:
+            return
+        forwarded_keys = select(ForwardedPost.external_key).where(
+            ForwardedPost.user_id == user_id
+        )
+        rows = (
+            await session.execute(
+                select(
+                    Vacancy.id, Vacancy.external_key, Vacancy.title, Vacancy.text
+                ).where(
+                    Vacancy.user_id == user_id,
+                    Vacancy.state == "pending",
+                    Vacancy.needs_detail.is_(False),
+                    Vacancy.external_key.not_in(forwarded_keys),
+                )
+            )
+        ).all()
+        skipped = [
+            row
+            for row in rows
+            if not keyword_matches(row.title, row.text or "", keywords)
+        ]
+        deleted_keys = []
+        for row in skipped:
+            # The delete re-checks "not forwarded": a forward recorded after
+            # the SELECT above keeps its post.
+            deleted = await session.execute(
+                delete(Vacancy).where(
+                    Vacancy.id == row.id,
+                    Vacancy.state == "pending",
+                    Vacancy.external_key.not_in(forwarded_keys),
+                )
+            )
+            if not deleted.rowcount:
+                continue
+            await session.execute(
+                delete(VacancyCardSource).where(VacancyCardSource.vacancy_id == row.id)
+            )
+            deleted_keys.append(row.external_key)
+        if deleted_keys:
+            await session.execute(
+                update(VacancySeenKey)
+                .where(
+                    VacancySeenKey.user_id == user_id,
+                    VacancySeenKey.external_key.in_(deleted_keys),
+                )
+                .values(filtered_at=clock())
+            )
+            report.posts_filtered += len(deleted_keys)
 
 
 # --------------------------------------------------------------------------
@@ -1000,7 +1075,9 @@ async def store_forwarded_post(
     """
     try:
         async with session_factory() as session, session.begin():
-            if await _already_seen(session, user_id, [post.external_key]):
+            if await _unfilter_seen_key(session, user_id, post.external_key):
+                pass  # skipped by the keyword filter: rated like a new post
+            elif await _already_seen(session, user_id, [post.external_key]):
                 await _forward_seen_post(
                     session,
                     user_id,
@@ -1010,11 +1087,14 @@ async def store_forwarded_post(
                     message_id=message_id,
                 )
                 return ForwardOutcome.ALREADY_SEEN
-            session.add(
-                VacancySeenKey(
-                    user_id=user_id, external_key=post.external_key, first_seen_at=now
+            else:
+                session.add(
+                    VacancySeenKey(
+                        user_id=user_id,
+                        external_key=post.external_key,
+                        first_seen_at=now,
+                    )
                 )
-            )
             session.add(
                 ForwardedPost(
                     user_id=user_id,
@@ -1057,6 +1137,32 @@ async def store_forwarded_post(
     except IntegrityError:
         # The same post forwarded twice at once: the other one won.
         return ForwardOutcome.ALREADY_SEEN
+
+
+async def _unfilter_seen_key(
+    session: AsyncSession, user_id: str, external_key: str
+) -> bool:
+    """Clear `filtered_at` on a seen key the keyword filter skipped, when the
+    post has no card. True: the forward is stored as a new post (forwarded
+    posts are never filtered). Conditional UPDATE, so of two concurrent
+    forwards only one wins; the other then sees a plain seen key."""
+    has_card = await session.scalar(
+        select(Vacancy.id)
+        .where(Vacancy.user_id == user_id, Vacancy.external_key == external_key)
+        .limit(1)
+    )
+    if has_card is not None:
+        return False
+    cleared = await session.execute(
+        update(VacancySeenKey)
+        .where(
+            VacancySeenKey.user_id == user_id,
+            VacancySeenKey.external_key == external_key,
+            VacancySeenKey.filtered_at.is_not(None),
+        )
+        .values(filtered_at=None)
+    )
+    return bool(cleared.rowcount)
 
 
 async def _forward_seen_post(
@@ -2466,12 +2572,13 @@ async def cleanup(session_factory: SessionFactory, clock: Clock) -> CleanupRepor
 def _log_report(name: str, report: RunReport) -> None:
     logger.info(
         "Discovery %s: sources read=%d failed=%d, posts stored=%d "
-        "merged=%d, AI calls=%d evaluated=%d cut=%d matches=%d rejected=%d, "
+        "filtered=%d merged=%d, AI calls=%d evaluated=%d cut=%d matches=%d rejected=%d, "
         "users at daily cap=%d, alerts sent=%d, forward replies sent=%d",
         name,
         report.sources_read,
         report.sources_failed,
         report.posts_stored,
+        report.posts_filtered,
         report.posts_merged,
         report.ai_calls,
         report.posts_evaluated,

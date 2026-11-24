@@ -46,10 +46,16 @@ export interface UseManageSourcesResult {
 export interface UseSearchSettingsFormResult {
   description: string;
   setDescription: (value: string) => void;
+  /** Keyword drafts (chips); the server lowercases / de-dupes them on save. */
+  keywords: readonly string[];
+  setKeywords: (value: readonly string[]) => void;
+  /** "Only send posts with these words to the AI" draft. */
+  keywordFilter: boolean;
+  setKeywordFilter: (value: boolean) => void;
   /** Inline error under the Save button, or null. */
   saveError: string | null;
   isSaving: boolean;
-  /** Save the description; resolves true on success. */
+  /** Save description + keywords + switch in one PATCH; resolves true on success. */
   save: () => Promise<boolean>;
 }
 

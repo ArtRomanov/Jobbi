@@ -59,3 +59,17 @@ export const SOURCE_LINK_LABEL = "Link";
 export const LINK_REQUIRED_MESSAGE = "Enter a link";
 /** Why Edit is disabled while a first-scan attempt runs. */
 export const EDIT_UNAVAILABLE_HINT = "Scanning — try again in a moment";
+
+/** Pre-AI keyword filter (the server checks the same limits and normalizes). */
+export const KEYWORDS_MAX_COUNT = 50;
+export const KEYWORD_MAX_LENGTH = 64;
+export const KEYWORDS_LABEL = "Keywords";
+export const KEYWORDS_PLACEHOLDER = "react, фронт, front end";
+export const KEYWORDS_HINT =
+  "Press Enter or a comma to add. A keyword also matches longer words (\"фронт\" finds \"фронтенд\"), and \"front end\" also finds \"front-end\".";
+/** Same wording as the backend's 400. */
+export const KEYWORDS_LIMIT_MESSAGE = "You can add up to 50 keywords";
+export const KEYWORD_FILTER_LABEL = "Only send posts with these words to the AI";
+export const KEYWORD_FILTER_HELP =
+  "Skipped posts are deleted and don't come back if you change the keywords. Off or no keywords: every new post goes to the AI. Posts you forward to the bot are never skipped.";
+export const FILTERED_LAST_24H_PREFIX = "Skipped by the filter in the last 24 hours:";
