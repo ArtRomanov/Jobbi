@@ -53,6 +53,7 @@ __all__ = [
     "is_cut",
     "parse_response",
     "post_lines",
+    "sent_length",
 ]
 
 BATCH_SIZE = 5
@@ -416,20 +417,32 @@ def is_cut(post: RawPost) -> bool:
     return len(post.text) > MAX_POST_CHARS
 
 
-def _windowed_length(post: RawPost) -> int:
-    return min(len(post.text), MAX_POST_CHARS)
+def _numbered_lines(post: RawPost) -> list[str]:
+    """The post's windowed text as sent: defanged lines, each "Ln: "-prefixed."""
+    # Every line starts with "Ln: ", so none can be a fence.
+    return [
+        f"L{number}: {_defang(line)}".rstrip()
+        for number, line in enumerate(post_lines(post.text), start=1)
+    ]
+
+
+def sent_length(post: RawPost) -> int:
+    """Characters of the post's numbered lines in the prompt (for batching)."""
+    lines = _numbered_lines(post)
+    return sum(map(len, lines)) + len(lines) - 1
 
 
 def batch_take(posts: Sequence[RawPost]) -> int:
     """How many leading `posts` form the next batch.
 
     Posts are taken in order until `BATCH_SIZE` posts or until the next one
-    would push their windowed text over `BATCH_CHAR_BUDGET`; that post starts
+    would push their sent text (numbered lines, `sent_length`) over
+    `BATCH_CHAR_BUDGET`; that post starts
     the next batch. The first post is always taken (0 only for no posts).
     """
     used = 0
     for count, post in enumerate(posts[:BATCH_SIZE]):
-        used += _windowed_length(post)
+        used += sent_length(post)
         if count and used > BATCH_CHAR_BUDGET:
             return count
     return min(len(posts), BATCH_SIZE)
@@ -442,11 +455,7 @@ def _post_block(key: str, post: RawPost) -> str:
     if post.company:
         parts.append(f"Company: {_defang(post.company)[:MAX_NAME_CHARS]}")
     # Numbered lines let a digest's vacancies be located (`VacancyItem.lines`).
-    # Every line is defanged, and starts with "Ln: ", so none can be a fence.
-    parts.extend(
-        f"L{number}: {_defang(line)}".rstrip()
-        for number, line in enumerate(post_lines(post.text), start=1)
-    )
+    parts.extend(_numbered_lines(post))
     parts.append(_FENCE_CLOSE.format(key=key))
     return "\n".join(parts)
 

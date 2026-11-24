@@ -24,6 +24,7 @@ from app.discovery.evaluator import (
     is_cut,
     parse_response,
     post_lines,
+    sent_length,
 )
 from app.discovery.types import RawPost
 
@@ -124,23 +125,38 @@ class TestWindowAndBatches:
     def test_fewer_short_posts_than_batch_size(self) -> None:
         assert batch_take(sized(100, 200)) == 2
 
+    # Single-line posts: each one is sent as "L1: <text>", 4 characters longer.
     def test_budget_reached_exactly_is_allowed(self) -> None:
-        assert batch_take(sized(3_000, 3_000, 1_500, 10)) == 3
+        # 3 000 + 3 000 + 1 500 sent characters = 7 500.
+        assert batch_take(sized(2_996, 2_996, 1_496, 10)) == 3
 
     def test_post_over_the_remainder_starts_the_next_batch(self) -> None:
-        # 3 000 + 3 000 = 6 000; a 1 501-char post would make 7 501.
-        assert batch_take(sized(3_000, 3_000, 1_501)) == 2
+        # 3 000 + 3 000 = 6 000 sent; a 1 497-char post would make 7 501.
+        assert batch_take(sized(2_996, 2_996, 1_497)) == 2
 
     def test_long_posts_count_only_their_window(self) -> None:
-        # Two 10 000-char posts are 2 x 3 000 = 6 000 of windowed text.
-        assert batch_take(sized(10_000, 10_000, 1_500)) == 3
+        # Two 10 000-char posts are 2 x 3 004 = 6 008 sent characters.
+        assert batch_take(sized(10_000, 10_000, 1_488)) == 3
         assert batch_take(sized(10_000, 10_000, 10_000)) == 2
 
     def test_one_post_is_always_allowed(self) -> None:
         assert batch_take(sized(50_000)) == 1
 
     def test_five_1500_char_posts_fit_one_batch(self) -> None:
-        assert batch_take(sized(*[1_500] * 6)) == BATCH_SIZE
+        assert batch_take(sized(*[1_496] * 6)) == BATCH_SIZE
+
+    def test_line_numbers_count_toward_the_budget(self) -> None:
+        # 1 500 one-character lines are 2 999 characters of text but about
+        # 9 900 once every line is sent as "Ln: x"; no other post fits beside it.
+        many_lines = make_post(1, "\n".join(["x"] * 1_500))
+        assert batch_take([many_lines, *sized(100, 100)]) == 1
+
+    def test_sent_length_matches_the_prompt_block(self) -> None:
+        post = make_post(1, "a\n\nbb\n" + "c" * 4_000)
+        sent = "\n".join(
+            f"L{n}: {line}".rstrip() for n, line in enumerate(post_lines(post.text), 1)
+        )
+        assert sent_length(post) == len(sent)
 
 
 class TestBuildMessages:
