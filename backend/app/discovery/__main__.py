@@ -44,6 +44,7 @@ from app.discovery.service import (
 
 __all__ = [
     "JobRunner",
+    "build_groq_client",
     "build_scheduler",
     "close_bot",
     "main",
@@ -189,6 +190,17 @@ def build_scheduler(
     return scheduler
 
 
+def build_groq_client(api_key: str) -> groq.AsyncGroq:
+    """The discovery worker's Groq client, with the SDK's retries off.
+
+    The SDK would retry a 429 twice after a short pause. For a daily-quota 429
+    that only wastes requests before the switch to the fallback model, and a
+    per-minute 429 already stops the run until the next one (the worker
+    decides, see `evaluator.evaluate_with_fallback`).
+    """
+    return groq.AsyncGroq(api_key=api_key, max_retries=0)
+
+
 async def run_worker(stop: asyncio.Event | None = None) -> None:
     """Run until `stop` is set (or SIGINT/SIGTERM when `stop` is not given)."""
     settings = get_settings()
@@ -204,7 +216,7 @@ async def run_worker(stop: asyncio.Event | None = None) -> None:
     async with httpx.AsyncClient(
         headers={"User-Agent": USER_AGENT}, timeout=HTTP_TIMEOUT_S
     ) as http_client:
-        groq_client = groq.AsyncGroq(api_key=settings.GROQ_API_KEY)
+        groq_client = build_groq_client(settings.GROQ_API_KEY)
         scheduler = build_scheduler(runner, http_client, groq_client, config, bot)
         scheduler.start()
         logger.info(
