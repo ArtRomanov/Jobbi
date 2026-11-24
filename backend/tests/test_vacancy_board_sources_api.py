@@ -1,6 +1,7 @@
-"""POST /vacancy-sources for Greenhouse and Lever boards (live check via respx)."""
+"""POST /vacancy-sources for Greenhouse, Lever and Teamtailor boards (respx)."""
 
 import asyncio
+from pathlib import Path
 
 import httpx
 import pytest
@@ -340,3 +341,138 @@ async def test_boards_listed_with_their_names(
         ("greenhouse", "Acme Corp"),
         ("lever", "Acme Labs"),
     }
+
+
+# --- Teamtailor --------------------------------------------------------------------
+
+TT_FEED_URL = "https://approvalmax.teamtailor.com/jobs.rss"
+TT_FEED = (
+    Path(__file__).parent / "discovery_boards/fixtures/teamtailor_approvalmax.rss"
+).read_bytes()
+
+
+@pytest.fixture
+def tt_route(respx_mock: respx.MockRouter) -> respx.Route:
+    return respx_mock.get(TT_FEED_URL).mock(
+        return_value=httpx.Response(200, content=TT_FEED)
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "approvalmax.teamtailor.com",
+        "https://ApprovalMax.teamtailor.com/jobs/8683780-director-of-product",
+    ],
+)
+async def test_add_teamtailor_board_uses_channel_title(
+    client: httpx.AsyncClient,
+    token: str,
+    tt_route: respx.Route,
+    db_session: AsyncSession,
+    raw: str,
+) -> None:
+    resp = await client.post(URL, json={"input": raw}, headers=_auth(token))
+
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["kind"] == "teamtailor"
+    assert data["key"] == "teamtailor:approvalmax"
+    assert data["display_name"] == "ApprovalMax"
+    assert data["scanning"] is True
+    # Only the fixed feed URL is requested, whatever path the user pasted.
+    assert tt_route.call_count == 1
+    request = tt_route.calls.last.request
+    assert str(request.url) == TT_FEED_URL
+    assert request.headers["User-Agent"] == "Jobbi/1.0"
+    [source] = await _sources(db_session)
+    assert (source.kind, source.handle) == ("teamtailor", "approvalmax")
+    assert source.initial_scan_completed_at is None  # the worker does the first scan
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(404),
+        httpx.Response(500),
+        httpx.Response(302, headers={"Location": "https://evil.example/"}),
+        httpx.Response(200, content=b"<html>not a feed</html>"),
+        httpx.Response(
+            200,
+            content=b'<?xml version="1.0"?><!DOCTYPE r [<!ENTITY a "aaaa">]>'
+            b"<rss><channel><title>&a;</title></channel></rss>",
+        ),
+        httpx.Response(200, content=b"<rss><channel><title></title></channel></rss>"),
+        httpx.ConnectError("boom"),
+    ],
+    ids=["404", "500", "redirect", "html", "doctype", "no-title", "connect-error"],
+)
+async def test_unreadable_teamtailor_board(
+    client: httpx.AsyncClient,
+    token: str,
+    respx_mock: respx.MockRouter,
+    db_session: AsyncSession,
+    response: httpx.Response | Exception,
+) -> None:
+    respx_mock.get(TT_FEED_URL).mock(side_effect=[response])
+
+    resp = await client.post(
+        URL, json={"input": "approvalmax.teamtailor.com"}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": UNREADABLE}
+    assert await _sources(db_session) == []
+
+
+@pytest.mark.parametrize(
+    "second",
+    [
+        "approvalmax.teamtailor.com",
+        "https://APPROVALMAX.teamtailor.com/",
+        "https://approvalmax.teamtailor.com/jobs/8653872-revenue-operations-specialist",
+    ],
+)
+async def test_teamtailor_duplicate_across_link_forms(
+    client: httpx.AsyncClient,
+    token: str,
+    tt_route: respx.Route,
+    db_session: AsyncSession,
+    second: str,
+) -> None:
+    first = await client.post(
+        URL,
+        json={"input": "https://approvalmax.teamtailor.com/jobs"},
+        headers=_auth(token),
+    )
+    assert first.status_code == 201
+
+    resp = await client.post(URL, json={"input": second}, headers=_auth(token))
+
+    assert resp.status_code == 409
+    assert resp.json() == {"detail": DUPLICATE}
+    assert tt_route.call_count == 1  # rejected before the network
+    assert len(await _sources(db_session)) == 1
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        # Look-alikes on other hosts are web pages (tests/test_vacancy_web_sources_api.py).
+        "https://a@approvalmax.teamtailor.com/jobs",
+        "https://approvalmax.teamtailor.com:8443/jobs",
+        "https://www.teamtailor.com/jobs",
+    ],
+)
+async def test_teamtailor_lookalikes_make_no_network_call(
+    client: httpx.AsyncClient,
+    token: str,
+    respx_mock: respx.MockRouter,
+    db_session: AsyncSession,
+    raw: str,
+) -> None:
+    resp = await client.post(URL, json={"input": raw}, headers=_auth(token))
+
+    assert resp.status_code == 400
+    assert not respx_mock.calls
+    assert await _sources(db_session) == []

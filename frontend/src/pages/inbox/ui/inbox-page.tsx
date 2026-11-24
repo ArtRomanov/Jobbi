@@ -8,7 +8,7 @@ import { VacancyList } from "./vacancy-list";
 
 /** Inbox: filterable vacancies found in the user's sources, plus the Sources panel. */
 export function InboxPage() {
-  // Bumped when a source finishes scanning so the list shows the new cards
+  // Bumped when a source finishes scanning (new cards) or is edited (new name on cards)
   const [refreshKey, setRefreshKey] = useState(0);
   const refreshList = useCallback(() => setRefreshKey((key) => key + 1), []);
   const vacanciesHeadingId = useId();
@@ -42,7 +42,11 @@ export function InboxPage() {
         />
         <VacancyList refreshKey={refreshKey} filters={filters} onListEmptied={focusTitle} />
       </section>
-      <SourcesPanel onScanFinished={refreshList} onSourcesChange={handleSourcesChange} />
+      <SourcesPanel
+        onScanFinished={refreshList}
+        onSourcesChange={handleSourcesChange}
+        onSourceEdited={refreshList}
+      />
     </PageCard>
   );
 }

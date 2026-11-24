@@ -1,11 +1,15 @@
-import { useCallback, useId, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import type { VacancySource } from "@/entities/vacancy-source";
 import { Button, SectionHeader, colors } from "@/shared/ui";
 import { LOAD_ERROR_MESSAGE, NO_DESCRIPTION_HINT } from "../lib/constants";
 import { pickFocusAfterRemove } from "../lib/helpers";
+import type { WebSourceOptions } from "../model/schemas";
+import { useAddSource } from "../model/use-add-source";
 import { useManageSources } from "../model/use-manage-sources";
-import type { SourcesChangeHandler } from "../model/types";
+import type { SourceEditedHandler, SourcesChangeHandler } from "../model/types";
 import { AddSourceForm } from "./add-source-form";
 import { SearchSettingsForm } from "./search-settings-form";
+import { SourcePreview } from "./source-preview";
 import { SourceList } from "./source-list";
 import { SourcesNotices } from "./sources-notices";
 
@@ -13,33 +17,50 @@ interface SourcesPanelProps {
   onScanFinished?: () => void;
   /** Live and removed sources, whenever either changes (feeds the Inbox source filter). */
   onSourcesChange?: SourcesChangeHandler;
+  /** After a successful edit (the page refreshes its vacancy list so cards show the new name). */
+  onSourceEdited?: SourceEditedHandler;
 }
 
 /**
- * Inbox "Sources" panel: add a Telegram channel, manage watched sources and
+ * Inbox "Sources" panel: add a Telegram channel, job board or web page (with an
+ * inline preview for pages), manage watched sources and
  * edit the search description. `onScanFinished` runs when a
  * source's scan ends (the page refreshes its vacancy list).
  */
-export function SourcesPanel({ onScanFinished, onSourcesChange }: SourcesPanelProps) {
+export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }: SourcesPanelProps) {
   const headingId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const removeButtonsRef = useRef(new Map<string, HTMLButtonElement>());
+  const editButtonsRef = useRef(new Map<string, HTMLButtonElement>());
+  // A replaced source gets a new row, so the Modal can't return focus to its Edit
+  const [focusEditId, setFocusEditId] = useState<string | null>(null);
   const {
     sources,
     settings,
     setSettings,
     status,
     loadState,
-    input,
-    setInput,
-    addError,
-    isAdding,
     removingIds,
     isAddDisabled,
-    addSource,
+    appendSource,
+    replaceSource,
     removeSource,
     retryLoad,
   } = useManageSources(onScanFinished, onSourcesChange);
+  const {
+    input,
+    setInput,
+    addError,
+    busyAction,
+    isBusy,
+    preview,
+    previewError,
+    submit,
+    recheck,
+    save,
+    addBoard,
+    cancelPreview,
+  } = useAddSource(isAddDisabled, appendSource);
 
   const registerRemoveButton = useCallback(
     (id: string, element: HTMLButtonElement | null): void => {
@@ -49,11 +70,60 @@ export function SourcesPanel({ onScanFinished, onSourcesChange }: SourcesPanelPr
     [],
   );
 
-  // Success or failure, return focus to the input so the user can type again
+  const registerEditButton = useCallback(
+    (id: string, element: HTMLButtonElement | null): void => {
+      if (element) editButtonsRef.current.set(id, element);
+      else editButtonsRef.current.delete(id);
+    },
+    [],
+  );
+
+  // Passive effect: runs after the dialog's unmount cleanup, so nothing steals focus after it
+  useEffect(() => {
+    if (focusEditId === null) return;
+    // Edit stays focusable while a first scan blocks it (aria-disabled + reason)
+    const target = editButtonsRef.current.get(focusEditId) ?? removeButtonsRef.current.get(focusEditId);
+    target?.focus();
+    setFocusEditId(null);
+  }, [focusEditId]);
+
+  // Created or failed: back to the input. A web preview focuses its own heading.
   const handleAdd = useCallback(async (): Promise<void> => {
-    await addSource();
+    const outcome = await submit();
+    if (outcome === "added" || outcome === "error") inputRef.current?.focus();
+  }, [submit]);
+
+  const handleSave = useCallback(
+    async (options: WebSourceOptions): Promise<boolean> => {
+      const isSaved = await save(options);
+      if (isSaved) inputRef.current?.focus();
+      return isSaved;
+    },
+    [save],
+  );
+
+  const handleAddBoard = useCallback(
+    async (boardInput: string): Promise<boolean> => {
+      const isAdded = await addBoard(boardInput);
+      if (isAdded) inputRef.current?.focus();
+      return isAdded;
+    },
+    [addBoard],
+  );
+
+  const handleCancel = useCallback((): void => {
+    cancelPreview();
     inputRef.current?.focus();
-  }, [addSource]);
+  }, [cancelPreview]);
+
+  const handleEdited = useCallback(
+    (previousId: string, source: VacancySource): void => {
+      replaceSource(previousId, source);
+      if (source.id !== previousId) setFocusEditId(source.id);
+      onSourceEdited?.(source);
+    },
+    [replaceSource, onSourceEdited],
+  );
 
   // After a removal, focus the next Remove button, or the input when the list is empty
   const handleRemove = useCallback(
@@ -96,7 +166,9 @@ export function SourcesPanel({ onScanFinished, onSourcesChange }: SourcesPanelPr
           sources={sources}
           removingIds={removingIds}
           onRemove={(id) => void handleRemove(id)}
+          onEdited={handleEdited}
           onRegisterRemoveButton={registerRemoveButton}
+          onRegisterEditButton={registerEditButton}
         />
       );
       break;
@@ -107,7 +179,7 @@ export function SourcesPanel({ onScanFinished, onSourcesChange }: SourcesPanelPr
       <SectionHeader
         id={headingId}
         title="Sources"
-        subtitle="Telegram channels Jobbi watches for vacancies"
+        subtitle="Telegram channels, Greenhouse, Lever or Teamtailor boards and job pages Jobbi watches for vacancies"
       />
       {/* Based on the saved description, not the unsaved draft */}
       {settings !== null && !settings.description ? (
@@ -118,12 +190,27 @@ export function SourcesPanel({ onScanFinished, onSourcesChange }: SourcesPanelPr
       <AddSourceForm
         value={input}
         error={addError}
-        isAdding={isAdding}
+        isBusy={isBusy}
+        isAdding={busyAction === "submit"}
         isDisabled={isAddDisabled}
         inputRef={inputRef}
         onChange={setInput}
         onSubmit={() => void handleAdd()}
       />
+      {preview ? (
+        // A new Add re-mounts the preview: fresh fields, heading focused again
+        <SourcePreview
+          key={preview.id}
+          result={preview.result}
+          busy={isBusy}
+          busyAction={busyAction === "submit" ? null : busyAction}
+          error={previewError}
+          onRecheck={recheck}
+          onSave={handleSave}
+          onCancel={handleCancel}
+          onAddBoard={handleAddBoard}
+        />
+      ) : null}
       <SourcesNotices status={status} />
       {list}
       {/* Re-mounts once settings load so the drafts start from the saved values */}

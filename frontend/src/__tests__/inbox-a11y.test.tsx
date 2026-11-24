@@ -151,7 +151,7 @@ describe("Inbox accessibility", () => {
   it("keeps the browser focus ring on the Sources text fields", async () => {
     renderWithProviders(<InboxPage />);
 
-    const addInput = await screen.findByRole("textbox", { name: "Add a Telegram channel" });
+    const addInput = await screen.findByRole("textbox", { name: "Add a channel, job board or page" });
     const description = screen.getByRole("textbox", { name: "Search description" });
     for (const field of [addInput, description]) {
       expect(field.style.outline).toBe("");

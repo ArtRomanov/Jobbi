@@ -1,6 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
+import type { VacancySource } from "@/entities/vacancy-source";
 import { InboxPage } from "@/pages/inbox";
 import { renderWithProviders } from "./utils";
 import { mockVacancySource, mockVacancySourcesEmpty } from "./mocks/handlers";
@@ -12,7 +13,7 @@ const OUTSIDE_SOURCE_FILTER = { ignore: "script, style, option" };
 const SOURCES_URL = "*/api/v1/vacancy-sources";
 const SOURCE_URL = "*/api/v1/vacancy-sources/:id";
 
-function serveSources(sources: Array<typeof mockVacancySource>): void {
+function serveSources(sources: VacancySource[]): void {
   server.use(http.get(SOURCES_URL, () => HttpResponse.json({ ...mockVacancySourcesEmpty, sources })));
 }
 
@@ -26,7 +27,7 @@ function createGate(): { wait: Promise<void>; open: () => void } {
 }
 
 function getInput(): HTMLElement {
-  return screen.getByLabelText("Add a Telegram channel");
+  return screen.getByLabelText("Add a channel, job board or page");
 }
 
 async function waitForList(): Promise<void> {
@@ -68,6 +69,24 @@ describe("InboxPage", () => {
     expect(
       within(broken!).getByText("Unavailable — Channel is private or deleted"),
     ).toBeInTheDocument();
+  });
+
+  it("shows the Teamtailor kind label for a Teamtailor board", async () => {
+    serveSources([
+      {
+        ...mockVacancySource,
+        id: "tt",
+        kind: "teamtailor",
+        key: "teamtailor:approvalmax",
+        display_name: "ApprovalMax",
+      },
+    ]);
+    renderWithProviders(<InboxPage />);
+
+    const list = await screen.findByRole("list", { name: "Watched sources" });
+    const [row] = within(list).getAllByRole("listitem");
+    expect(within(row!).getByText("ApprovalMax")).toBeInTheDocument();
+    expect(within(row!).getByText(/^Teamtailor/)).toBeInTheDocument();
   });
 
   it("adds a channel on Enter: it appears in the list and the input is cleared", async () => {

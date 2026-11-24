@@ -1,13 +1,16 @@
 import type { VacancySource } from "@/entities/vacancy-source";
 import { colors } from "@/shared/ui";
 import { NO_SOURCES_MESSAGE } from "../lib/constants";
+import type { SourceSavedHandler } from "../model/types";
 import { SourceListItem } from "./source-list-item";
 
 interface SourceListProps {
   sources: readonly VacancySource[];
   removingIds: ReadonlySet<string>;
   onRemove: (id: string) => void;
+  onEdited: SourceSavedHandler;
   onRegisterRemoveButton: (id: string, element: HTMLButtonElement | null) => void;
+  onRegisterEditButton: (id: string, element: HTMLButtonElement | null) => void;
 }
 
 /** Watched sources, or a short hint when there are none. */
@@ -15,7 +18,9 @@ export function SourceList({
   sources,
   removingIds,
   onRemove,
+  onEdited,
   onRegisterRemoveButton,
+  onRegisterEditButton,
 }: SourceListProps) {
   if (sources.length === 0) {
     return <p style={{ fontSize: "0.875rem", color: colors.textMuted }}>{NO_SOURCES_MESSAGE}</p>;
@@ -29,7 +34,9 @@ export function SourceList({
           source={source}
           isRemoving={removingIds.has(source.id)}
           onRemove={onRemove}
+          onEdited={onEdited}
           onRegisterRemoveButton={onRegisterRemoveButton}
+          onRegisterEditButton={onRegisterEditButton}
         />
       ))}
     </ul>

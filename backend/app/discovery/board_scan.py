@@ -1,4 +1,4 @@
-"""Read a Greenhouse or Lever board and split its unseen jobs for storage.
+"""Read a Greenhouse, Lever or Teamtailor board and split its unseen jobs for storage.
 
 Network only: no database access here (the caller loads the known keys before
 and stores the result after, each in its own short session).
@@ -24,11 +24,11 @@ import logging
 from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 import httpx
 
-from app.discovery.fetchers import greenhouse, lever
+from app.discovery.fetchers import greenhouse, lever, teamtailor
 from app.discovery.fetchers.errors import BoardReadError
 from app.discovery.types import RawPost
 
@@ -36,7 +36,7 @@ __all__ = ["BOARD_KINDS", "BoardFetch", "board_key_prefix", "fetch_board"]
 
 logger = logging.getLogger(__name__)
 
-BOARD_KINDS = frozenset({"greenhouse", "lever", "lever_eu"})
+BOARD_KINDS = frozenset({"greenhouse", "lever", "lever_eu", "teamtailor"})
 # More than this share of failed job-detail requests in one run = outage.
 MAX_DETAIL_FAILURE_SHARE = 0.5
 
@@ -56,9 +56,11 @@ class BoardFetch:
 
 
 def board_key_prefix(kind: str, handle: str) -> str:
-    """Prefix shared by the seen keys of one board (`gh:acme/`, `lever:acme/`)."""
+    """Prefix shared by the seen keys of one board (`gh:acme/`, `tt:acme/`)."""
     if kind == "greenhouse":
         return f"gh:{handle}/"
+    if kind == "teamtailor":
+        return f"tt:{handle}/"
     if kind in ("lever", "lever_eu"):
         return f"{kind}:{handle}/"
     raise ValueError(f"Not a board kind: {kind!r}")
@@ -105,6 +107,10 @@ async def fetch_board(
     elif kind in ("lever", "lever_eu"):
         result = await _fetch_lever(
             client, kind, handle, known_keys, now=now, cutoff=cutoff, initial=initial
+        )
+    elif kind == "teamtailor":
+        result = await _fetch_teamtailor(
+            client, handle, known_keys, now=now, cutoff=cutoff, initial=initial
         )
     else:
         raise ValueError(f"Not a board kind: {kind!r}")
@@ -172,9 +178,34 @@ async def _fetch_lever(
     cutoff: datetime,
     initial: bool,
 ) -> BoardFetch:
+    postings = await lever.list_postings(client, kind, company)
+    # Mapping converts description HTML to text (CPU work on remote input):
+    # run it in a worker thread, off the event loop.
+    return await asyncio.to_thread(
+        _lever_posts,
+        kind,
+        company,
+        postings,
+        known_keys,
+        now=now,
+        cutoff=cutoff,
+        initial=initial,
+    )
+
+
+def _lever_posts(
+    kind: str,
+    company: str,
+    postings: list[dict[str, Any]],
+    known_keys: Collection[str],
+    *,
+    now: datetime,
+    cutoff: datetime,
+    initial: bool,
+) -> BoardFetch:
     result = BoardFetch()
     handled: set[str] = set()
-    for posting in await lever.list_postings(client, kind, company):
+    for posting in postings:
         key = lever.posting_key(kind, company, posting)
         if key in known_keys or key in handled:
             continue
@@ -185,5 +216,52 @@ async def _fetch_lever(
             continue
         result.posts.append(
             lever.to_raw_post(kind, company, posting, posted_at=posted_at or now)
+        )
+    return result
+
+
+async def _fetch_teamtailor(
+    client: httpx.AsyncClient,
+    subdomain: str,
+    known_keys: Collection[str],
+    *,
+    now: datetime,
+    cutoff: datetime,
+    initial: bool,
+) -> BoardFetch:
+    feed = await teamtailor.fetch_feed(client, subdomain)
+    # Item descriptions are HTML -> text (CPU work): off the event loop.
+    return await asyncio.to_thread(
+        _teamtailor_posts,
+        subdomain,
+        feed,
+        known_keys,
+        now=now,
+        cutoff=cutoff,
+        initial=initial,
+    )
+
+
+def _teamtailor_posts(
+    subdomain: str,
+    feed: teamtailor.TeamtailorFeed,
+    known_keys: Collection[str],
+    *,
+    now: datetime,
+    cutoff: datetime,
+    initial: bool,
+) -> BoardFetch:
+    result = BoardFetch()
+    for item in feed.items:  # already deduplicated by job id
+        key = teamtailor.item_key(subdomain, item.job_id)
+        if key in known_keys:
+            continue
+        if initial and _is_old(item.posted_at, cutoff):
+            result.seen_only_keys.append(key)
+            continue
+        result.posts.append(
+            teamtailor.to_raw_post(
+                subdomain, feed.company, item, posted_at=item.posted_at or now
+            )
         )
     return result

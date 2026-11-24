@@ -1,4 +1,4 @@
-"""Discovery worker runs for Greenhouse and Lever boards (respx, file-backed SQLite)."""
+"""Worker runs for Greenhouse, Lever and Teamtailor boards (respx, file SQLite)."""
 
 from datetime import timedelta
 
@@ -13,7 +13,7 @@ from app.discovery.service import check_all, run_initial_scans
 from app.models.vacancy import VacancyCardSource
 from app.models.vacancy_seen_key import VacancySeenKey
 from app.models.vacancy_source import VacancySource
-from tests.discovery.board_stubs import GreenhouseBoard, LeverBoard
+from tests.discovery.board_stubs import GreenhouseBoard, LeverBoard, TeamtailorBoard
 from tests.discovery.fake_bot import FakeBot
 from tests.discovery.test_service import (
     CHAT_ID,
@@ -42,7 +42,11 @@ async def make_board(
 ) -> str:
     async with db() as session:
         source = VacancySource(
-            user_id=user_id, kind=kind, handle=handle, display_name=display_name
+            user_id=user_id,
+            kind=kind,
+            handle=handle,
+            default_name=display_name,
+            display_name=display_name,
         )
         session.add(source)
         await session.commit()
@@ -59,6 +63,13 @@ def gh(respx_mock: respx.MockRouter) -> GreenhouseBoard:
 @pytest.fixture
 def lever_board(respx_mock: respx.MockRouter) -> LeverBoard:
     board = LeverBoard()
+    board.mount(respx_mock)
+    return board
+
+
+@pytest.fixture
+def tt_board(respx_mock: respx.MockRouter) -> TeamtailorBoard:
+    board = TeamtailorBoard()
     board.mount(respx_mock)
     return board
 
@@ -525,6 +536,76 @@ class TestLever:
         ]
         assert set(await seen_keys(db)) == {"lever:acme-labs/a", "lever:acme-labs/b"}
         assert report.posts_stored == 2
+
+
+class TestTeamtailor:
+    async def test_initial_scan_keeps_seven_days_then_hourly_finds_only_new(
+        self, factory, db, tt_board, http, ai, sleep
+    ) -> None:
+        user_id = await make_user(db, description=None)
+        source_id = await make_board(db, user_id, "teamtailor", "acme", "Acme AB")
+        tt_board.add(1, "recent job", RECENT, title="Frontend Engineer")
+        tt_board.add(2, "old job", OLD)
+        tt_board.add(3, "undated job", None)
+        tt_board.add(4, "just inside", NOW - timedelta(days=7) + timedelta(minutes=1))
+
+        report = await run_initial_scans(
+            factory, http, ai, at(NOW), config=CONFIG, sleep=sleep
+        )
+
+        assert tt_board.requests == 1
+        assert set(await seen_keys(db)) == {
+            "tt:acme/1",
+            "tt:acme/2",
+            "tt:acme/3",
+            "tt:acme/4",
+        }
+        rows = await vacancies(db)
+        assert [r.external_key for r in rows] == ["tt:acme/1", "tt:acme/4"]
+        first = rows[0]
+        assert first.state == "pending"
+        assert first.from_initial_scan is True
+        assert first.title == "Frontend Engineer"
+        assert first.company == "Acme AB"
+        assert first.text == "recent job"
+        assert first.posted_at == RECENT
+        assert first.job_link == "https://acme.teamtailor.com/jobs/1-dev"
+        assert (
+            await card_sources(db) == [(source_id, "teamtailor", "acme", "Acme AB")] * 2
+        )
+        source = await get_source(db, source_id)
+        assert source.initial_scan_completed_at == NOW
+        assert source.failing_since is None
+        assert report.posts_stored == 2
+        assert ai.calls == []
+
+        # Hourly: old jobs stay seen-only; only the newly listed one is stored.
+        tt_board.add(5, "brand new", None)
+        await check_all(factory, http, ai, at(LATER), config=CONFIG, sleep=sleep)
+
+        rows = {r.external_key: r for r in await vacancies(db)}
+        assert set(rows) == {"tt:acme/1", "tt:acme/4", "tt:acme/5"}
+        new = rows["tt:acme/5"]
+        assert new.from_initial_scan is False
+        assert new.posted_at == LATER  # undated -> check time
+        assert "tt:acme/5" in await seen_keys(db)
+
+    async def test_unreadable_feed_is_recorded(
+        self, factory, db, tt_board, http, ai, sleep
+    ) -> None:
+        user_id = await make_user(db, description=None)
+        source_id = await make_board(db, user_id, "teamtailor", "acme", "Acme AB")
+        tt_board.status = 404
+
+        report = await run_initial_scans(
+            factory, http, ai, at(NOW), config=CONFIG, sleep=sleep
+        )
+
+        source = await get_source(db, source_id)
+        assert source.last_error == "Job board not found"
+        assert source.initial_scan_completed_at is None
+        assert report.sources_failed == 1
+        assert await seen_keys(db) == {}
 
 
 # --- invariant -------------------------------------------------------------------

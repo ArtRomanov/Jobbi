@@ -1,7 +1,9 @@
 """Live check that a source exists and is public, before it is saved.
 
-Requests only go to fixed hosts; the handle is the only user-derived part of
-the URL and it has already been validated by `vacancy_source_parsing`.
+Channel and board requests only go to fixed hosts; the handle is the only
+user-derived part of the URL and it has already been validated by
+`vacancy_source_parsing`. Web page URLs are user-supplied as a whole and are
+fetched only through the SSRF-guarded `safe_http` (via `web_scan`).
 """
 
 import asyncio
@@ -10,8 +12,11 @@ import httpx
 import structlog
 from bs4 import BeautifulSoup
 
-from app.discovery.fetchers import greenhouse, lever
+from app.discovery import web_scan
+from app.discovery.fetchers import greenhouse, lever, teamtailor
 from app.discovery.fetchers.errors import BoardReadError
+from app.discovery.fetchers.safe_http import PageFetchError, UnsafeUrlError
+from app.services.vacancy_source_parsing import UNSAFE_LINK_MESSAGE
 
 logger = structlog.get_logger()
 
@@ -166,3 +171,94 @@ async def check_lever_board(kind: str, company: str) -> str:
         )
         raise BoardUnreadableError from exc
     return lever.display_name_from_slug(company)[:MAX_DISPLAY_NAME_LENGTH]
+
+
+async def fetch_teamtailor_board_name(subdomain: str) -> str:
+    """Check that the Teamtailor feed is readable and return the company name.
+
+    Raises:
+        BoardUnreadableError: unknown board (404), network error, timeout, a
+            malformed or untitled feed, or the 10 s total budget ran out.
+    """
+    try:
+        async with (
+            asyncio.timeout(CHECK_TIMEOUT_SECONDS),
+            httpx.AsyncClient(timeout=CHECK_TIMEOUT_SECONDS) as client,
+        ):
+            name = await teamtailor.fetch_board_name(client, subdomain)
+    except (TimeoutError, BoardReadError) as exc:
+        logger.warning(
+            "teamtailor_board_check_failed",
+            subdomain=subdomain,
+            error=getattr(exc, "reason", type(exc).__name__),
+        )
+        raise BoardUnreadableError from exc
+    return name[:MAX_DISPLAY_NAME_LENGTH]
+
+
+# --- web pages -----------------------------------------------------------------
+
+PAGE_UNREADABLE_MESSAGE = "Could not open this page"
+NO_VACANCIES_MESSAGE = (
+    "No vacancies found on this page. Check the link or set 'Job link contains'."
+)
+# Preview reads page 1 only; saving reads up to web_scan.MAX_LISTING_PAGES.
+PREVIEW_TIMEOUT_SECONDS = 15.0
+SAVE_TIMEOUT_SECONDS = 45.0
+
+
+class UnsafeLinkError(SourceCheckError):
+    """The link (or a redirect) points to a local / private address or port."""
+
+    message = UNSAFE_LINK_MESSAGE
+
+
+class PageUnreadableError(SourceCheckError):
+    """The first page did not open: network, timeout, HTTP error, not HTML."""
+
+    message = PAGE_UNREADABLE_MESSAGE
+
+
+class NoVacanciesError(SourceCheckError):
+    """The first page opened but no job links were found on it."""
+
+    message = NO_VACANCIES_MESSAGE
+
+
+async def read_web_listing(
+    url: str,
+    job_link_contains: str | None,
+    *,
+    max_pages: int,
+    total_timeout_s: float,
+    allow_empty_with_hint: bool = False,
+) -> web_scan.ListingRead:
+    """Read the listing for the API; the result holds at least one job.
+
+    With `allow_empty_with_hint` (preview only) a page 1 without jobs is still
+    returned when it links to a job board, so the ATS hint can be shown.
+
+    Raises:
+        UnsafeLinkError: the URL or a redirect on page 1 breaks the SSRF guard.
+        PageUnreadableError: page 1 could not be read in time.
+        NoVacanciesError: page 1 lists no jobs (and, with
+            `allow_empty_with_hint`, links to no job board either).
+    """
+    try:
+        listing = await web_scan.read_listing(
+            url,
+            job_link_contains,
+            max_pages=max_pages,
+            total_timeout_s=total_timeout_s,
+        )
+    except UnsafeUrlError as exc:
+        logger.info("web_page_check_refused")
+        raise UnsafeLinkError from exc
+    except PageFetchError as exc:
+        logger.info("web_page_check_failed", reason=exc.reason)
+        raise PageUnreadableError from exc
+    if not listing.jobs and not (
+        allow_empty_with_hint and listing.ats_hint is not None
+    ):
+        raise NoVacanciesError
+    return listing

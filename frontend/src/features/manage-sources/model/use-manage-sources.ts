@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getErrorMessage, handleApiError } from "@/shared/api";
+import { handleApiError } from "@/shared/api";
 import { useToast } from "@/shared/ui";
-import {
-  addVacancySource,
-  deleteVacancySource,
-  getVacancySources,
-} from "@/entities/vacancy-source";
+import { deleteVacancySource, getVacancySources } from "@/entities/vacancy-source";
 import { notifyVacanciesChanged } from "@/entities/vacancy";
 import type {
   DiscoveryStatus,
@@ -18,9 +14,8 @@ import type { SourcesChangeHandler, SourcesLoadState, UseManageSourcesResult } f
 
 /**
  * Owns the Sources panel: initial load (with retry) of sources and the saved
- * search settings, adding a source from the
- * input (inline error on failure, input cleared on success) and removing one
- * (toast on failure).
+ * search settings, appending a source created by the add flow
+ * (`useAddSource`) and removing one (toast on failure).
  *
  * Adding is blocked until the initial load succeeds, so a late GET can never
  * overwrite a source the user just added.
@@ -46,12 +41,7 @@ export function useManageSources(
   const [status, setStatus] = useState<DiscoveryStatus | null>(null);
   const [loadState, setLoadState] = useState<SourcesLoadState>("loading");
   const [reloadKey, setReloadKey] = useState(0);
-  const [input, setInputValue] = useState("");
-  const [addError, setAddError] = useState<string | null>(null);
-  const [isAdding, setIsAdding] = useState(false);
   const [removingIds, setRemovingIds] = useState<ReadonlySet<string>>(() => new Set());
-  // Guards against a second submit before React re-renders with isAdding=true
-  const isAddingRef = useRef(false);
   const isReady = loadState === "ready";
   const isAddDisabled = !isReady;
   const isAnyScanning = sources.some((source) => source.scanning);
@@ -64,6 +54,9 @@ export function useManageSources(
     onScanFinishedRef.current = onScanFinished;
     onSourcesChangeRef.current = onSourcesChange;
   });
+  // Ids saved (added / edited) since the running poll's GET started; that
+  // poll's copy of them predates the save, so it must not be merged over them
+  const editedSinceRef = useRef<Set<string>>(new Set());
   // Latest removed-list refetch wins; bumped on unmount to drop late responses
   const removedRequestRef = useRef(0);
   useEffect(
@@ -124,11 +117,16 @@ export function useManageSources(
       // A poll is a removed-list read too: newest request wins over an older refresh
       removedRequestRef.current += 1;
       const removedRequestId = removedRequestRef.current;
+      // Saves before this GET are in its answer; only later ones must be skipped
+      editedSinceRef.current.clear();
       try {
         const data = await getVacancySources();
         if (cancelled) return;
-        const isFinished = hasScanFinished(sourcesRef.current, data.sources);
-        setSources((current) => mergePolledSources(current, data.sources));
+        const skipIds = new Set(editedSinceRef.current);
+        for (const id of skipIds) editedSinceRef.current.delete(id);
+        const fresh = data.sources.filter((source) => !skipIds.has(source.id));
+        const isFinished = hasScanFinished(sourcesRef.current, fresh);
+        setSources((current) => mergePolledSources(current, fresh));
         if (removedRequestId === removedRequestRef.current) {
           setRemovedSources(data.removed_sources);
           setStatus(data.status);
@@ -161,28 +159,10 @@ export function useManageSources(
     };
   }, [isAnyScanning, isReady]);
 
-  const setInput = useCallback((value: string): void => {
-    setInputValue(value);
-    setAddError(null);
+  const appendSource = useCallback((source: VacancySource): void => {
+    editedSinceRef.current.add(source.id);
+    setSources((prev) => [...prev, source]);
   }, []);
-
-  const addSource = useCallback(async (): Promise<void> => {
-    const value = input.trim();
-    if (value === "" || isAddDisabled || isAddingRef.current) return;
-    isAddingRef.current = true;
-    setIsAdding(true);
-    setAddError(null);
-    try {
-      const created = await addVacancySource(value);
-      setSources((prev) => [...prev, created]);
-      setInputValue("");
-    } catch (error: unknown) {
-      setAddError(getErrorMessage(error));
-    } finally {
-      isAddingRef.current = false;
-      setIsAdding(false);
-    }
-  }, [input, isAddDisabled]);
 
   const refreshRemovedSources = useCallback(async (): Promise<void> => {
     removedRequestRef.current += 1;
@@ -197,6 +177,17 @@ export function useManageSources(
       // The removed list only feeds the Inbox filter; the next load fixes it
     }
   }, []);
+
+  // Edit: the server's copy takes the edited row's place (order kept). A new id
+  // means the old source was replaced; its cards now show as "(removed)"
+  const replaceSource = useCallback(
+    (previousId: string, source: VacancySource): void => {
+      editedSinceRef.current.add(previousId).add(source.id);
+      setSources((prev) => prev.map((item) => (item.id === previousId ? source : item)));
+      if (source.id !== previousId) void refreshRemovedSources();
+    },
+    [refreshRemovedSources],
+  );
 
   const removeSource = useCallback(
     async (id: string): Promise<boolean> => {
@@ -232,13 +223,10 @@ export function useManageSources(
     setSettings,
     status,
     loadState,
-    input,
-    setInput,
-    addError,
-    isAdding,
     removingIds,
     isAddDisabled,
-    addSource,
+    appendSource,
+    replaceSource,
     removeSource,
     retryLoad,
   };

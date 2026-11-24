@@ -21,6 +21,10 @@ dependencies = [
     "python-telegram-bot[job-queue]>=21,<22",
     "tzdata>=2024.1",
     "beautifulsoup4>=4.12,<5",
+    # Apache-2.0 from 1.8 (GPL before). Used later for page text extraction;
+    # it pulls lxml, which parses Teamtailor RSS.
+    "trafilatura>=1.8,<3",
+    "lxml>=5.0,<7",
     # Pinned explicitly (also pulled in by PTB): v4 has a different API.
     "apscheduler>=3.10,<4",
     # CV upload (spec 011): multipart parsing + text extraction. All MIT/Apache.

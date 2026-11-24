@@ -4,6 +4,7 @@ All requests go to the fixed host ``boards-api.greenhouse.io``; EU board tokens
 are served there too (verified 2026-11-22), only their job URLs differ.
 """
 
+import asyncio
 import html
 from datetime import UTC, datetime
 from typing import Any
@@ -133,6 +134,11 @@ async def fetch_job_text(client: httpx.AsyncClient, token: str, job_id: int) -> 
     content = data.get("content") if isinstance(data, dict) else None
     if not isinstance(content, str):
         return ""
+    # HTML -> text is CPU work on remote input: keep it off the event loop.
+    return await asyncio.to_thread(_content_text, content)
+
+
+def _content_text(content: str) -> str:
     return cap_text(html_to_text(html.unescape(content)))
 
 

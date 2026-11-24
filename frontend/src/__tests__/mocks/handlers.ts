@@ -289,7 +289,50 @@ export const mockVacancySource = {
   scanning: false,
   unavailable: false,
   last_error: null as string | null,
+  url: null as string | null,
+  job_link_contains: null as string | null,
+  watching_since: null as string | null,
+  name_is_custom: false,
+  editable: true,
 };
+
+/** A saved web page source (watching, not checked since). */
+export const mockWebSource = {
+  ...mockVacancySource,
+  id: "src-web",
+  key: "web:src-web",
+  kind: "web" as const,
+  display_name: "geekjob.ru",
+  url: "https://geekjob.ru/vacancies?q=react",
+  last_checked_at: "2026-03-10T10:00:00Z" as string | null,
+  watching_since: "2026-03-10T10:00:00Z" as string | null,
+};
+
+/** Preview of a web page: 7 found, the first 5 titles in site order. */
+export const mockWebPreview = {
+  kind: "web" as const,
+  default_name: "geekjob.ru",
+  found_count: 7,
+  titles: [
+    "Senior React Developer",
+    "Frontend Engineer",
+    "Vue Developer",
+    "Fullstack JS",
+    "Team Lead Frontend",
+  ],
+  ats_hint: null,
+};
+
+/** Board hosts the mock treats as non-web kinds (no preview UI). */
+const BOARD_HOSTS = /(greenhouse\.io|lever\.co|teamtailor\.com)/i;
+
+/** Mock preview kind for an input: `@name` / t.me → telegram, a board → greenhouse, other http(s) → web. */
+function mockPreviewKind(input: string): "telegram" | "greenhouse" | "web" {
+  const value = input.trim();
+  if (/^(https?:\/\/)?t\.me\//i.test(value) || value.startsWith("@")) return "telegram";
+  if (BOARD_HOSTS.test(value)) return "greenhouse";
+  return /^https?:\/\//i.test(value) ? "web" : "telegram";
+}
 
 export const mockVacancySourcesEmpty = {
   sources: [],
@@ -694,9 +737,36 @@ export const handlers = [
     return HttpResponse.json(mockVacancySourcesEmpty);
   }),
 
-  // Echoes the input as a new Telegram source (no validation)
-  http.post(`${BASE_URL}/api/v1/vacancy-sources`, async ({ request }) => {
+  // Non-web kinds answer `{kind}` only; any other http(s) link is a web page
+  http.post(`${BASE_URL}/api/v1/vacancy-sources/preview`, async ({ request }) => {
     const body = (await request.json()) as { input: string };
+    const kind = mockPreviewKind(body.input);
+    return HttpResponse.json(kind === "web" ? mockWebPreview : { kind });
+  }),
+
+  // Web links become a web source (watching since now); anything else is echoed
+  // as a new Telegram source (no validation)
+  http.post(`${BASE_URL}/api/v1/vacancy-sources`, async ({ request }) => {
+    const body = (await request.json()) as {
+      input: string;
+      job_link_contains?: string | null;
+      name?: string | null;
+    };
+    if (mockPreviewKind(body.input) === "web") {
+      const now = new Date().toISOString();
+      return HttpResponse.json(
+        {
+          ...mockWebSource,
+          id: "src-web-new",
+          display_name: body.name ?? mockWebPreview.default_name,
+          url: body.input.trim(),
+          job_link_contains: body.job_link_contains ?? null,
+          last_checked_at: now,
+          watching_since: now,
+        },
+        { status: 201 },
+      );
+    }
     const name = body.input.trim().replace(/^(https?:\/\/)?t\.me\/(s\/)?/, "").replace(/^@/, "");
     return HttpResponse.json(
       {
@@ -712,6 +782,49 @@ export const handlers = [
 
   http.delete(`${BASE_URL}/api/v1/vacancy-sources/:id`, () => {
     return new HttpResponse(null, { status: 204 });
+  }),
+
+  // Rename: a trimmed name becomes custom; null / "" puts the default back
+  // (the mock's default is "@<id>"; no 404 or length checks). With `input`: a
+  // web link keeps the id (url + pattern updated); any other link REPLACES the
+  // source — a new Telegram source with id "src-<handle>", scanning
+  http.patch(`${BASE_URL}/api/v1/vacancy-sources/:id`, async ({ params, request }) => {
+    const body = (await request.json()) as {
+      name?: string | null;
+      input?: string | null;
+      job_link_contains?: string | null;
+    };
+    const name = body.name?.trim() || null;
+    const id = String(params.id);
+    if (body.input && mockPreviewKind(body.input) === "web") {
+      return HttpResponse.json({
+        ...mockWebSource,
+        id,
+        key: `web:${id}`,
+        url: body.input.trim(),
+        job_link_contains: body.job_link_contains ?? null,
+        display_name: name ?? mockWebPreview.default_name,
+        name_is_custom: name !== null,
+      });
+    }
+    if (body.input) {
+      const handle = body.input.trim().replace(/^(https?:\/\/)?t\.me\/(s\/)?/, "").replace(/^@/, "");
+      return HttpResponse.json({
+        ...mockVacancySource,
+        id: `src-${handle}`,
+        key: `telegram:${handle.toLowerCase()}`,
+        display_name: name ?? `@${handle}`,
+        name_is_custom: name !== null,
+        scanning: true,
+        editable: false,
+      });
+    }
+    return HttpResponse.json({
+      ...mockVacancySource,
+      id,
+      display_name: name ?? `@${id}`,
+      name_is_custom: name !== null,
+    });
   }),
 
   // Echoes the update normalized like the backend: trimmed, empty description →
