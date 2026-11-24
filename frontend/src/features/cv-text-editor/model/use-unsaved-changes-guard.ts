@@ -21,9 +21,9 @@ export interface UnsavedChangesGuard {
  * link or nav click) or POP (Back/Forward); a REPLACE is the app rewriting its
  * own history entry. The CV editor does that twice, and blocking either would
  * prompt for a navigation the user never made:
- * - after the first save, `/cvs/new` → `/cvs/<id>/edit`. The navigate call runs
- *   in the save handler before the saved values re-render into this hook, so
- *   `isDirty` is still true at that moment;
+ * - after every successful save, the page replaces the editor's entry with
+ *   `/cvs` (the CVs list). The navigate call runs in the save handler, and the
+ *   page never feeds the saved values back in, so `isDirty` is still true then;
  * - `useUploadDraft` (`features/cv-upload`) clears the upload draft's router
  *   state with a same-URL replace right after `/cvs/new` opens it, while the
  *   draft is already dirty (also skipped by the pathname/search check below).

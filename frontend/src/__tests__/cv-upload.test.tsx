@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { UploadCvButton, UploadNotice } from "@/features/cv-upload";
 import { CvEditorPage } from "@/pages/cv-editor";
+import { CvsPage } from "@/pages/cvs";
+import { serveCvStore } from "./mocks/cv-store";
 import { mockUploadDraft } from "./mocks/handlers";
 import { server } from "./setup";
 import { renderWithProviders } from "./utils";
@@ -53,12 +55,33 @@ function saveButton(): HTMLButtonElement {
 }
 
 function baseSwitch(): HTMLInputElement {
-  return screen.getByRole("switch", { name: "Base CV" }) as HTMLInputElement;
+  return screen.getByRole("switch", { name: "Set as base CV for every application" }) as HTMLInputElement;
+}
+
+/** The real CVs page at /cvs (list + upload button), the real editor routes. */
+function renderCvsPage() {
+  return renderWithProviders(<CvsPage />, {
+    initialEntries: ["/cvs"],
+    path: "/cvs",
+    routes: [
+      { path: "/cvs/new", element: <CvEditorPage /> },
+      { path: "/cvs/:id/edit", element: <CvEditorPage /> },
+    ],
+  });
+}
+
+/** The CVs page's row for a CV (its name is the row's first span). */
+function rowOf(name: string): HTMLElement {
+  return screen.getByText(name, { selector: "span" }).closest("li")!;
 }
 
 /** Upload a file and wait for the draft to open in the editor. */
-async function uploadDraft(user: ReturnType<typeof userEvent.setup>) {
-  const result = renderButton();
+async function uploadDraft(
+  user: ReturnType<typeof userEvent.setup>,
+  render: () => ReturnType<typeof renderButton> = renderButton,
+) {
+  const result = render();
+  if (render === renderCvsPage) await screen.findByRole("region", { name: "My CVs" });
   await user.upload(fileInput(), pdfFile());
   await screen.findByDisplayValue(mockUploadDraft.name);
   return result;
@@ -187,36 +210,42 @@ describe("UploadCvButton", () => {
     expect(creates).toEqual([]);
   });
 
-  it("saving the draft creates the CV (not as base) and opens its edit URL", async () => {
+  it("saving the draft creates the CV (not as base) and returns to the CVs list with it", async () => {
     const user = userEvent.setup();
-    const { router } = await uploadDraft(user);
+    const store = serveCvStore();
+    const { router } = await uploadDraft(user, renderCvsPage);
 
     await user.click(saveButton());
 
-    expect(await screen.findByText("CV saved")).toBeInTheDocument();
-    expect(creates).toEqual([
+    await waitFor(() => expect(router.state.location.pathname).toBe("/cvs"));
+    expect(screen.getByText("CV saved")).toBeInTheDocument();
+    expect(store.posts).toEqual([
       { name: mockUploadDraft.name, content: mockUploadDraft.content, is_base: false },
     ]);
-    await waitFor(() => expect(router.state.location.pathname).toBe("/cvs/cv-new/edit"));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
-    expect(saveButton()).toHaveAttribute("aria-disabled", "true");
-    expect(textArea()).toHaveValue(mockUploadDraft.content);
+    expect(screen.queryByRole("textbox", { name: "CV text" })).not.toBeInTheDocument();
+    // The list is fetched again on arrival, so the new CV is in it
+    expect(await screen.findByText(mockUploadDraft.name, { selector: "span" })).toBeInTheDocument();
+    expect(within(rowOf(mockUploadDraft.name)).queryByText("Base")).not.toBeInTheDocument();
   });
 
   it("the draft's switch turned on makes the new CV the base", async () => {
     const user = userEvent.setup();
-    await uploadDraft(user);
+    const store = serveCvStore();
+    const { router } = await uploadDraft(user, renderCvsPage);
 
     await user.click(baseSwitch());
     await user.click(saveButton());
 
-    expect(await screen.findByText("CV saved and set as your base CV")).toBeInTheDocument();
-    expect(creates).toEqual([
+    await waitFor(() => expect(router.state.location.pathname).toBe("/cvs"));
+    expect(screen.getByText("CV saved and set as your base CV")).toBeInTheDocument();
+    expect(store.posts).toEqual([
       { name: mockUploadDraft.name, content: mockUploadDraft.content, is_base: true },
     ]);
-    // The header's "Base" label follows the saved CV
-    expect(screen.getByText("Base")).toBeInTheDocument();
+    await screen.findByText(mockUploadDraft.name, { selector: "span" });
+    expect(within(rowOf(mockUploadDraft.name)).getByText("Base")).toBeInTheDocument();
+    expect(within(rowOf("Software Engineer CV")).queryByText("Base")).not.toBeInTheDocument();
   });
 
   it("passes the cut flag on, and the notice shows the cut line", async () => {
