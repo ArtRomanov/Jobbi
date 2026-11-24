@@ -27,13 +27,15 @@ JSON_HEADERS = {"content-type": "application/json"}
 ARCHIVED = {"modify": "1", "archived": {"$date": 1}}
 
 
-async def _geekjob_source(db: async_sessionmaker[AsyncSession], user_id: str) -> str:
+async def _geekjob_source(
+    db: async_sessionmaker[AsyncSession], user_id: str, url: str = GEEKJOB
+) -> str:
     async with db() as session:
         source = VacancySource(
             user_id=user_id,
             kind="web",
             handle="placeholder",
-            url=GEEKJOB,
+            url=url,
             url_hash="g" * 64,
             default_name="geekjob.ru",
             display_name="geekjob.ru",
@@ -196,3 +198,31 @@ async def test_board_behind_a_challenge_gets_the_blocked_reason(
     source = await get_source(db, source_id)
     assert source.last_error == "This site blocks automated readers"
     assert source.failing_since == NOW
+
+
+# --- N1: HTML listing in a hostile charset ------------------------------------------
+
+
+async def test_hourly_scan_stores_rows_from_a_utf7_html_listing(
+    factory, db, http, ai, sleep, respx_mock: respx.MockRouter
+) -> None:
+    respx_mock.get(f"https://{PUBLIC_IP}/careers").respond(
+        200,
+        headers={"content-type": "text/html"},
+        content=(
+            b'<meta charset="utf-7">'
+            b'<a href="/jobs/1">Dev +2AA- eng</a><a href="/jobs/2">QA lead</a>'
+        ),
+    )
+    user_id = await make_user(db, description=None)
+    source_id = await _geekjob_source(db, user_id, "https://jobs.example.com/careers")
+
+    report = await check(factory, http, ai, sleep)
+
+    assert report.sources_failed == 0
+    rows = await _rows(db)
+    assert set(rows) == {"1", "2"}
+    for row in rows.values():
+        assert row.title is not None
+        row.title.encode("utf-8")
+    assert (await get_source(db, source_id)).last_error is None

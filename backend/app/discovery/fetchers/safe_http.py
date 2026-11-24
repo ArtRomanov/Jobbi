@@ -28,6 +28,7 @@ with reason ``blocked`` instead of ``unreachable``, so the user is told why.
 """
 
 import asyncio
+import codecs
 import ipaddress
 import json
 import re
@@ -90,6 +91,10 @@ _META_CHARSET_RE = re.compile(
     rb"""<meta[^>]+charset\s*=\s*["']?([A-Za-z0-9_.:-]+)""", re.I
 )
 _META_SNIFF_BYTES = 4096
+# `codecs.lookup(...).name` values a page may declare but must not use.
+_REFUSED_CODECS = frozenset(
+    {"utf-7", "unicode-escape", "raw-unicode-escape", "punycode", "idna"}
+)
 
 FetchErrorReason = Literal[
     "unreachable", "not_found", "not_html", "not_json", "too_large", "blocked"
@@ -303,13 +308,25 @@ def _pinned_request(
 
 
 def _decode(body: bytes, charset: str | None) -> str:
+    """Decode a page with its declared charset (header, else ``<meta>``).
+
+    Unknown charsets and codecs that are not plain web text encodings
+    (UTF-7 and the escape codecs can produce lone surrogates and NUL from
+    ASCII bytes; punycode/idna are not page encodings) fall back to UTF-8.
+    """
     encoding = charset
     if encoding is None:
         match = _META_CHARSET_RE.search(body[:_META_SNIFF_BYTES])
         encoding = match.group(1).decode("ascii") if match else "utf-8"
     try:
-        return body.decode(encoding, errors="replace")
+        codec = codecs.lookup(encoding).name
     except LookupError:
+        codec = "utf-8"
+    if codec in _REFUSED_CODECS:
+        codec = "utf-8"
+    try:
+        return body.decode(codec, errors="replace")
+    except (LookupError, TypeError):  # e.g. a bytes-to-bytes codec
         return body.decode("utf-8", errors="replace")
 
 

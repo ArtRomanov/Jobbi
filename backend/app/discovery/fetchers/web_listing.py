@@ -61,7 +61,7 @@ import structlog
 from bs4 import BeautifulSoup, NavigableString, PageElement, Tag
 from bs4.element import CData
 
-from app.discovery.normalize import normalize_url
+from app.discovery.normalize import normalize_url, strip_invisible
 from app.services.vacancy_source_parsing import SourceInputError, parse_source_input
 
 __all__ = ["AtsHint", "ListingJob", "ListingPage", "MAX_TITLE_CHARS", "parse_listing"]
@@ -248,6 +248,13 @@ def _inner_title_tag(anchor: Tag) -> Tag | None:
     return title_like
 
 
+def _clean_title(value: str) -> str:
+    """A title without control, format or surrogate characters (a page in an
+    odd charset can carry them), whitespace collapsed, cut to the column."""
+    visible = strip_invisible(value[: MAX_TITLE_CHARS * 4])
+    return " ".join(visible.split())[:MAX_TITLE_CHARS]
+
+
 def _anchor_title(anchor: Tag) -> tuple[str, bool]:
     """The anchor's title and whether it is marked up as a title.
 
@@ -255,14 +262,13 @@ def _anchor_title(anchor: Tag) -> tuple[str, bool]:
     whole anchor text (cards often wrap company, tags and date in one link).
     """
     inner = _inner_title_tag(anchor)
-    if inner is not None and (title := _text(inner)):
-        return title[:MAX_TITLE_CHARS], True
-    title = _text(anchor)
+    if inner is not None and (title := _clean_title(_text(inner))):
+        return title, True
+    title = _clean_title(_text(anchor))
     if not title:
         for attribute in ("title", "aria-label"):
             value = anchor.get(attribute)
-            if isinstance(value, str) and value.strip():
-                title = " ".join(value.split())
+            if isinstance(value, str) and (title := _clean_title(value)):
                 break
     is_marked = any(
         isinstance(tag, Tag) and _is_title_like(tag)
@@ -492,13 +498,14 @@ def _parse_listing(
             found.setdefault(url, (title, is_marked))
 
     jobs: list[ListingJob] = []
-    for url, (title, _) in found.items():
+    for url, (raw_title, _) in found.items():
+        title = _clean_title(raw_title)
         if not title:
             if pattern is None:
                 continue
             segments = _segments(url)
-            title = (segments[-1] if segments else url)[:MAX_TITLE_CHARS]
-        jobs.append(ListingJob(url=url, title=title))
+            title = _clean_title(segments[-1] if segments else url) or url
+        jobs.append(ListingJob(url=url, title=title[:MAX_TITLE_CHARS]))
 
     next_url: str | None = None
     ats_hint: AtsHint | None = None

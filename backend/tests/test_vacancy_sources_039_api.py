@@ -1,8 +1,10 @@
 """PR #39 pre-merge findings through the API (M2, M3, M5, LOWs)."""
 
 import asyncio
+import gc
 import hashlib
 import json
+import logging
 import threading
 import time
 from pathlib import Path
@@ -14,6 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.discovery.fetchers import ashby
+from app.discovery.fetchers.errors import BoardReadError
 from app.models.vacancy import Vacancy
 from app.models.vacancy_source import VacancySource
 from app.services import vacancy_source_check, vacancy_source_service
@@ -290,6 +293,24 @@ async def test_preview_of_an_html_page_still_reads_one_page(
 # --- R1: hostile titles through the preview ---------------------------------------------
 
 
+async def test_preview_of_a_utf7_html_page_is_200_with_clean_titles(
+    client: httpx.AsyncClient, token: str, respx_mock: respx.MockRouter
+) -> None:
+    respx_mock.get(f"https://{PUBLIC_IP}/careers").respond(
+        200,
+        headers={"content-type": "text/html"},
+        content=b'<meta charset="utf-7"><a href="/jobs/1">Dev +2AA- eng</a>',
+    )
+
+    resp = await client.post(
+        PREVIEW_URL, json={"input": "https://example.com/careers"}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 200
+    [title] = resp.json()["titles"]
+    assert "\ud800" not in title and title.startswith("Dev")
+
+
 async def test_preview_cleans_lone_surrogates_and_controls(
     client: httpx.AsyncClient, token: str, respx_mock: respx.MockRouter
 ) -> None:
@@ -475,3 +496,53 @@ async def test_timed_out_ashby_checks_never_parse_in_parallel(
         await asyncio.sleep(0.05)
 
     assert state["peak"] == 1
+
+
+async def test_a_slow_ashby_read_frees_the_slot_after_its_own_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def hanging_check(client: httpx.AsyncClient, org: str) -> None:
+        await asyncio.sleep(60)  # an Ashby answer that never finishes
+
+    monkeypatch.setattr(ashby, "check_board", hanging_check)
+    monkeypatch.setattr(vacancy_source_check, "CHECK_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(vacancy_source_check, "ASHBY_READ_LIMIT_SECONDS", 0.2)
+
+    with pytest.raises(vacancy_source_check.BoardUnreadableError):
+        await vacancy_source_check.check_ashby_board("slow")
+    await asyncio.sleep(0.3)  # past the read's own limit
+
+    async def quick_check(client: httpx.AsyncClient, org: str) -> None:
+        return None
+
+    monkeypatch.setattr(ashby, "check_board", quick_check)
+    monkeypatch.setattr(vacancy_source_check, "CHECK_TIMEOUT_SECONDS", 1.0)
+
+    assert await vacancy_source_check.check_ashby_board("next") == "Next"
+
+
+async def test_a_late_ashby_failure_logs_no_asyncio_error(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def failing_late(client: httpx.AsyncClient, org: str) -> None:
+        await asyncio.sleep(0.2)
+        raise BoardReadError("unreachable")
+
+    monkeypatch.setattr(ashby, "check_board", failing_late)
+    monkeypatch.setattr(vacancy_source_check, "CHECK_TIMEOUT_SECONDS", 0.05)
+    loop = asyncio.get_running_loop()
+    contexts: list[dict] = []
+    previous = loop.get_exception_handler()
+    loop.set_exception_handler(lambda _loop, context: contexts.append(context))
+    try:
+        with caplog.at_level(logging.ERROR, logger="asyncio"):
+            with pytest.raises(vacancy_source_check.BoardUnreadableError):
+                await vacancy_source_check.check_ashby_board("late")
+            await asyncio.sleep(0.4)  # the read fails in the background
+            gc.collect()
+            await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(previous)
+
+    assert contexts == []
+    assert not [r for r in caplog.records if r.name == "asyncio"]

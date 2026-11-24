@@ -10,7 +10,14 @@ import respx
 
 from app.discovery import normalize, web_scan
 from app.discovery.board_scan import fetch_board
-from app.discovery.fetchers import ashby, board_http, site_listing
+from app.discovery.fetchers import (
+    ashby,
+    board_http,
+    greenhouse,
+    safe_http,
+    site_listing,
+    web_listing,
+)
 from app.discovery.fetchers.errors import BoardReadError
 from app.discovery.fetchers.safe_http import PageFetchError
 from app.services.vacancy_source_parsing import ParsedSource, parse_source_input
@@ -396,3 +403,96 @@ def test_pattern_filtered_page_reports_nothing_skipped() -> None:
     page = listing.parse_page(data, 1, "no-such-text")
 
     assert page.jobs == [] and page.skipped_count == 0
+
+
+# --- N1: HTML listing titles ------------------------------------------------------
+
+UTF7_PAGE = b'<meta charset="utf-7"><a href="/jobs/1">Dev +2AA- eng</a>'
+PAGE_URL = "https://example.com/careers"
+
+
+@pytest.mark.parametrize(
+    "charset", ["utf-7", "UTF7", "unicode_escape", "raw-unicode-escape"]
+)
+def test_decode_refuses_codecs_that_make_surrogates_or_controls(charset: str) -> None:
+    body = f'<meta charset="{charset}"><p>Dev +2AA- \\ud800 \\x00 eng</p>'.encode()
+
+    text = safe_http._decode(body, None)
+
+    assert "\ud800" not in text and "\x00" not in text
+    text.encode("utf-8")
+    assert safe_http._decode(body, charset) == text  # header charset too
+
+
+def test_decode_keeps_real_charsets() -> None:
+    body = "<p>Вакансия</p>".encode("cp1251")
+
+    assert "Вакансия" in safe_http._decode(body, "windows-1251")
+
+
+def test_html_listing_titles_are_cleaned() -> None:
+    html = (
+        '<a href="/jobs/1">Dev \ud800 eng\x00</a>'
+        '<a href="/jobs/2"><h3>Ops\u200b\u202e Lead</h3></a>'
+        '<a href="/jobs/3" title="QA\x07 lead"></a>'
+    )
+
+    titles = [job.title for job in web_listing.parse_listing(html, PAGE_URL, None).jobs]
+
+    assert titles == ["Dev eng", "Ops Lead", "QA lead"]
+    for title in titles:
+        title.encode("utf-8")
+
+
+def test_html_listing_title_of_only_invisible_characters_is_dropped() -> None:
+    html = '<a href="/jobs/1">\u200b\ud800\x00</a><a href="/jobs/2">Dev</a>'
+
+    jobs = web_listing.parse_listing(html, PAGE_URL, None).jobs
+
+    assert [job.title for job in jobs] == ["Dev"]
+
+
+def test_url_segment_fallback_title_is_cleaned() -> None:
+    html = '<a href="/jobs/dev%00ops"></a>'
+
+    [job] = web_listing.parse_listing(html, PAGE_URL, "/jobs/").jobs
+
+    assert "\x00" not in job.title
+    job.title.encode("utf-8")
+
+
+def test_utf7_page_end_to_end_has_encodable_titles() -> None:
+    text = safe_http._decode(UTF7_PAGE, None)
+
+    [job] = web_listing.parse_listing(text, PAGE_URL, None).jobs
+
+    job.title.encode("utf-8")
+    assert "\ud800" not in job.title
+
+
+# --- Greenhouse board name ------------------------------------------------------------
+
+
+@respx.mock
+async def test_greenhouse_board_name_is_cleaned() -> None:
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme").respond(
+        200, content=b'{"name": "Acme \\ud800 \\u0000\\u200b"}'
+    )
+
+    async with httpx.AsyncClient() as client:
+        name = await greenhouse.fetch_board_name(client, "acme")
+
+    assert name == "Acme"
+
+
+@respx.mock
+async def test_greenhouse_board_name_of_only_invisible_characters_is_unreachable() -> (
+    None
+):
+    respx.get("https://boards-api.greenhouse.io/v1/boards/acme").respond(
+        200, content=b'{"name": "\\ud800\\u0000"}'
+    )
+
+    async with httpx.AsyncClient() as client:
+        with pytest.raises(BoardReadError):
+            await greenhouse.fetch_board_name(client, "acme")

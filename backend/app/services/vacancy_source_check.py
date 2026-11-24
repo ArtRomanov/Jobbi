@@ -25,6 +25,9 @@ logger = structlog.get_logger()
 TELEGRAM_PREVIEW_URL = "https://t.me/s/{handle}"
 USER_AGENT = "Jobbi/1.0"
 CHECK_TIMEOUT_SECONDS = 10.0
+# Total limit of one Ashby read, which may outlive its check (see
+# `check_ashby_board`): it holds the one Ashby slot until it ends.
+ASHBY_READ_LIMIT_SECONDS = 30.0
 # A channel preview page is ~100-300 KB; the header we need is at the top.
 MAX_RESPONSE_BYTES = 1_000_000
 MAX_DISPLAY_NAME_LENGTH = 255
@@ -250,7 +253,11 @@ async def check_ashby_board(org: str) -> str:
             # No await between acquiring and handing the slot to the task.
             read = asyncio.create_task(_read_ashby_board(org))
             read.add_done_callback(functools.partial(_release_ashby_slot, slot))
-            await asyncio.shield(read)
+            # `asyncio.wait` never cancels `read` (unlike awaiting it), and,
+            # unlike `asyncio.shield`, leaves no future whose late failure
+            # asyncio would log: the done callback retrieves it.
+            await asyncio.wait({read})
+        read.result()  # re-raises the read's BoardReadError / TimeoutError
     except (TimeoutError, BoardReadError) as exc:
         logger.warning(
             "ashby_board_check_failed",
@@ -262,15 +269,30 @@ async def check_ashby_board(org: str) -> str:
 
 
 async def _read_ashby_board(org: str) -> None:
-    async with httpx.AsyncClient(timeout=CHECK_TIMEOUT_SECONDS) as client:
+    """The read behind an Ashby check, with its own total limit.
+
+    The limit (``ASHBY_READ_LIMIT_SECONDS``) keeps a slow answer from holding
+    the slot for minutes. It is far above a real read (a 14 MB board takes
+    about 1 s); should it cut a parse thread short, that thread still ends on
+    its own, bounded by the 32 MB body cap.
+
+    Raises:
+        BoardReadError: see ``ashby.check_board``.
+        TimeoutError: the read took longer than its limit.
+    """
+    async with (
+        asyncio.timeout(ASHBY_READ_LIMIT_SECONDS),
+        httpx.AsyncClient(timeout=CHECK_TIMEOUT_SECONDS) as client,
+    ):
         await ashby.check_board(client, org)
 
 
 def _release_ashby_slot(slot: asyncio.Semaphore, read: asyncio.Task[None]) -> None:
-    """Free the slot when the read (and its parse thread) is over."""
+    """Free the slot when the read (and its parse thread) is over, and
+    retrieve a late failure: the user was already told, nothing to log."""
     slot.release()
     if not read.cancelled():
-        read.exception()  # mark a late failure as seen (already reported)
+        read.exception()
 
 
 # --- web pages -----------------------------------------------------------------
