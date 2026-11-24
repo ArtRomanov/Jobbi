@@ -324,7 +324,7 @@ export const mockWebPreview = {
 };
 
 /** Board hosts the mock treats as non-web kinds (no preview UI). */
-const BOARD_HOSTS = /(greenhouse\.io|lever\.co|teamtailor\.com)/i;
+const BOARD_HOSTS = /(greenhouse\.io|lever\.co|teamtailor\.com|ashbyhq\.com)/i;
 
 /** Mock preview kind for an input: `@name` / t.me → telegram, a board → greenhouse, other http(s) → web. */
 function mockPreviewKind(input: string): "telegram" | "greenhouse" | "web" {

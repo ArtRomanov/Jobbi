@@ -7,7 +7,7 @@ import type { components } from "@/shared/api";
  */
 export type VacancySource = components["schemas"]["VacancySourceRead"];
 
-/** Where a source comes from: "telegram" | "greenhouse" | "lever" | "lever_eu" | "teamtailor" | "web". */
+/** Where a source comes from: "telegram" | "greenhouse" | "lever" | "lever_eu" | "teamtailor" | "ashby" | "web". */
 export type VacancySourceKind = VacancySource["kind"];
 
 /** A source of existing cards that matches no live source: `{key, label}` (shown "(removed)"). */

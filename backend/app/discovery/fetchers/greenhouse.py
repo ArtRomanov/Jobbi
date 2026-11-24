@@ -56,10 +56,12 @@ async def fetch_board_name(client: httpx.AsyncClient, token: str) -> str:
         BoardReadError: see ``board_http.get_json``.
     """
     data = await get_json(client, _board_url(token))
-    name = data.get("name") if isinstance(data, dict) else None
-    if not isinstance(name, str) or not name.strip():
+    raw = data.get("name") if isinstance(data, dict) else None
+    # Same cleaning as job titles: no control, format or surrogate characters.
+    name = " ".join((cap_name(raw) or "").split())
+    if not name:
         raise BoardReadError("unreachable")
-    return name.strip()
+    return name
 
 
 async def list_jobs(client: httpx.AsyncClient, token: str) -> list[dict[str, Any]]:

@@ -65,6 +65,7 @@ Add sources in Inbox → Sources by pasting a link. Supported:
 | Telegram public channel | `@name` or `t.me/name`                                       |
 | Greenhouse / Lever      | the board link                                               |
 | Teamtailor              | `<company>.teamtailor.com` (not a company's own domain)      |
+| Ashby                   | `jobs.ashbyhq.com/<company>`                                 |
 | Web page                | any other `http(s)` link: an aggregator search or a career page |
 
 **Adding a web page:**
@@ -72,10 +73,12 @@ Add sources in Inbox → Sources by pasting a link. Supported:
 1. Open the site, set its own filters (e.g. `?q=react&remote=1`) and **sort by newest first** — Jobbi looks for new vacancies at the top of the list.
 2. Paste the link and press Add. A preview shows "Found N vacancies" and the first 5 titles.
 3. If the titles look like menu items, fill **"Job link contains"** (e.g. `/vacancy/`) and Re-check.
-4. If the page links to a Greenhouse, Lever or Teamtailor board, the preview offers "Add the board" — prefer it: full job texts and dates.
+4. If the page links to a Greenhouse, Lever, Teamtailor or Ashby board, the preview offers "Add the board" — prefer it: full job texts and dates.
 5. Save. Vacancies already listed are marked as seen; only new ones reach the Inbox.
 
-**Doesn't work:** pages that render vacancies with JavaScript ("No vacancies found"), sites behind a login or captcha, listings not sorted newest first (a new vacancy below seen ones can be missed), local/private addresses ("This link can't be used").
+geekjob.ru search links with a filter (e.g. `geekjob.ru/vacancies?qs=react`) are read from the site's own search results, newest first.
+
+**Doesn't work:** pages that render vacancies with JavaScript ("No vacancies found"; geekjob.ru search is the exception above), sites behind bot protection such as Cloudflare ("This site blocks automated readers" — try its job board link instead), sites behind a login or captcha, listings not sorted newest first (a new vacancy below seen ones can be missed), local/private addresses ("This link can't be used").
 
 **Limits:** per source per hourly check — up to 5 listing pages and 30 job pages opened; the rest waits for the next check. The daily AI limit (`DISCOVERY_DAILY_EVAL_LIMIT`, 150) is shared by all sources.
 

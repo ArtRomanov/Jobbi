@@ -1,0 +1,114 @@
+{
+  "jobs": [
+    {
+      "id": "72eaca21-1d04-4e08-ac70-c987519dda1f",
+      "title": "Staff Platform Product Manager, Core",
+      "department": "Product",
+      "team": "Product Management",
+      "employmentType": "FullTime",
+      "location": "Barcelona, Spain",
+      "secondaryLocations": [
+        {
+          "location": "Amsterdam, Netherlands",
+          "address": {
+            "postalAddress": {
+              "postalCode": "1011",
+              "addressCountry": "Netherlands",
+              "addressLocality": "Amsterdam, Netherlands"
+            }
+          }
+        }
+      ],
+      "publishedAt": "2026-11-18T12:21:01.571+00:00",
+      "isListed": true,
+      "isRemote": true,
+      "workplaceType": "Hybrid",
+      "address": {
+        "postalAddress": {
+          "postalCode": "08080",
+          "addressRegion": "",
+          "addressCountry": "Spain",
+          "addressLocality": "Barcelona, Spain"
+        }
+      },
+      "jobUrl": "https://jobs.ashbyhq.com/manychat/72eaca21-1d04-4e08-ac70-c987519dda1f",
+      "applyUrl": "https://jobs.ashbyhq.com/manychat/72eaca21-1d04-4e08-ac70-c987519dda1f/application",
+      "descriptionHtml": "<h3>WHO WE ARE 🌍</h3><p style=\"min-height:1.5em\">Creating content that resonates is great — turning that attention into growth is even better. That's what Manychat does.</p><p style=\"min-height:1.5em\">Our AI-powered automations help creators and brands engage with audiences across Instagram, Messenger, WhatsApp, and TikTok — at the right moment, with the right message, minus the manual work.</p>",
+      "descriptionPlain": "WHO WE ARE 🌍\n\nCreating content that resonates is great — turning that attention into growth is even better. That's what Manychat does.\n\nOur AI-powered automations help creators and brands engage with audiences across Instagram, Messenger, WhatsApp, and TikTok — at the right moment, with the right message, minus the manual work.\n\nWe're 400+ people across three continents behind the leading platform"
+    },
+    {
+      "id": "b62c092e-c803-4a31-b830-ec45565e0d3d",
+      "title": "Senior Python Engineer, Billing & Accounts",
+      "department": "Engineering",
+      "team": "Engineering",
+      "employmentType": "FullTime",
+      "location": "Amsterdam, Netherlands",
+      "secondaryLocations": [],
+      "publishedAt": "2026-08-12T13:07:14.358+00:00",
+      "isListed": true,
+      "isRemote": true,
+      "workplaceType": "Hybrid",
+      "address": {
+        "postalAddress": {
+          "postalCode": "1011",
+          "addressCountry": "Netherlands",
+          "addressLocality": "Amsterdam, Netherlands"
+        }
+      },
+      "jobUrl": "https://jobs.ashbyhq.com/manychat/b62c092e-c803-4a31-b830-ec45565e0d3d",
+      "applyUrl": "https://jobs.ashbyhq.com/manychat/b62c092e-c803-4a31-b830-ec45565e0d3d/application",
+      "descriptionHtml": "<h3>WHO WE ARE 🌍</h3><p style=\"min-height:1.5em\">Creating content that resonates is great — turning that attention into growth is even better. That's what Manychat does.</p><p style=\"min-height:1.5em\">Our AI-powered automations help creators and brands engage with audiences across Instagram, Messenger, WhatsApp, and TikTok — at the right moment, with the right message, minus the manual work.</p>",
+      "descriptionPlain": "WHO WE ARE 🌍\n\nCreating content that resonates is great — turning that attention into growth is even better. That's what Manychat does.\n\nOur AI-powered automations help creators and brands engage with audiences across Instagram, Messenger, WhatsApp, and TikTok — at the right moment, with the right message, minus the manual work.\n\nWe're 400+ people across three continents behind the leading platform"
+    },
+    {
+      "id": "c2b0d9e3-7445-4492-8037-32945bcc093b",
+      "title": "Head of Affiliate Partnerships",
+      "department": "Marketing",
+      "team": "Marketing",
+      "employmentType": "FullTime",
+      "location": "Austin, US",
+      "secondaryLocations": [],
+      "publishedAt": "2026-08-11T16:12:17.797+00:00",
+      "isListed": true,
+      "isRemote": true,
+      "workplaceType": "Hybrid",
+      "address": {
+        "postalAddress": {
+          "postalCode": "73301",
+          "addressRegion": "Austin, US",
+          "addressCountry": "United States",
+          "addressLocality": "Austin"
+        }
+      },
+      "jobUrl": "https://jobs.ashbyhq.com/manychat/c2b0d9e3-7445-4492-8037-32945bcc093b",
+      "applyUrl": "https://jobs.ashbyhq.com/manychat/c2b0d9e3-7445-4492-8037-32945bcc093b/application",
+      "descriptionHtml": "<h3>WHO WE ARE 🌍</h3><p style=\"min-height:1.5em\">Creating content that resonates is great — turning that attention into growth is even better. That's what Manychat does.</p><p style=\"min-height:1.5em\">Our AI-powered automations help creators and brands engage with audiences across Instagram, Messenger, WhatsApp, and TikTok — at the right moment, with the right message, minus the manual work.</p>",
+      "descriptionPlain": "WHO WE ARE 🌍\n\nCreating content that resonates is great — turning that attention into growth is even better. That's what Manychat does.\n\nOur AI-powered automations help creators and brands engage with audiences across Instagram, Messenger, WhatsApp, and TikTok — at the right moment, with the right message, minus the manual work.\n\nWe're 400+ people across three continents behind the leading platform"
+    },
+    {
+      "id": "6fe93035-5134-4e7a-ba47-6e4bab17815e",
+      "title": "Senior Backend Engineer, Backend Platform (PHP and Python)",
+      "department": "Engineering",
+      "team": "Platform Engineering",
+      "employmentType": "FullTime",
+      "location": "Amsterdam, Netherlands",
+      "secondaryLocations": [],
+      "publishedAt": "2026-11-20T14:58:09.570+00:00",
+      "isListed": true,
+      "isRemote": true,
+      "workplaceType": "Hybrid",
+      "address": {
+        "postalAddress": {
+          "postalCode": "1011",
+          "addressCountry": "Netherlands",
+          "addressLocality": "Amsterdam, Netherlands"
+        }
+      },
+      "jobUrl": "https://jobs.ashbyhq.com/manychat/6fe93035-5134-4e7a-ba47-6e4bab17815e",
+      "applyUrl": "https://jobs.ashbyhq.com/manychat/6fe93035-5134-4e7a-ba47-6e4bab17815e/application",
+      "descriptionHtml": "<h3>WHO WE ARE 🌍</h3><p style=\"min-height:1.5em\">Creating content that resonates is great — turning that attention into growth is even better. That's what Manychat does.</p><p style=\"min-height:1.5em\">Our AI-powered automations help creators and brands engage with audiences across Instagram, Messenger, WhatsApp, and TikTok — at the right moment, with the right message, minus the manual work.</p>",
+      "descriptionPlain": "WHO WE ARE 🌍\n\nCreating content that resonates is great — turning that attention into growth is even better. That's what Manychat does.\n\nOur AI-powered automations help creators and brands engage with audiences across Instagram, Messenger, WhatsApp, and TikTok — at the right moment, with the right message, minus the manual work.\n\nWe're 400+ people across three continents behind the leading platform"
+    }
+  ],
+  "apiVersion": "1"
+}

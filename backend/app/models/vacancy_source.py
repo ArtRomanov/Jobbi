@@ -12,6 +12,7 @@ VACANCY_SOURCE_KINDS = (
     "lever",
     "lever_eu",
     "teamtailor",
+    "ashby",
     "web",
 )
 

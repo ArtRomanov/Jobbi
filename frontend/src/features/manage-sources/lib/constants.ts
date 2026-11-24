@@ -7,6 +7,7 @@ export const SOURCE_KIND_LABELS: Record<VacancySourceKind, string> = {
   lever: "Lever",
   lever_eu: "Lever",
   teamtailor: "Teamtailor",
+  ashby: "Ashby",
   web: "Web page",
 };
 

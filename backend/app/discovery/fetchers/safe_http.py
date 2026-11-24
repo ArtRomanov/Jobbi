@@ -16,21 +16,34 @@ not be steerable into the server's own network (SSRF). The rules:
 - no cookies are sent or kept (the jar would be keyed by the pinned IP and
   shared across sites and users); ``Accept-Encoding: identity`` is sent;
 - total time, body size (decompressed) and content type are capped.
+
+``fetch_html`` accepts HTML only; ``fetch_json`` (a site's own JSON search
+endpoint, see ``site_listing``) accepts ``application/json`` only. Both share
+every rule above.
+
+Bot protection: a 403/429/503 answer that is a bot challenge (Cloudflare's
+``cf-mitigated: challenge`` header, or ``server: cloudflare`` on a 403/503
+whose first ``CHALLENGE_SNIFF_BYTES`` hold the challenge page markers) fails
+with reason ``blocked`` instead of ``unreachable``, so the user is told why.
 """
 
 import asyncio
+import codecs
 import ipaddress
+import json
 import re
 import socket
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
 
 __all__ = [
+    "CHALLENGE_SNIFF_BYTES",
     "FetchErrorReason",
+    "FetchedJson",
     "FetchedPage",
     "PageFetchError",
     "Resolver",
@@ -38,12 +51,14 @@ __all__ = [
     "USER_AGENT",
     "check_address",
     "fetch_html",
+    "fetch_json",
     "make_client",
     "system_resolver",
 ]
 
 USER_AGENT = "Mozilla/5.0 (compatible; Jobbi/1.0)"
 ACCEPT = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1"
+ACCEPT_JSON = "application/json"
 ACCEPT_ENCODING = "identity"
 DEFAULT_TIMEOUT_SECONDS = 15.0
 DEFAULT_MAX_BYTES = 5_000_000
@@ -54,6 +69,16 @@ _ALLOWED_PORTS = frozenset({80, 443})
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _NOT_FOUND_STATUSES = frozenset({404, 410})
 _HTML_TYPES = frozenset({"text/html", "application/xhtml+xml"})
+_JSON_TYPES = frozenset({"application/json"})
+# Bot challenges (see the module docstring): only these statuses can be one;
+# the page markers are looked for only on 403/503 from a Cloudflare server.
+_CHALLENGE_STATUSES = frozenset({403, 429, 503})
+_CHALLENGE_BODY_STATUSES = frozenset({403, 503})
+CHALLENGE_SNIFF_BYTES = 16_384
+_CHALLENGE_MARKERS = (
+    b"<title>Just a moment...</title>",
+    b"/cdn-cgi/challenge-platform/",
+)
 # NAT64 prefixes embed an IPv4 address but report `is_global` True.
 _NAT64_NETWORKS = (
     ipaddress.IPv6Network("64:ff9b::/96"),
@@ -66,8 +91,14 @@ _META_CHARSET_RE = re.compile(
     rb"""<meta[^>]+charset\s*=\s*["']?([A-Za-z0-9_.:-]+)""", re.I
 )
 _META_SNIFF_BYTES = 4096
+# `codecs.lookup(...).name` values a page may declare but must not use.
+_REFUSED_CODECS = frozenset(
+    {"utf-7", "unicode-escape", "raw-unicode-escape", "punycode", "idna"}
+)
 
-FetchErrorReason = Literal["unreachable", "not_found", "not_html", "too_large"]
+FetchErrorReason = Literal[
+    "unreachable", "not_found", "not_html", "not_json", "too_large", "blocked"
+]
 Resolver = Callable[[str, int], Awaitable[list[str]]]
 
 
@@ -81,8 +112,10 @@ class UnsafeUrlError(Exception):
 class PageFetchError(Exception):
     """A page could not be read.
 
-    ``reason``: ``not_found`` (HTTP 404/410), ``not_html`` (other content
-    type), ``too_large`` (body over the cap) or ``unreachable`` (DNS, network,
+    ``reason``: ``not_found`` (HTTP 404/410), ``not_html`` / ``not_json``
+    (other content type; for JSON also a body that is not valid JSON),
+    ``too_large`` (body over the cap), ``blocked`` (a bot-protection
+    challenge, see the module docstring) or ``unreachable`` (DNS, network,
     timeout, any other HTTP >= 400, too many redirects).
     """
 
@@ -98,6 +131,23 @@ class FetchedPage:
     final_url: str
     status: int
     text: str
+
+
+@dataclass(frozen=True, slots=True)
+class FetchedJson:
+    """A fetched JSON document; ``data`` is whatever the body parsed to."""
+
+    final_url: str
+    status: int
+    data: Any
+
+
+@dataclass(frozen=True, slots=True)
+class _RawBody:
+    final_url: str
+    status: int
+    body: bytes
+    charset: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,7 +269,11 @@ async def _pick_address(target: _Target, resolver: Resolver) -> str:
 
 
 def _pinned_request(
-    client: httpx.AsyncClient, target: _Target, ip: str, timeout_s: float
+    client: httpx.AsyncClient,
+    target: _Target,
+    ip: str,
+    timeout_s: float,
+    accept: str = ACCEPT,
 ) -> httpx.Request:
     netloc_host = f"[{ip}]" if ":" in ip else ip
     host_header = f"[{target.host}]" if ":" in target.host else target.host
@@ -243,7 +297,7 @@ def _pinned_request(
         headers={
             "Host": f"{host_header}{port_suffix}",
             "User-Agent": USER_AGENT,
-            "Accept": ACCEPT,
+            "Accept": accept,
             # Plain bodies only: a compressed one could inflate far past the
             # size cap inside a single chunk before it is counted.
             "Accept-Encoding": ACCEPT_ENCODING,
@@ -253,14 +307,26 @@ def _pinned_request(
     )
 
 
-def _decode(body: bytes, response: httpx.Response) -> str:
-    encoding = response.charset_encoding
+def _decode(body: bytes, charset: str | None) -> str:
+    """Decode a page with its declared charset (header, else ``<meta>``).
+
+    Unknown charsets and codecs that are not plain web text encodings
+    (UTF-7 and the escape codecs can produce lone surrogates and NUL from
+    ASCII bytes; punycode/idna are not page encodings) fall back to UTF-8.
+    """
+    encoding = charset
     if encoding is None:
         match = _META_CHARSET_RE.search(body[:_META_SNIFF_BYTES])
         encoding = match.group(1).decode("ascii") if match else "utf-8"
     try:
-        return body.decode(encoding, errors="replace")
+        codec = codecs.lookup(encoding).name
     except LookupError:
+        codec = "utf-8"
+    if codec in _REFUSED_CODECS:
+        codec = "utf-8"
+    try:
+        return body.decode(codec, errors="replace")
+    except (LookupError, TypeError):  # e.g. a bytes-to-bytes codec
         return body.decode("utf-8", errors="replace")
 
 
@@ -276,6 +342,25 @@ async def _read_capped(response: httpx.Response, max_bytes: int) -> bytes:
     return bytes(body)
 
 
+async def _is_bot_challenge(response: httpx.Response) -> bool:
+    """True if an error answer is a bot-protection challenge (module docstring)."""
+    status = response.status_code
+    if status not in _CHALLENGE_STATUSES:
+        return False
+    if response.headers.get("cf-mitigated", "").strip().lower() == "challenge":
+        return True
+    server = response.headers.get("server", "").strip().lower()
+    if server != "cloudflare" or status not in _CHALLENGE_BODY_STATUSES:
+        return False
+    head = bytearray()
+    async for chunk in response.aiter_bytes():
+        head.extend(chunk)
+        if len(head) >= CHALLENGE_SNIFF_BYTES:
+            break
+    top = bytes(head[:CHALLENGE_SNIFF_BYTES])
+    return any(marker in top for marker in _CHALLENGE_MARKERS)
+
+
 async def _fetch(
     url: str,
     client: httpx.AsyncClient,
@@ -283,12 +368,16 @@ async def _fetch(
     timeout_s: float,
     max_bytes: int,
     max_redirects: int,
-) -> FetchedPage:
+    *,
+    accept: str,
+    media_types: frozenset[str],
+    wrong_type: FetchErrorReason,
+) -> _RawBody:
     current = url.strip()
     for hop in range(max_redirects + 1):
         target = _parse_target(current)
         ip = await _pick_address(target, resolver)
-        request = _pinned_request(client, target, ip, timeout_s)
+        request = _pinned_request(client, target, ip, timeout_s, accept)
         response = await client.send(request, stream=True)
         try:
             status = response.status_code
@@ -302,15 +391,20 @@ async def _fetch(
             if status in _NOT_FOUND_STATUSES:
                 raise PageFetchError("not_found")
             if not 200 <= status < 300:
+                if await _is_bot_challenge(response):
+                    raise PageFetchError("blocked")
                 raise PageFetchError("unreachable")
             media_type = (
                 response.headers.get("content-type", "").split(";")[0].strip().lower()
             )
-            if media_type not in _HTML_TYPES:
-                raise PageFetchError("not_html")
+            if media_type not in media_types:
+                raise PageFetchError(wrong_type)
             body = await _read_capped(response, max_bytes)
-            return FetchedPage(
-                final_url=current, status=status, text=_decode(body, response)
+            return _RawBody(
+                final_url=current,
+                status=status,
+                body=body,
+                charset=response.charset_encoding,
             )
         finally:
             await response.aclose()
@@ -347,12 +441,112 @@ async def fetch_html(
                 max_bytes=max_bytes,
                 max_redirects=max_redirects,
             )
+    raw = await _guarded_fetch(
+        url,
+        client,
+        resolver,
+        timeout_s,
+        max_bytes,
+        max_redirects,
+        accept=ACCEPT,
+        media_types=_HTML_TYPES,
+        wrong_type="not_html",
+    )
+    return FetchedPage(
+        final_url=raw.final_url, status=raw.status, text=_decode(raw.body, raw.charset)
+    )
+
+
+def _parse_json(body: bytes) -> Any:
+    """Parse a JSON body; ``PageFetchError("not_json")`` if it is not JSON."""
+    try:
+        return json.loads(body)
+    # RecursionError: a hostile body nested deeper than the parser allows.
+    except (ValueError, RecursionError) as exc:
+        raise PageFetchError("not_json") from exc
+
+
+async def fetch_json(
+    url: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+    resolver: Resolver = system_resolver,
+    timeout_s: float = DEFAULT_TIMEOUT_SECONDS,
+    max_bytes: int = DEFAULT_MAX_BYTES,
+    max_redirects: int = DEFAULT_MAX_REDIRECTS,
+) -> FetchedJson:
+    """GET a JSON document from a user-chosen site under the SSRF guard.
+
+    Same rules as :func:`fetch_html` (address, redirects, size, time, no
+    cookies, identity encoding); only ``application/json`` is accepted. The
+    body is parsed in a worker thread, off the event loop.
+
+    Raises:
+        UnsafeUrlError: the URL or any redirect hop breaks a guard rule.
+        PageFetchError: the document could not be read (see its ``reason``;
+            ``not_json`` for another content type or an invalid body).
+        ValueError: ``client`` trusts the environment or follows redirects.
+    """
+    if client is None:
+        async with make_client() as own_client:
+            return await fetch_json(
+                url,
+                client=own_client,
+                resolver=resolver,
+                timeout_s=timeout_s,
+                max_bytes=max_bytes,
+                max_redirects=max_redirects,
+            )
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_s
+    raw = await _guarded_fetch(
+        url,
+        client,
+        resolver,
+        timeout_s,
+        max_bytes,
+        max_redirects,
+        accept=ACCEPT_JSON,
+        media_types=_JSON_TYPES,
+        wrong_type="not_json",
+    )
+    # Parsing counts toward the same total time: the caller stops waiting at
+    # the deadline (the worker thread finishes on its own; the body is capped).
+    try:
+        async with asyncio.timeout_at(deadline):
+            data = await asyncio.to_thread(_parse_json, raw.body)
+    except TimeoutError as exc:
+        raise PageFetchError("unreachable") from exc
+    return FetchedJson(final_url=raw.final_url, status=raw.status, data=data)
+
+
+async def _guarded_fetch(
+    url: str,
+    client: httpx.AsyncClient,
+    resolver: Resolver,
+    timeout_s: float,
+    max_bytes: int,
+    max_redirects: int,
+    *,
+    accept: str,
+    media_types: frozenset[str],
+    wrong_type: FetchErrorReason,
+) -> _RawBody:
+    """Run ``_fetch`` under the total time cap, mapping transport errors."""
     if client.trust_env or client.follow_redirects:
-        raise ValueError("fetch_html needs a client from make_client()")
+        raise ValueError("safe_http needs a client from make_client()")
     try:
         async with asyncio.timeout(timeout_s):
             return await _fetch(
-                url, client, resolver, timeout_s, max_bytes, max_redirects
+                url,
+                client,
+                resolver,
+                timeout_s,
+                max_bytes,
+                max_redirects,
+                accept=accept,
+                media_types=media_types,
+                wrong_type=wrong_type,
             )
     except TimeoutError as exc:
         raise PageFetchError("unreachable") from exc

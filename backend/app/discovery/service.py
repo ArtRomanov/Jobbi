@@ -8,7 +8,7 @@ database transaction is open. Every step is either
 Functions never hold an ORM object across a network call; they copy what they
 need into the frozen dataclasses below.
 
-Sources: Telegram channels, Greenhouse / Lever / Teamtailor boards
+Sources: Telegram channels, Greenhouse / Lever / Teamtailor / Ashby boards
 (`board_scan`) and web pages (`web_scan` listing, then a detail step that
 reads each new job's own page before the AI sees it).
 
@@ -71,7 +71,7 @@ from app.discovery.evaluator import (
 )
 from app.discovery.fetchers import safe_http
 from app.discovery.fetchers.board_http import fits_columns
-from app.discovery.fetchers.errors import BoardReadError
+from app.discovery.fetchers.errors import BLOCKED_MESSAGE, BoardReadError
 from app.discovery.fetchers.safe_http import PageFetchError, Resolver, UnsafeUrlError
 from app.discovery.fetchers.telegram import SourceReadError, fetch_channel_posts
 from app.discovery.fetchers.web_job import fetch_job
@@ -147,11 +147,12 @@ FORWARDED_POST_RETENTION = timedelta(days=30)
 _VISIBLE_STATES = ("new", "seen", "dismissed")
 
 # Keyed by `SourceReadError.reason` (Telegram), `BoardReadError.reason` and
-# the web listing outcomes (`unreachable`, `no_vacancies`).
+# the web listing outcomes (`unreachable`, `blocked`, `no_vacancies`).
 READ_ERROR_MESSAGES = {
     "private_or_deleted": "Channel is private or deleted",
     "not_found": "Job board not found",
     "unreachable": "Could not reach the source",
+    "blocked": BLOCKED_MESSAGE,
     "no_vacancies": (
         "No vacancies found — check the link or the 'Job link contains' field"
     ),
@@ -1470,7 +1471,7 @@ async def _list_web_source(
             reason = "unreachable"
         except PageFetchError as exc:
             logger.info("Web source %s listing failed: %s", source.id, exc.reason)
-            reason = "unreachable"
+            reason = "blocked" if exc.reason == "blocked" else "unreachable"
         except Exception:
             # E.g. a parser bug on a hostile page: a failed read of this source.
             logger.exception("Web source %s listing failed unexpectedly", source.id)
@@ -1550,7 +1551,8 @@ async def _read_job_pages(
     source was edited or deleted meanwhile, the step stops for this source.
     """
     failures_in_row = 0
-    for index, row in enumerate(await _detail_rows(session_factory, source)):
+    rows = await _detail_rows(session_factory, source)
+    for index, row in enumerate(rows):
         if index:
             await sleep(WEB_DETAIL_PAUSE_S)
         if monotonic() >= deadline:
@@ -1565,6 +1567,16 @@ async def _read_job_pages(
                 if not await _drop_detail_row(session_factory, source, row):
                     return _stop_edited(source)
                 continue
+            if exc.reason == "blocked":
+                # The site challenges automated readers: the other job pages
+                # would be challenged too. Every row due in this check counts
+                # a failed read without a request, so the backlog is released
+                # to title-only rating after WEB_DETAIL_MAX_ATTEMPTS checks.
+                logger.info("Web source %s: job pages blocked", source.id)
+                for due in rows[index:]:
+                    if not await _count_detail_failure(session_factory, source, due):
+                        return _stop_edited(source)
+                return None
             if not await _count_detail_failure(session_factory, source, row):
                 return _stop_edited(source)
             failures_in_row += 1

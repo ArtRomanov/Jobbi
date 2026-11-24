@@ -1,0 +1,220 @@
+{
+  "page": 1,
+  "nextpage": 0,
+  "pagecount": 1,
+  "documentsCount": 8,
+  "data": [
+    {
+      "position": "Product Engineer",
+      "salary": "",
+      "country": "Россия",
+      "city": null,
+      "jobFormat": {
+        "remote": true,
+        "relocate": false,
+        "parttime": false,
+        "inhouse": false
+      },
+      "log": {
+        "modify": "21 ноября",
+        "archived": null
+      },
+      "company": {
+        "type": "1",
+        "name": "Daily Challenge",
+        "logo": "260824151945.png",
+        "id": "6a8b11859dd2e9c5920083a0"
+      },
+      "id": "6b01b96bc859285a74045e0c",
+      "sortOrder": 20261121,
+      "weight": 1.5045180722891567
+    },
+    {
+      "position": "Senior Fullstack Developer (Laravel + React) / Technical Lead",
+      "salary": "",
+      "country": "Montenegro",
+      "city": null,
+      "jobFormat": {
+        "remote": true,
+        "relocate": false,
+        "parttime": false,
+        "inhouse": false
+      },
+      "log": {
+        "modify": "17 ноября",
+        "archived": null
+      },
+      "company": {
+        "type": "1",
+        "name": "Wiregate",
+        "logo": null,
+        "id": "6ad6257a408ab643a4039450"
+      },
+      "id": "6afc5735f96daab76a0a717e",
+      "sortOrder": 20261117,
+      "weight": 7.971485714285714
+    },
+    {
+      "position": "Senior Fullstack Developer (Laravel + React) / Technical Lead",
+      "salary": "",
+      "country": "Montenegro",
+      "city": null,
+      "jobFormat": {
+        "remote": true,
+        "relocate": false,
+        "parttime": false,
+        "inhouse": false
+      },
+      "log": {
+        "modify": "17 ноября",
+        "archived": null
+      },
+      "company": {
+        "type": "1",
+        "name": "Wiregate",
+        "logo": null,
+        "id": "6ad6257a408ab643a4039450"
+      },
+      "id": "6afc5735f96daab76a0a717e",
+      "sortOrder": 20261117,
+      "weight": {
+        "$date": {
+          "$numberLong": "1794922392035"
+        }
+      }
+    },
+    {
+      "position": "РAСПРEДEЛEНИE ИНФOРМAЦИИ ПO КAТEГOРИЯМ ТEГAМ ИЛИ ТAБЛИЦAМ ДЛЯ ЗAДAННЫХ ПРИЗНAК",
+      "salary": "150K — 260K ₽",
+      "country": "Russia",
+      "city": "Moscow",
+      "jobFormat": {
+        "remote": true,
+        "relocate": true,
+        "parttime": true,
+        "inhouse": true
+      },
+      "log": {
+        "modify": "15 ноября",
+        "archived": null
+      },
+      "company": {
+        "type": 1,
+        "name": "wozsu",
+        "logo": null,
+        "id": "6af8f8ae0884174f500ce948"
+      },
+      "id": "6af8f965a448e579890f2f9d",
+      "sortOrder": 20261115,
+      "weight": {
+        "$date": {
+          "$numberLong": "1794701669518"
+        }
+      }
+    },
+    {
+      "position": "Product Engineer",
+      "salary": "",
+      "country": "Россия",
+      "city": "Санкт-Петербург",
+      "jobFormat": {
+        "remote": true,
+        "relocate": false,
+        "parttime": false,
+        "inhouse": false
+      },
+      "log": {
+        "modify": "6 ноября",
+        "archived": null
+      },
+      "company": {
+        "type": 1,
+        "name": "Leetype",
+        "logo": null,
+        "id": "6aed9acf50d61ee6e80c2cf9"
+      },
+      "id": "6aedac2ef1fad185ed054bfc",
+      "sortOrder": 20261106,
+      "weight": 2.2655709342560555
+    },
+    {
+      "position": "Junior QA Engineer",
+      "salary": "100K ₽",
+      "country": "Россия",
+      "city": "Москва",
+      "jobFormat": {
+        "remote": false,
+        "relocate": false,
+        "parttime": false,
+        "inhouse": true
+      },
+      "log": {
+        "modify": "5 ноября",
+        "archived": null
+      },
+      "company": {
+        "type": "2",
+        "name": "BrainShels",
+        "logo": null,
+        "id": "6346eefccaf57c69a706e4e2"
+      },
+      "id": "6ae9ec927b4d191cdf01df41",
+      "sortOrder": 20261103,
+      "weight": 1.5036764705882353
+    },
+    {
+      "position": "Fullstack-разработчик (Python / FastAPI / React)",
+      "salary": "",
+      "country": "",
+      "city": "",
+      "jobFormat": {
+        "remote": true,
+        "relocate": false,
+        "parttime": false,
+        "inhouse": false
+      },
+      "log": {
+        "modify": "29 октября",
+        "archived": null
+      },
+      "company": {
+        "type": 1,
+        "name": "UnicornBook",
+        "logo": "260810075636.png",
+        "id": "6a795a03f3e3abb8970f5706"
+      },
+      "id": "6ae26cd4af8bde5e01019e03",
+      "sortOrder": 20261028,
+      "weight": 8.25853889943074
+    },
+    {
+      "jobFormat": {
+        "remote": true,
+        "relocate": true,
+        "parttime": true,
+        "inhouse": false
+      },
+      "log": {
+        "modify": "29 апреля 2022",
+        "archived": {
+          "$date": {
+            "$numberLong": "1650844942837"
+          }
+        }
+      },
+      "position": "Senior / Tech Lead Software Engineer",
+      "salary": "200K — 500K ₽",
+      "country": "Кипр",
+      "city": "Лимасол",
+      "company": {
+        "type": 1,
+        "name": "Vacuumlabs",
+        "logo": "220323141757.png",
+        "id": "623b01e4373bf91f5d670d73"
+      },
+      "id": "623b065bf2f5ad66cb3f39f5",
+      "sortOrder": 20220420,
+      "weight": 2.261968085106383
+    }
+  ]
+}

@@ -7,14 +7,16 @@ fetched only through the SSRF-guarded `safe_http` (via `web_scan`).
 """
 
 import asyncio
+import functools
+import weakref
 
 import httpx
 import structlog
 from bs4 import BeautifulSoup
 
 from app.discovery import web_scan
-from app.discovery.fetchers import greenhouse, lever, teamtailor
-from app.discovery.fetchers.errors import BoardReadError
+from app.discovery.fetchers import ashby, greenhouse, lever, teamtailor
+from app.discovery.fetchers.errors import BLOCKED_MESSAGE, BoardReadError
 from app.discovery.fetchers.safe_http import PageFetchError, UnsafeUrlError
 from app.services.vacancy_source_parsing import UNSAFE_LINK_MESSAGE
 
@@ -23,6 +25,9 @@ logger = structlog.get_logger()
 TELEGRAM_PREVIEW_URL = "https://t.me/s/{handle}"
 USER_AGENT = "Jobbi/1.0"
 CHECK_TIMEOUT_SECONDS = 10.0
+# Total limit of one Ashby read, which may outlive its check (see
+# `check_ashby_board`): it holds the one Ashby slot until it ends.
+ASHBY_READ_LIMIT_SECONDS = 30.0
 # A channel preview page is ~100-300 KB; the header we need is at the top.
 MAX_RESPONSE_BYTES = 1_000_000
 MAX_DISPLAY_NAME_LENGTH = 255
@@ -57,6 +62,33 @@ class BoardUnreadableError(SourceCheckError):
     """The job board does not exist (404) or could not be read in time."""
 
     message = BOARD_UNREADABLE_MESSAGE
+
+
+class SiteBlockedError(SourceCheckError):
+    """The page or board API answered with a bot-protection challenge."""
+
+    message = BLOCKED_MESSAGE
+
+
+def _board_check_error(exc: BaseException) -> SourceCheckError:
+    """The user-facing error for a failed board check."""
+    if isinstance(exc, BoardReadError) and exc.reason == "blocked":
+        return SiteBlockedError()
+    return BoardUnreadableError()
+
+
+# One Ashby live check at a time per event loop: an answer may be 32 MB and
+# its parse thread outlives the 10 s timeout, so parallel adds would stack
+# up memory. Keyed by loop because an asyncio.Semaphore binds to one loop.
+_ashby_slots: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = weakref.WeakKeyDictionary()
+
+
+def _ashby_slot() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    slot = _ashby_slots.get(loop)
+    if slot is None:
+        slot = _ashby_slots[loop] = asyncio.Semaphore(1)
+    return slot
 
 
 async def _fetch_capped(client: httpx.AsyncClient, url: str) -> tuple[int, bytes]:
@@ -141,7 +173,7 @@ async def fetch_greenhouse_board_name(token: str) -> str:
             token=token,
             error=getattr(exc, "reason", type(exc).__name__),
         )
-        raise BoardUnreadableError from exc
+        raise _board_check_error(exc) from exc
     return name[:MAX_DISPLAY_NAME_LENGTH]
 
 
@@ -169,7 +201,7 @@ async def check_lever_board(kind: str, company: str) -> str:
             company=company,
             error=getattr(exc, "reason", type(exc).__name__),
         )
-        raise BoardUnreadableError from exc
+        raise _board_check_error(exc) from exc
     return lever.display_name_from_slug(company)[:MAX_DISPLAY_NAME_LENGTH]
 
 
@@ -192,13 +224,81 @@ async def fetch_teamtailor_board_name(subdomain: str) -> str:
             subdomain=subdomain,
             error=getattr(exc, "reason", type(exc).__name__),
         )
-        raise BoardUnreadableError from exc
+        raise _board_check_error(exc) from exc
     return name[:MAX_DISPLAY_NAME_LENGTH]
+
+
+async def check_ashby_board(org: str) -> str:
+    """Check that the Ashby board is readable; return its display name.
+
+    The Posting API has no organization-name field, so the name is derived
+    from the slug (`manychat` -> "Manychat").
+
+    Checks run one at a time (``_ashby_slot``). The read runs as its own
+    task that holds the slot until it ends, including its JSON parse thread
+    (a thread cannot be cancelled): when the 10 s budget (which also covers
+    waiting for the slot) runs out, the user gets the error at once while
+    the read finishes in the background, and only then may the next check
+    start reading. So at most one Ashby parse thread runs at a time.
+
+    Raises:
+        BoardUnreadableError: unknown board (404), network error, timeout, an
+            unexpected response, or the 10 s total budget ran out.
+        SiteBlockedError: the API answered with a bot-protection challenge.
+    """
+    slot = _ashby_slot()
+    try:
+        async with asyncio.timeout(CHECK_TIMEOUT_SECONDS):
+            await slot.acquire()
+            # No await between acquiring and handing the slot to the task.
+            read = asyncio.create_task(_read_ashby_board(org))
+            read.add_done_callback(functools.partial(_release_ashby_slot, slot))
+            # `asyncio.wait` never cancels `read` (unlike awaiting it), and,
+            # unlike `asyncio.shield`, leaves no future whose late failure
+            # asyncio would log: the done callback retrieves it.
+            await asyncio.wait({read})
+        read.result()  # re-raises the read's BoardReadError / TimeoutError
+    except (TimeoutError, BoardReadError) as exc:
+        logger.warning(
+            "ashby_board_check_failed",
+            org=org,
+            error=getattr(exc, "reason", type(exc).__name__),
+        )
+        raise _board_check_error(exc) from exc
+    return ashby.display_name(org)[:MAX_DISPLAY_NAME_LENGTH]
+
+
+async def _read_ashby_board(org: str) -> None:
+    """The read behind an Ashby check, with its own total limit.
+
+    The limit (``ASHBY_READ_LIMIT_SECONDS``) keeps a slow answer from holding
+    the slot for minutes. It is far above a real read (a 14 MB board takes
+    about 1 s); should it cut a parse thread short, that thread still ends on
+    its own, bounded by the 32 MB body cap.
+
+    Raises:
+        BoardReadError: see ``ashby.check_board``.
+        TimeoutError: the read took longer than its limit.
+    """
+    async with (
+        asyncio.timeout(ASHBY_READ_LIMIT_SECONDS),
+        httpx.AsyncClient(timeout=CHECK_TIMEOUT_SECONDS) as client,
+    ):
+        await ashby.check_board(client, org)
+
+
+def _release_ashby_slot(slot: asyncio.Semaphore, read: asyncio.Task[None]) -> None:
+    """Free the slot when the read (and its parse thread) is over, and
+    retrieve a late failure: the user was already told, nothing to log."""
+    slot.release()
+    if not read.cancelled():
+        read.exception()
 
 
 # --- web pages -----------------------------------------------------------------
 
 PAGE_UNREADABLE_MESSAGE = "Could not open this page"
+SITE_BLOCKED_MESSAGE = BLOCKED_MESSAGE
 NO_VACANCIES_MESSAGE = (
     "No vacancies found on this page. Check the link or set 'Job link contains'."
 )
@@ -232,15 +332,20 @@ async def read_web_listing(
     max_pages: int,
     total_timeout_s: float,
     allow_empty_with_hint: bool = False,
+    stop_at_first_jobs: bool = False,
 ) -> web_scan.ListingRead:
     """Read the listing for the API; the result holds at least one job.
 
     With `allow_empty_with_hint` (preview only) a page 1 without jobs is still
     returned when it links to a job board, so the ATS hint can be shown.
+    With `stop_at_first_jobs` (preview of a site-adapter link) reading stops
+    after the first page that has jobs, so pages of only archived entries
+    are skipped without reading the whole listing.
 
     Raises:
         UnsafeLinkError: the URL or a redirect on page 1 breaks the SSRF guard.
         PageUnreadableError: page 1 could not be read in time.
+        SiteBlockedError: page 1 answered with a bot-protection challenge.
         NoVacanciesError: page 1 lists no jobs (and, with
             `allow_empty_with_hint`, links to no job board either).
     """
@@ -250,12 +355,15 @@ async def read_web_listing(
             job_link_contains,
             max_pages=max_pages,
             total_timeout_s=total_timeout_s,
+            stop_after=(lambda jobs: True) if stop_at_first_jobs else None,
         )
     except UnsafeUrlError as exc:
         logger.info("web_page_check_refused")
         raise UnsafeLinkError from exc
     except PageFetchError as exc:
         logger.info("web_page_check_failed", reason=exc.reason)
+        if exc.reason == "blocked":
+            raise SiteBlockedError from exc
         raise PageUnreadableError from exc
     if not listing.jobs and not (
         allow_empty_with_hint and listing.ats_hint is not None

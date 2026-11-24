@@ -29,6 +29,7 @@ from tests.discovery.web_stubs import JobPage, Sites, WebSite, resolve
 
 WATCHING_SINCE = NOW - timedelta(days=1)
 UNREACHABLE = "Could not reach the source"
+BLOCKED = "This site blocks automated readers"
 NO_VACANCIES = "No vacancies found — check the link or the 'Job link contains' field"
 
 
@@ -291,6 +292,25 @@ async def test_unreadable_first_page_marks_unavailable_after_24_hours_then_recov
     source = await get_source(db, source_id)
     assert source.failing_since is None and source.last_error is None
     assert len(await vacancies(db)) == 1
+
+
+async def test_blocked_listing_is_a_read_error_with_the_blocked_reason(
+    factory, db, site, http, ai, sleep
+) -> None:
+    user_id = await make_user(db, description=None)
+    source_id = await make_web_source(db, user_id, site)
+    site.add("a")
+    site.blocked_pages = {1}
+
+    report = await check(factory, http, ai, sleep)
+    await check(factory, http, ai, sleep, NOW + timedelta(hours=24))
+
+    assert report.sources_failed == 1
+    source = await get_source(db, source_id)
+    assert (source.failing_since, source.last_error) == (NOW, BLOCKED)
+    assert not is_unavailable(source, NOW + timedelta(hours=23))
+    assert is_unavailable(source, NOW + timedelta(hours=24))
+    assert await vacancies(db) == []
 
 
 async def test_listing_without_vacancies_is_a_read_error_until_jobs_appear(

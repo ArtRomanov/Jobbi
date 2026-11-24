@@ -179,7 +179,7 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
       <SectionHeader
         id={headingId}
         title="Sources"
-        subtitle="Telegram channels, Greenhouse, Lever or Teamtailor boards and job pages Jobbi watches for vacancies"
+        subtitle="Telegram channels, Greenhouse, Lever, Teamtailor or Ashby boards and job pages Jobbi watches for vacancies"
       />
       {/* Based on the saved description, not the unsaved draft */}
       {settings !== null && !settings.description ? (

@@ -1,6 +1,6 @@
 # Vacancy Source Entity
 
-Sources the user watches for vacancies (Telegram channels; Greenhouse, Lever and Teamtailor boards; web pages), plus the search settings and discovery status returned with them. Types are aliases of the generated OpenAPI schemas; API calls: `getVacancySources`, `previewVacancySource`, `addVacancySource`, `deleteVacancySource`, `updateVacancySource`, `updateSearchSettings`.
+Sources the user watches for vacancies (Telegram channels; Greenhouse, Lever, Teamtailor and Ashby boards; web pages), plus the search settings and discovery status returned with them. Types are aliases of the generated OpenAPI schemas; API calls: `getVacancySources`, `previewVacancySource`, `addVacancySource`, `deleteVacancySource`, `updateVacancySource`, `updateSearchSettings`.
 
 - Each source has a stable `key` ("<kind>:<handle>", same across remove/re-add); the Inbox filters by it. `removed_sources` (`{key, label}[]`) lists card sources with no live source.
 - `previewVacancySource({input, job_link_contains?, source_id?})` never saves: non-web kinds answer `{kind}` only; a web page answers `default_name`, `found_count` (first page) and ≤ 5 `titles`.

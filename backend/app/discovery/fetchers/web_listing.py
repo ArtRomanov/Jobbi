@@ -35,9 +35,10 @@ title are dropped, unless a pattern was given (then the last path segment is
 used).
 
 ATS hint: every ``<a href>``, ``<iframe src>`` and ``<script src>`` on the
-page, on any host, is run through ``parse_source_input``; Greenhouse, Lever
-and Teamtailor boards count (Greenhouse embed links such as
-``boards.greenhouse.io/embed/job_board?for=<token>`` give the ``for=`` token).
+page, on any host, is run through ``parse_source_input``; Greenhouse, Lever,
+Teamtailor and Ashby boards count (Greenhouse embed links such as
+``boards.greenhouse.io/embed/job_board?for=<token>`` give the ``for=`` token;
+Ashby embeds ``jobs.ashbyhq.com/<org>/embed`` give ``<org>``).
 The board linked most often wins (ties: the first seen). Nothing is fetched.
 
 Hostile pages (the URL is user-supplied): the work is linear in page size.
@@ -60,7 +61,7 @@ import structlog
 from bs4 import BeautifulSoup, NavigableString, PageElement, Tag
 from bs4.element import CData
 
-from app.discovery.normalize import normalize_url
+from app.discovery.normalize import normalize_url, strip_invisible
 from app.services.vacancy_source_parsing import SourceInputError, parse_source_input
 
 __all__ = ["AtsHint", "ListingJob", "ListingPage", "MAX_TITLE_CHARS", "parse_listing"]
@@ -98,8 +99,12 @@ _ATS_BOARDS: dict[str, tuple[str, str]] = {
     "lever": ("Lever", "https://jobs.lever.co/{handle}"),
     "lever_eu": ("Lever", "https://jobs.eu.lever.co/{handle}"),
     "teamtailor": ("Teamtailor", "https://{handle}.teamtailor.com"),
+    "ashby": ("Ashby", "https://jobs.ashbyhq.com/{handle}"),
 }
-_ATS_HOST_SUFFIXES = (".greenhouse.io", ".lever.co", ".teamtailor.com")
+_ATS_HOST_SUFFIXES = (".greenhouse.io", ".lever.co", ".teamtailor.com", ".ashbyhq.com")
+_ASHBY_EMBED_HOST = "jobs.ashbyhq.com"
+# `/<org>/embed`: the org must still pass the board pattern (checked below).
+_ASHBY_EMBED_PATH_RE = re.compile(r"/([A-Za-z0-9._-]{1,64})/embed/?", re.ASCII)
 _GREENHOUSE_EMBED_HOSTS = frozenset(
     {
         "boards.greenhouse.io",
@@ -135,6 +140,11 @@ class ListingPage:
     jobs: list[ListingJob] = field(default_factory=list)
     next_url: str | None = None
     ats_hint: AtsHint | None = None
+    # Site listing adapters only: entries skipped as archived or invalid on a
+    # page that had no usable job at all. Such a page has no jobs but is not
+    # the end of the listing (> 0 = keep paging). A page whose usable jobs
+    # were all filtered out by `job_link_contains` reports 0.
+    skipped_count: int = 0
 
 
 def _bare_host(host: str) -> str:
@@ -238,6 +248,13 @@ def _inner_title_tag(anchor: Tag) -> Tag | None:
     return title_like
 
 
+def _clean_title(value: str) -> str:
+    """A title without control, format or surrogate characters (a page in an
+    odd charset can carry them), whitespace collapsed, cut to the column."""
+    visible = strip_invisible(value[: MAX_TITLE_CHARS * 4])
+    return " ".join(visible.split())[:MAX_TITLE_CHARS]
+
+
 def _anchor_title(anchor: Tag) -> tuple[str, bool]:
     """The anchor's title and whether it is marked up as a title.
 
@@ -245,14 +262,13 @@ def _anchor_title(anchor: Tag) -> tuple[str, bool]:
     whole anchor text (cards often wrap company, tags and date in one link).
     """
     inner = _inner_title_tag(anchor)
-    if inner is not None and (title := _text(inner)):
-        return title[:MAX_TITLE_CHARS], True
-    title = _text(anchor)
+    if inner is not None and (title := _clean_title(_text(inner))):
+        return title, True
+    title = _clean_title(_text(anchor))
     if not title:
         for attribute in ("title", "aria-label"):
             value = anchor.get(attribute)
-            if isinstance(value, str) and value.strip():
-                title = " ".join(value.split())
+            if isinstance(value, str) and (title := _clean_title(value)):
                 break
     is_marked = any(
         isinstance(tag, Tag) and _is_title_like(tag)
@@ -349,7 +365,7 @@ def _attr(tag: Tag, name: str) -> str | None:
 
 
 def _board_of(raw: str | None, page_url: str) -> tuple[str, str] | None:
-    """``(kind, handle)`` of a Greenhouse/Lever/Teamtailor board link, or None."""
+    """``(kind, handle)`` of a Greenhouse/Lever/Teamtailor/Ashby board link, or None."""
     if not raw or not (raw := raw.strip()):
         return None
     try:
@@ -371,6 +387,11 @@ def _board_of(raw: str | None, page_url: str) -> tuple[str, str] | None:
         if not token or "/" in token or "?" in token or "#" in token:
             return None
         link = _ATS_BOARDS["greenhouse"][1].format(handle=token)
+    elif host == _ASHBY_EMBED_HOST and (
+        embed := _ASHBY_EMBED_PATH_RE.fullmatch(parts.path)
+    ):
+        # The board pattern rejects `/<org>/embed`; check the canonical link.
+        link = _ATS_BOARDS["ashby"][1].format(handle=embed[1])
     else:
         # The fragment is page-local; board patterns do not accept it.
         link = parts._replace(fragment="").geturl()
@@ -477,13 +498,14 @@ def _parse_listing(
             found.setdefault(url, (title, is_marked))
 
     jobs: list[ListingJob] = []
-    for url, (title, _) in found.items():
+    for url, (raw_title, _) in found.items():
+        title = _clean_title(raw_title)
         if not title:
             if pattern is None:
                 continue
             segments = _segments(url)
-            title = (segments[-1] if segments else url)[:MAX_TITLE_CHARS]
-        jobs.append(ListingJob(url=url, title=title))
+            title = _clean_title(segments[-1] if segments else url) or url
+        jobs.append(ListingJob(url=url, title=title[:MAX_TITLE_CHARS]))
 
     next_url: str | None = None
     ats_hint: AtsHint | None = None

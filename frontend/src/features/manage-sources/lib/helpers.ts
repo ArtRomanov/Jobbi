@@ -111,11 +111,12 @@ const BOARD_LINK_TEMPLATES: Record<Exclude<VacancySourceKind, "telegram" | "web"
   lever: "https://jobs.lever.co/{handle}",
   lever_eu: "https://jobs.eu.lever.co/{handle}",
   teamtailor: "https://{handle}.teamtailor.com",
+  ashby: "https://jobs.ashbyhq.com/{handle}",
 };
 
 /**
  * The link the Edit dialog starts with: the saved URL of a web page,
- * `@handle` for Telegram, the board link for Greenhouse / Lever / Teamtailor.
+ * `@handle` for Telegram, the board link for Greenhouse / Lever / Teamtailor / Ashby.
  * The handle comes from `key` ("<kind>:<handle>").
  */
 export function getSourceLink(source: Pick<VacancySource, "kind" | "key" | "url">): string {

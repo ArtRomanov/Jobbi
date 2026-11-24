@@ -17,17 +17,21 @@ Supported inputs:
   `lever_eu` (Lever keeps a company's data in one region).
 - Teamtailor: `<sub>.teamtailor.com[/any path]` -> `teamtailor`, handle `<sub>`;
   only `https://<sub>.teamtailor.com/jobs.rss` is ever requested.
+- Ashby: `jobs.ashbyhq.com/<org>[/<job uuid>[/application]]` -> `ashby`,
+  handle `<org>` lowercased; only
+  `https://api.ashbyhq.com/posting-api/job-board/<org>` is ever requested.
 - Web page: any other `http(s)://host/...` link, or `host.tld/...` without a
   scheme (https is assumed) -> `web`, with the normalized URL in `url` and an
   empty handle (the source id becomes the handle when it is saved).
 
-Order: Telegram -> Greenhouse/Lever -> Teamtailor -> web. Error texts:
+Order: Telegram -> Greenhouse/Lever -> Teamtailor -> Ashby -> web. Error texts:
 - a private invite link (`t.me/+HASH`, `t.me/joinchat/HASH`) ->
   PRIVATE_INVITE_MESSAGE (only public channels can be read);
 - a scheme other than http/https (`file:`, `ftp:`, `javascript:`, ...), a
   `user:pass@` part, an invalid port or an over-long link -> UNSAFE_LINK_MESSAGE;
-- the parsed host is, or ends with, `.greenhouse.io`, `.lever.co` or
-  `.teamtailor.com` but no board pattern matched -> BOARD_INVALID_INPUT_MESSAGE
+- the parsed host is, or ends with, `.greenhouse.io`, `.lever.co`,
+  `.teamtailor.com` or `.ashbyhq.com` but no board pattern matched ->
+  BOARD_INVALID_INPUT_MESSAGE
   (a host check, not a substring search, so `clever.com/careers` is a web page);
 - the host is Telegram's (`t.me`, `telegram.me`) but no channel pattern matched,
   or the input is neither a channel name nor a link -> INVALID_INPUT_MESSAGE
@@ -49,7 +53,9 @@ MAX_INPUT_LENGTH = 2048
 MAX_HANDLE_INPUT_LENGTH = 200
 
 INVALID_INPUT_MESSAGE = "Enter a Telegram channel as @name or a t.me/name link"
-BOARD_INVALID_INPUT_MESSAGE = "Not a Greenhouse, Lever or Teamtailor job board link"
+BOARD_INVALID_INPUT_MESSAGE = (
+    "Not a Greenhouse, Lever, Teamtailor or Ashby job board link"
+)
 UNSAFE_LINK_MESSAGE = "This link can't be used"
 PRIVATE_INVITE_MESSAGE = (
     "Private Telegram invite links are not supported. "
@@ -115,7 +121,27 @@ _TEAMTAILOR_LINK = re.compile(
 # Teamtailor's own service hosts, not company boards.
 _TEAMTAILOR_RESERVED = frozenset({"www", "app", "api"})
 
-_BOARD_HOST_SUFFIXES = (".greenhouse.io", ".lever.co", ".teamtailor.com")
+# `jobs.ashbyhq.com/<org>`: exact host, then the organization slug (1-64
+# chars, letter or digit at both ends; `..` refused in `_parse_ashby`), an
+# optional job UUID with an optional `/application`, an optional trailing
+# slash and a simple query. With fullmatch there is no room for userinfo,
+# ports, other subdomains or `jobs.ashbyhq.com.evil.com`.
+_ASHBY_LINK = re.compile(
+    r"(?:https?://)?jobs\.ashbyhq\.com/"
+    r"(?P<handle>[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?)"
+    rf"(?:/{_UUID}(?:/application)?)?/?"
+    rf"{_SIMPLE_QUERY}",
+    re.IGNORECASE | re.ASCII,
+)
+# Ashby paths that are not organization slugs.
+_ASHBY_RESERVED = frozenset({"embed", "api"})
+
+_BOARD_HOST_SUFFIXES = (
+    ".greenhouse.io",
+    ".lever.co",
+    ".teamtailor.com",
+    ".ashbyhq.com",
+)
 _TELEGRAM_HOST_SUFFIXES = (".t.me", ".telegram.me")
 _HAS_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://")
 # `scheme:` at the start. `host.tld:8080` matches too; `_url_scheme` tells
@@ -184,11 +210,24 @@ def _parse_teamtailor(text: str) -> ParsedSource | None:
     return ParsedSource(kind="teamtailor", handle=handle)
 
 
+def _parse_ashby(text: str) -> ParsedSource | None:
+    # The board page uses fragments for in-page anchors; they never reach
+    # the API request, so `#...` is dropped before the strict match.
+    match = _ASHBY_LINK.fullmatch(text.partition("#")[0])
+    if match is None:
+        return None
+    handle = match["handle"].lower()
+    if ".." in handle or handle in _ASHBY_RESERVED:
+        return None
+    return ParsedSource(kind="ashby", handle=handle)
+
+
 _PARSERS: tuple[Callable[[str], ParsedSource | None], ...] = (
     _parse_telegram,
     _parse_greenhouse,
     _parse_lever,
     _parse_teamtailor,
+    _parse_ashby,
 )
 
 
