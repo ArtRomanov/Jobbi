@@ -14,6 +14,7 @@ from app.discovery.evaluator import (
     MAX_POST_CHARS,
     MAX_REASON_CHARS,
     EvaluationFormatError,
+    EvaluationModelNotFoundError,
     EvaluationRateLimitedError,
     EvaluationTransportError,
     Fit,
@@ -840,7 +841,7 @@ async def test_evaluate_batch_bad_output(content: str | None) -> None:
         (status_error(groq.InternalServerError, 503, None), EvaluationTransportError),
         (
             status_error(groq.NotFoundError, 404, "model_not_found"),
-            EvaluationTransportError,
+            EvaluationModelNotFoundError,
         ),
         (
             status_error(groq.AuthenticationError, 401, "invalid_api_key"),
@@ -887,7 +888,9 @@ def test_model_not_found_with_wrapped_body() -> None:
 
     mapped = _map_status_error(exc)
 
-    assert type(mapped) is EvaluationTransportError
+    # A transport error (posts wait), typed so the fallback can be dropped.
+    assert type(mapped) is EvaluationModelNotFoundError
+    assert isinstance(mapped, EvaluationTransportError)
     assert "model_not_found" in str(mapped)
 
 

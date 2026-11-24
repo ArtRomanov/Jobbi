@@ -208,8 +208,10 @@ async def run_worker(stop: asyncio.Event | None = None) -> None:
         scheduler = build_scheduler(runner, http_client, groq_client, config, bot)
         scheduler.start()
         logger.info(
-            "Discovery worker started (model %s, daily limit %d, alerts %s)",
+            "Discovery worker started (model %s, fallback %s, daily limit %d, "
+            "alerts %s)",
             config.model,
+            config.models.fallback or "off",
             config.daily_limit,
             "on" if bot is not None else "off",
         )

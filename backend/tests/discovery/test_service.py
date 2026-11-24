@@ -191,6 +191,7 @@ class FakeGroq:
     def __init__(self, factory: TrackingFactory | None = None) -> None:
         self.factory = factory
         self.calls: list[list[str]] = []  # post texts per call
+        self.models: list[str] = []  # model per call
         self.errors: list[Exception] = []
         self.violations = 0
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
@@ -200,6 +201,7 @@ class FakeGroq:
             self.violations += 1
         posts = _sent_posts(kwargs["messages"][1]["content"])
         self.calls.append([text for _, text in posts])
+        self.models.append(kwargs["model"])
         if self.errors:
             raise self.errors.pop(0)
         if any("GARBAGE" in text for _, text in posts):
@@ -370,6 +372,44 @@ async def get_settings_row(
 
 
 class TestInitialScan:
+    async def test_telegram_first_scan_reads_only_the_last_3_days(
+        self, factory, db, channel, http, ai, sleep
+    ) -> None:
+        user_id = await make_user(db, description=None)
+        await make_source(db, user_id)
+        channel.add(10, "MATCH fresh", NOW - timedelta(days=2, hours=23))
+        channel.add(9, "MATCH four days old", NOW - timedelta(days=4))
+
+        await run_initial_scans(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep)
+
+        assert [r.external_key for r in await vacancies(db)] == [f"tg:{CHANNEL}/10"]
+
+    async def test_telegram_first_scan_reads_at_most_4_pages(
+        self, factory, db, channel, http, ai, sleep
+    ) -> None:
+        user_id = await make_user(db, description=None)
+        await make_source(db, user_id)
+        for post_id in range(1, 201):  # 10 pages of 20, all within the window
+            channel.add(post_id, f"MATCH {post_id}", NOW - timedelta(hours=1))
+
+        await run_initial_scans(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep)
+
+        assert channel.requests == 4
+        assert len(await vacancies(db)) == 80
+
+    async def test_hourly_read_keeps_the_7_day_window_and_10_pages(
+        self, factory, db, channel, http, ai, sleep
+    ) -> None:
+        user_id = await make_user(db, description=None)
+        await make_source(db, user_id, scanned=True)
+        for post_id in range(1, 201):  # 10 pages of 20, none known yet
+            channel.add(post_id, f"MATCH {post_id}", NOW - timedelta(days=5))
+
+        await check_all(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep)
+
+        assert channel.requests == 10
+        assert len(await vacancies(db)) == 200
+
     async def test_stores_pending_posts_with_seen_keys_and_card_source(
         self, factory, db, channel, http, ai, sleep
     ) -> None:
@@ -1280,6 +1320,46 @@ class TestAlerts:
 
         assert [card.state for card in await vacancies(db)] == ["new", "new"]
         assert bot.sent == []
+
+    @pytest.mark.parametrize(
+        "post_ages",
+        [
+            # A quiet channel: the newest page reaches past the 3-day window.
+            [timedelta(hours=1), timedelta(days=4)],
+            # No post in the last 3 days at all.
+            [timedelta(days=4), timedelta(days=5)],
+        ],
+    )
+    async def test_posts_older_than_the_first_scan_window_are_never_alerted(
+        self, factory, db, channel, http, ai, sleep, bot, post_ages
+    ) -> None:
+        user_id = await make_user(db)
+        await link_telegram(db, user_id)
+        await make_source(db, user_id)
+        for post_id, age in enumerate(post_ages, start=10):
+            channel.add(post_id, "MATCH HIGH", NOW - age)
+        await run_initial_scans(
+            factory, http, ai, at(NOW), config=CONFIG, sleep=sleep, bot=bot
+        )
+
+        await check_all(
+            factory,
+            http,
+            ai,
+            at(NOW + timedelta(hours=1)),
+            config=CONFIG,
+            sleep=sleep,
+            bot=bot,
+        )
+
+        assert bot.sent == []
+        old_keys = {
+            f"tg:{CHANNEL}/{post_id}"
+            for post_id, age in enumerate(post_ages, start=10)
+            if age > timedelta(days=3)
+        }
+        assert old_keys <= set(await seen_keys(db))
+        assert not old_keys & {card.external_key for card in await vacancies(db)}
 
     async def test_initial_scan_with_description_never_alerts(
         self, factory, db, channel, http, ai, sleep, bot
