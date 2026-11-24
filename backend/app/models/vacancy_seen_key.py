@@ -50,5 +50,9 @@ class VacancySeenKey(Base):
         Boolean, nullable=False, default=False, server_default=false()
     )
 
+    # Skipped by the pre-AI keyword filter (never sent to the AI); counted by
+    # the "skipped by the filter" line in the Sources panel.
+    filtered_at: Mapped[datetime | None] = mapped_column()
+
     def __repr__(self) -> str:
         return f"<VacancySeenKey {self.external_key} user={self.user_id}>"
