@@ -196,6 +196,12 @@ DIGITAL_NOMADS_DIGEST = _lines(
     "Hire an assistant — turnkey remote job search.",
 )
 
+LOCATION_MUST_SEARCH = (
+    "Senior / Middle Frontend developer or Full-stack developer, React, Nest js, "
+    "Node js, Next js, must be possible to work from Yerevan: on-site/hybrid in "
+    "Yerevan, or remote not limited to other countries."
+)
+
 SCENARIOS = [
     Scenario(
         description="Senior frontend, React, remote, from 4000 €",
@@ -326,6 +332,42 @@ SCENARIOS = [
                 DIGITAL_NOMADS_DIGEST,
                 check=digest_items_within(23, 24),
                 expected="one post, or items only in L23-24",
+            ),
+        ],
+    ),
+    # The seeker's work-location hard requirement (2026-11-24): a job tied to
+    # another country is not shown; an unrestricted remote job or one that does
+    # not say where is shown.
+    Scenario(
+        description=LOCATION_MUST_SEARCH,
+        profile={},
+        cases=[
+            Case(
+                "Вакансия Frontend Vue-разработчик. Удалённо из РФ. Lamoda ищет двух "
+                "разработчиков в B2B-команду Lamoda Seller.",
+                False,
+            ),
+            Case(
+                "Senior React developer, remote within the EU only, "
+                "B2B contract, TypeScript, Next.js.",
+                False,
+            ),
+            Case(
+                "Middle Frontend developer (React) at a fintech startup. "
+                "Office in Dubai, 5 days a week. Visa provided.",
+                False,
+            ),
+            Case(
+                "Senior Frontend developer, React + Next.js. Fully remote, work from "
+                "any country. Company based in the UAE.",
+                check=lambda v: not v.is_digest and v.match,
+                expected="shown",
+            ),
+            Case(
+                "Ищем Middle React-разработчика в продуктовую команду. Стек: React, "
+                "TypeScript, Node.js. Зарплата по итогам собеседования.",
+                check=lambda v: not v.is_digest and v.match,
+                expected="shown",
             ),
         ],
     ),
