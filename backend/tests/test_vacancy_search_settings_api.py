@@ -9,8 +9,6 @@ URL = "/api/v1/vacancy-search-settings"
 SOURCES_URL = "/api/v1/vacancy-sources"
 
 DESCRIPTION_TOO_LONG = "Description can be up to 500 characters"
-TOO_MANY_TERMS = "You can add up to 50 exclude words"
-BAD_TERM = "Exclude words must be 1–64 characters"
 
 
 def _auth(token: str) -> dict[str, str]:
@@ -53,11 +51,10 @@ async def test_first_patch_creates_row(
     resp = await _patch(client, token, {"description": "Senior frontend, remote"})
 
     assert resp.status_code == 200
-    assert resp.json() == {"description": "Senior frontend, remote", "exclude": []}
+    assert resp.json() == {"description": "Senior frontend, remote"}
     row = await _stored_row(db_session, user_id)
     assert row is not None
     assert row.description == "Senior frontend, remote"
-    assert row.exclude_terms == []
 
 
 async def test_empty_body_creates_default_row(
@@ -66,61 +63,21 @@ async def test_empty_body_creates_default_row(
     resp = await _patch(client, token, {})
 
     assert resp.status_code == 200
-    assert resp.json() == {"description": None, "exclude": []}
+    assert resp.json() == {"description": None}
     assert await _stored_row(db_session, user_id) is not None
-
-
-async def test_only_description_keeps_exclude(
-    client: httpx.AsyncClient, token: str
-) -> None:
-    await _patch(client, token, {"description": "Old", "exclude": ["java"]})
-
-    resp = await _patch(client, token, {"description": "New"})
-
-    assert resp.status_code == 200
-    assert resp.json() == {"description": "New", "exclude": ["java"]}
-
-
-async def test_only_exclude_keeps_description(
-    client: httpx.AsyncClient, token: str
-) -> None:
-    await _patch(client, token, {"description": "Frontend", "exclude": ["java"]})
-
-    resp = await _patch(client, token, {"exclude": ["php", "office only"]})
-
-    assert resp.status_code == 200
-    assert resp.json() == {"description": "Frontend", "exclude": ["php", "office only"]}
-
-
-async def test_both_fields_updated(client: httpx.AsyncClient, token: str) -> None:
-    await _patch(client, token, {"description": "Old", "exclude": ["java"]})
-
-    resp = await _patch(client, token, {"description": "New", "exclude": ["php"]})
-
-    assert resp.json() == {"description": "New", "exclude": ["php"]}
 
 
 async def test_null_description_turns_search_off(
     client: httpx.AsyncClient, token: str, user_id: str, db_session: AsyncSession
 ) -> None:
-    await _patch(client, token, {"description": "Frontend", "exclude": ["java"]})
+    await _patch(client, token, {"description": "Frontend"})
 
     resp = await _patch(client, token, {"description": None})
 
-    assert resp.json() == {"description": None, "exclude": ["java"]}
+    assert resp.json() == {"description": None}
     row = await _stored_row(db_session, user_id)
     assert row is not None
     assert row.description is None
-
-
-async def test_empty_exclude_list_clears_terms(
-    client: httpx.AsyncClient, token: str
-) -> None:
-    await _patch(client, token, {"description": "Frontend", "exclude": ["java"]})
-
-    resp = await _patch(client, token, {"exclude": []})
-
-    assert resp.json() == {"description": "Frontend", "exclude": []}
 
 
 @pytest.mark.parametrize("blank", ["", "   ", "\n\t  "])
@@ -173,110 +130,38 @@ async def test_description_of_501_chars_is_rejected(
 async def test_rejected_patch_keeps_previous_values(
     client: httpx.AsyncClient, token: str
 ) -> None:
-    await _patch(client, token, {"description": "Frontend", "exclude": ["java"]})
+    await _patch(client, token, {"description": "Frontend"})
 
-    resp = await _patch(client, token, {"description": "a" * 501, "exclude": ["php"]})
-
-    assert resp.status_code == 400
-    assert await _get_settings(client, token) == {
-        "description": "Frontend",
-        "exclude": ["java"],
-    }
-
-
-# --- exclude limits ----------------------------------------------------------
-
-
-async def test_50_exclude_terms_are_accepted(
-    client: httpx.AsyncClient, token: str
-) -> None:
-    terms = [f"term{i}" for i in range(50)]
-
-    resp = await _patch(client, token, {"exclude": terms})
-
-    assert resp.status_code == 200
-    assert resp.json()["exclude"] == terms
-
-
-async def test_51_exclude_terms_are_rejected(
-    client: httpx.AsyncClient, token: str
-) -> None:
-    resp = await _patch(client, token, {"exclude": [f"term{i}" for i in range(51)]})
+    resp = await _patch(client, token, {"description": "a" * 501})
 
     assert resp.status_code == 400
-    assert resp.json() == {"detail": TOO_MANY_TERMS}
+    assert await _get_settings(client, token) == {"description": "Frontend"}
 
 
-async def test_limit_counts_terms_after_dedupe(
+# --- exclude words are gone (backlog #12) -------------------------------------
+
+
+async def test_exclude_from_an_old_client_is_ignored(
     client: httpx.AsyncClient, token: str
 ) -> None:
-    terms = [f"term{i}" for i in range(50)] + ["TERM0"]
-
-    resp = await _patch(client, token, {"exclude": terms})
+    resp = await _patch(
+        client, token, {"description": "Frontend", "exclude": ["java", "x" * 500]}
+    )
 
     assert resp.status_code == 200
-    assert len(resp.json()["exclude"]) == 50
+    assert resp.json() == {"description": "Frontend"}
+    assert await _get_settings(client, token) == {"description": "Frontend"}
 
 
-async def test_term_of_64_chars_is_accepted(
+async def test_exclude_only_body_changes_nothing(
     client: httpx.AsyncClient, token: str
 ) -> None:
-    resp = await _patch(client, token, {"exclude": ["a" * 64]})
+    await _patch(client, token, {"description": "Frontend"})
 
-    assert resp.status_code == 200
-    assert resp.json()["exclude"] == ["a" * 64]
-
-
-async def test_term_length_is_measured_after_trimming(
-    client: httpx.AsyncClient, token: str
-) -> None:
-    resp = await _patch(client, token, {"exclude": ["  " + "a" * 64 + "  "]})
-
-    assert resp.status_code == 200
-    assert resp.json()["exclude"] == ["a" * 64]
-
-
-@pytest.mark.parametrize("bad_term", ["a" * 65, "", "   ", "\t\n"])
-async def test_bad_term_is_rejected(
-    client: httpx.AsyncClient, token: str, bad_term: str
-) -> None:
-    resp = await _patch(client, token, {"exclude": ["java", bad_term]})
-
-    assert resp.status_code == 400
-    assert resp.json() == {"detail": BAD_TERM}
-
-
-async def test_wrong_type_is_validation_error(
-    client: httpx.AsyncClient, token: str
-) -> None:
     resp = await _patch(client, token, {"exclude": "java"})
 
-    assert resp.status_code == 422
-
-
-# --- normalisation -----------------------------------------------------------
-
-
-async def test_terms_are_normalised(client: httpx.AsyncClient, token: str) -> None:
-    resp = await _patch(
-        client,
-        token,
-        {"exclude": ["  Java ", "OFFICE   only", "java", "office\tonly", "PHP"]},
-    )
-
     assert resp.status_code == 200
-    assert resp.json()["exclude"] == ["java", "office only", "php"]
-
-
-async def test_cyrillic_terms_are_kept_and_lowercased(
-    client: httpx.AsyncClient, token: str
-) -> None:
-    resp = await _patch(
-        client, token, {"exclude": ["Офис", "ТОЛЬКО  офис", "офис", "Ёлка"]}
-    )
-
-    assert resp.status_code == 200
-    assert resp.json()["exclude"] == ["офис", "только офис", "ёлка"]
+    assert resp.json() == {"description": "Frontend"}
 
 
 # --- reading back, isolation, auth ------------------------------------------
@@ -285,32 +170,23 @@ async def test_cyrillic_terms_are_kept_and_lowercased(
 async def test_get_sources_reflects_patch(
     client: httpx.AsyncClient, token: str
 ) -> None:
-    await _patch(client, token, {"description": " Senior React ", "exclude": ["Java"]})
+    await _patch(client, token, {"description": " Senior React "})
 
-    assert await _get_settings(client, token) == {
-        "description": "Senior React",
-        "exclude": ["java"],
-    }
+    assert await _get_settings(client, token) == {"description": "Senior React"}
 
 
 async def test_settings_are_per_user(
     client: httpx.AsyncClient, token: str, other_registered_user: dict
 ) -> None:
     other_token = other_registered_user["access_token"]
-    await _patch(client, token, {"description": "Mine", "exclude": ["java"]})
+    await _patch(client, token, {"description": "Mine"})
 
-    assert await _get_settings(client, other_token) == {
-        "description": None,
-        "exclude": [],
-    }
+    assert await _get_settings(client, other_token) == {"description": None}
 
-    resp = await _patch(client, other_token, {"exclude": ["php"]})
+    resp = await _patch(client, other_token, {"description": "Theirs"})
 
-    assert resp.json() == {"description": None, "exclude": ["php"]}
-    assert await _get_settings(client, token) == {
-        "description": "Mine",
-        "exclude": ["java"],
-    }
+    assert resp.json() == {"description": "Theirs"}
+    assert await _get_settings(client, token) == {"description": "Mine"}
 
 
 async def test_requires_auth(client: httpx.AsyncClient) -> None:

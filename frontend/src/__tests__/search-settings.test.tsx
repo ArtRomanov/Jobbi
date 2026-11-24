@@ -10,10 +10,10 @@ const SOURCES_URL = "*/api/v1/vacancy-sources";
 const SETTINGS_URL = "*/api/v1/vacancy-search-settings";
 const HINT = "Describe what you're looking for to start finding vacancies.";
 
-function serveSettings(description: string | null, exclude: string[]): void {
+function serveSettings(description: string | null): void {
   server.use(
     http.get(SOURCES_URL, () =>
-      HttpResponse.json({ ...mockVacancySourcesEmpty, settings: { description, exclude } }),
+      HttpResponse.json({ ...mockVacancySourcesEmpty, settings: { description } }),
     ),
   );
 }
@@ -37,7 +37,7 @@ async function renderLoaded(): Promise<void> {
 
 describe("Search settings in the Sources panel", () => {
   it("keeps the form disabled until settings load, then fills it", async () => {
-    serveSettings("Senior frontend, React", ["java", "office only"]);
+    serveSettings("Senior frontend, React");
     renderWithProviders(<InboxPage />);
 
     expect(getDescription()).toBeDisabled();
@@ -51,13 +51,13 @@ describe("Search settings in the Sources panel", () => {
     expect(screen.queryByText(HINT)).not.toBeInTheDocument();
   });
 
-  it("has no exclude-words block and never sends saved exclude words (spec 012)", async () => {
-    serveSettings("Frontend", ["java", "office only"]);
+  it("has only the description field and sends only the description", async () => {
+    serveSettings("Frontend");
     const bodies: unknown[] = [];
     server.use(
       http.patch(SETTINGS_URL, async ({ request }) => {
         bodies.push(await request.json());
-        return HttpResponse.json({ description: "Frontend React", exclude: ["java", "office only"] });
+        return HttpResponse.json({ description: "Frontend React" });
       }),
     );
     const user = userEvent.setup();
@@ -67,7 +67,6 @@ describe("Search settings in the Sources panel", () => {
     expect(within(section).getAllByRole("textbox")).toEqual([getDescription()]);
     expect(screen.queryByRole("textbox", { name: "Exclude words" })).not.toBeInTheDocument();
     expect(screen.queryByText(/exclude/i)).not.toBeInTheDocument();
-    expect(within(section).queryByText("java")).not.toBeInTheDocument();
 
     await user.type(getDescription(), " React");
     await user.click(getSave());
@@ -89,7 +88,7 @@ describe("Search settings in the Sources panel", () => {
   });
 
   it("stops typing at 500 characters", async () => {
-    serveSettings("a".repeat(498), []);
+    serveSettings("a".repeat(498));
     const user = userEvent.setup();
     await renderLoaded();
 
@@ -115,7 +114,7 @@ describe("Search settings in the Sources panel", () => {
     server.use(
       http.patch(SETTINGS_URL, async ({ request }) => {
         bodies.push(await request.json());
-        return HttpResponse.json({ description: "Senior React", exclude: ["java", "office only"] });
+        return HttpResponse.json({ description: "Senior React" });
       }),
     );
     const user = userEvent.setup();
@@ -132,7 +131,7 @@ describe("Search settings in the Sources panel", () => {
   });
 
   it("sends a blank description as null and uses the default normalizing handler", async () => {
-    serveSettings("Old", ["php"]);
+    serveSettings("Old");
     const bodies: unknown[] = [];
     server.events.on("request:start", async ({ request }) => {
       if (request.method === "PATCH") bodies.push(await request.clone().json());
@@ -195,7 +194,7 @@ describe("Search settings in the Sources panel", () => {
     server.use(
       http.patch(SETTINGS_URL, async () => {
         await gate;
-        return HttpResponse.json({ description: "Frontend", exclude: [] });
+        return HttpResponse.json({ description: "Frontend" });
       }),
     );
     const user = userEvent.setup();

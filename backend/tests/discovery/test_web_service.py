@@ -450,23 +450,6 @@ async def test_job_page_retried_and_rated_by_title_after_three_failures(
     assert card.title == "Frontend Developer"
 
 
-async def test_exclude_words_are_not_applied_to_the_job_text(
-    factory, db, site, http, ai, sleep
-) -> None:
-    # Spec 012 switched exclude words off: stored words no longer drop cards.
-    user_id = await make_user(db, exclude=["php"])
-    await make_web_source(db, user_id, site)
-    site.add("a", "MATCH, our stack is PHP and Laravel")
-    site.add("b", "MATCH React role")
-
-    await check(factory, http, ai, sleep)
-
-    assert sorted(card.url.rsplit("/", 1)[1] for card in await vacancies(db)) == [
-        "a",
-        "b",
-    ]
-
-
 @pytest.mark.parametrize("status", [404, 410])
 async def test_gone_job_page_drops_the_row_without_an_ai_call(
     factory, db, site, http, ai, sleep, status: int

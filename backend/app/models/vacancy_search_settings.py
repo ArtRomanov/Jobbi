@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import JSON, Date, ForeignKey, String, func, text
+from sqlalchemy import Date, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -22,10 +22,6 @@ class VacancySearchSettings(Base):
     )
     # NULL means search is off.
     description: Mapped[str | None] = mapped_column(String(500))
-    # Lowercased terms, at most 50.
-    exclude_terms: Mapped[list[str]] = mapped_column(
-        JSON, nullable=False, default=list, server_default=text("'[]'")
-    )
     ai_failing_since: Mapped[datetime | None] = mapped_column()
     limit_reached_on: Mapped[date | None] = mapped_column(Date)
     updated_at: Mapped[datetime] = mapped_column(

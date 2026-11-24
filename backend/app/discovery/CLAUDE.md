@@ -1,6 +1,6 @@
 # Discovery worker (`python -m app.discovery`)
 
-Hourly check of vacancy sources → Groq evaluation (exclude words are not applied since spec 012) → Inbox → Telegram alerts. Run one instance only.
+Hourly check of vacancy sources → Groq evaluation → Inbox → Telegram alerts. Run one instance only.
 
 - **Source kinds and fetchers** (`fetchers/`): `telegram` (`telegram.py`); `greenhouse` / `lever` / `lever_eu` / `teamtailor` / `ashby` via `board_scan.py` (`greenhouse.py`, `lever.py`, `teamtailor.py` — RSS through `lxml` with entities and network off, `ashby.py` — Posting API JSON); `web` via `web_scan.py` (`web_listing.py` parses a listing, `web_job.py` reads one job page).
 - **Site listing adapters** (`fetchers/site_listing.py`): for a known site whose listing is a JS shell (now: geekjob.ru search links with a filter), `read_listing` reads the site's JSON endpoint via `safe_http.fetch_json` instead of the HTML; same page limit and stop rules, everything after the listing unchanged. Add a site = add a matcher to `_MATCHERS`; its parser must never raise.

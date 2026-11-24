@@ -13,7 +13,7 @@ export type VacancySourceKind = VacancySource["kind"];
 /** A source of existing cards that matches no live source: `{key, label}` (shown "(removed)"). */
 export type RemovedVacancySource = VacancySourcesResponse["removed_sources"][number];
 
-/** Search description and exclude words (`exclude` is not shown in the UI since spec 012). */
+/** The search description (null: search is off). */
 export type VacancySearchSettings = components["schemas"]["VacancySearchSettingsRead"];
 
 /** Body of PATCH /api/v1/vacancy-search-settings: a field left out stays unchanged. */

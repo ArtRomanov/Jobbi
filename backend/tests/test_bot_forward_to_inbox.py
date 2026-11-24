@@ -108,7 +108,7 @@ async def linked_user(db_session: AsyncSession, make_user: MakeUser) -> str:
 
 
 async def _set_description(db: AsyncSession, user_id: str, text: str) -> None:
-    db.add(VacancySearchSettings(user_id=user_id, description=text, exclude_terms=[]))
+    db.add(VacancySearchSettings(user_id=user_id, description=text))
     await db.commit()
 
 

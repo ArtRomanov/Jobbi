@@ -337,7 +337,7 @@ function mockPreviewKind(input: string): "telegram" | "greenhouse" | "web" {
 export const mockVacancySourcesEmpty = {
   sources: [],
   removed_sources: [] as Array<{ key: string; label: string }>,
-  settings: { description: null, exclude: [] },
+  settings: { description: null },
   status: { ai_unavailable: false, limit_reached: false, waiting_count: 0 },
 };
 
@@ -828,15 +828,11 @@ export const handlers = [
   }),
 
   // Echoes the update normalized like the backend: trimmed, empty description →
-  // null, exclude terms trimmed + lowercased + deduplicated (no limit checks).
-  // The UI no longer sends `exclude` (hidden since spec 012), so it echoes [].
+  // null (no limit checks).
   http.patch(`${BASE_URL}/api/v1/vacancy-search-settings`, async ({ request }) => {
-    const body = (await request.json()) as { description?: string | null; exclude?: string[] };
+    const body = (await request.json()) as { description?: string | null };
     const description = body.description?.trim() || null;
-    const exclude = [
-      ...new Set((body.exclude ?? []).map((term) => term.trim().toLowerCase()).filter(Boolean)),
-    ];
-    return HttpResponse.json({ description, exclude });
+    return HttpResponse.json({ description });
   }),
 
   // -------------------------------------------------------------------------

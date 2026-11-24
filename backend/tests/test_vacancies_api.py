@@ -248,7 +248,6 @@ class TestSourcesStatus:
             VacancySearchSettings(
                 user_id=user_id,
                 description="Frontend",
-                exclude_terms=[],
                 ai_failing_since=_now_naive() - timedelta(hours=2),
                 limit_reached_on=today_utc,
             )
@@ -270,7 +269,6 @@ class TestSourcesStatus:
             VacancySearchSettings(
                 user_id=user_id,
                 description="Frontend",
-                exclude_terms=[],
                 ai_failing_since=_now_naive() - timedelta(minutes=30),
                 limit_reached_on=date(2020, 1, 1),
             )
@@ -291,7 +289,6 @@ class TestSourcesStatus:
             VacancySearchSettings(
                 user_id=user_id,
                 description="Frontend",
-                exclude_terms=[],
                 limit_reached_on=local_today,
             )
         )
