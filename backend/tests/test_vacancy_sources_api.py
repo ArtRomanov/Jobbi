@@ -209,7 +209,8 @@ async def test_list_counts_posts_waiting_for_ai_per_source(
     db_session.add_all(
         [
             _vacancy(user_id, busy.id, 1),
-            # A web row whose job page is not read yet still waits.
+            # A web row whose job page is not read yet waits for the page
+            # reader, not the AI: not counted (same rule as the banner).
             _vacancy(user_id, busy.id, 2, needs_detail=True),
             _vacancy(user_id, busy.id, 3, state="new"),
             _vacancy(user_id, idle.id, 4, state="dismissed"),
@@ -223,7 +224,7 @@ async def test_list_counts_posts_waiting_for_ai_per_source(
     resp = await client.get(URL, headers=_auth(token))
 
     counts = {s["display_name"]: s["pending_count"] for s in resp.json()["sources"]}
-    assert counts == {"@busy": 2, "@idle": 0}
+    assert counts == {"@busy": 1, "@idle": 0}
 
 
 async def test_patch_returns_the_pending_count(

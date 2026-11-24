@@ -147,9 +147,10 @@ async def pending_counts(
 ) -> dict[str, int]:
     """Pending posts per source ("Waiting for AI: N"), one grouped COUNT.
 
-    Every pending row counts, `needs_detail` web rows too: they are still
-    waiting to be rated (the job page read comes first). Forwarded posts have
-    no source and are not counted. Sources with nothing pending are absent.
+    Same rule as the Inbox banner (`vacancy_service._count_waiting`): web rows
+    whose job page is not read yet (`needs_detail`) wait for the page reader,
+    not the AI, so they don't count. Forwarded posts have no source and are
+    not counted. Sources with nothing pending are absent.
     `source_ids` narrows the query (one edited source).
     """
     stmt = (
@@ -157,6 +158,7 @@ async def pending_counts(
         .where(
             Vacancy.user_id == user_id,
             Vacancy.state == "pending",
+            Vacancy.needs_detail.is_(False),
             Vacancy.source_id.is_not(None),
         )
         .group_by(Vacancy.source_id)

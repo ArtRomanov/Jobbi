@@ -4,7 +4,7 @@ import type { components } from "@/shared/api";
  * One watched source (Telegram channel, company job board or web page).
  * `name_is_custom`: the user renamed it (false → `display_name` is the default name).
  * `editable`: false while a first-scan attempt runs (Edit is disabled then).
- * `pending_count`: its posts still waiting to be rated ("Waiting for AI: N").
+ * `pending_count`: its posts waiting for the AI ("Waiting for AI: N"; web jobs whose page is not read yet don't count).
  */
 export type VacancySource = components["schemas"]["VacancySourceRead"];
 
