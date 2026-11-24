@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, func
+from sqlalchemy import Boolean, ForeignKey, Index, String, UniqueConstraint, false, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -44,6 +44,11 @@ class VacancySeenKey(Base):
     )
     # NULL if never sent to the AI (pre-filtered or older than the cutoff).
     evaluated_at: Mapped[datetime | None] = mapped_column()
+    # The post was longer than the AI window (`MAX_POST_CHARS`) when it was
+    # evaluated; counted by the daily summary's ✂️ line.
+    cut_for_ai: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
 
     def __repr__(self) -> str:
         return f"<VacancySeenKey {self.external_key} user={self.user_id}>"

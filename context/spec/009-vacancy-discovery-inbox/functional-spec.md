@@ -1,7 +1,7 @@
 # Functional Specification: Vacancy Discovery (Inbox)
 
 - **Roadmap Item:** Job Alerts via Telegram (Phase 4 — Job Search Integrations): receive notifications about new matching jobs.
-- **Status:** Completed
+- **Status:** Completed (amended by [spec 012](../012-digest-and-forwarded-posts/functional-spec.md): digest posts and forwarded posts)
 - **Author:** Poe (AI Product Analyst)
 
 ---
@@ -22,7 +22,7 @@ The Inbox is separate from the Application Tracker: a found vacancy is not an ap
 **Terms used below:**
 - **Profile** — the desired role, location, remote preference and salary the user set in Settings. Empty fields are simply not taken into account. The profile only affects the fit rating; it never hides a vacancy.
 - **User's timezone** — the timezone set in Settings (UTC if not set).
-- **Job link** — the link to the actual job: for a career-page job, its page; for a Telegram post, the first link in the post that does not point to Telegram. A Telegram post without such a link uses the post's own link.
+- **Job link** — the link to the actual job: for a career-page job, its page; for a Telegram post, the first link in the post that does not point to Telegram. A Telegram post without such a link uses the post's own link. _(For a post that lists several vacancies, the job link is defined per vacancy: see [spec 012](../012-digest-and-forwarded-posts/functional-spec.md) §2.1.)_
 - **Telegram linked** — the user connected the Jobbi bot in Settings (spec 006).
 - **Daily summary** — the bot message each linked user receives once a day at their chosen time (spec 006).
 
@@ -40,7 +40,7 @@ The Inbox is separate from the Application Tracker: a found vacancy is not an ap
     - [x] Adding a channel or company that is already in the list shows "Already in your sources" and nothing changes. `@name`, `t.me/name` and `t.me/s/name` are the same channel, letter case ignored; different link forms of the same board are the same company. A user can watch at most 30 sources in total (channels and companies together, removed ones not counted); adding a 31st shows "You can watch up to 30 sources".
     - [x] The user can remove any channel or company, including while it is scanning (the scan stops). Vacancies already in the Inbox from it stay; in the source filter they appear under the old name marked "(removed)". If the source is added again, the "(removed)" mark disappears and its old and new vacancies are filtered together.
     - [x] The user can write a **search description** in plain text, up to 500 characters (e.g. "Senior frontend, React or Vue, remote or EU, from 4000 €, no outsourcing"). Typing stops at 500 characters, pasted text is cut to 500, and a counter shows how many are used. It can be edited at any time; a change applies to posts found from then on.
-    - [x] The user can add and remove up to 50 **exclude words or phrases** (optional, 1–64 characters each; a 51st shows "You can add up to 50 exclude words"). A post or job whose title or text contains any of them as a whole word or phrase (so "java" does not exclude "javascript", and "office only" matches only that phrase) is skipped and never shown. Letter case is ignored. A change applies to posts found from then on.
+    - [x] The user can add and remove up to 50 **exclude words or phrases** (optional, 1–64 characters each; a 51st shows "You can add up to 50 exclude words"). A post or job whose title or text contains any of them as a whole word or phrase (so "java" does not exclude "javascript", and "office only" matches only that phrase) is skipped and never shown. Letter case is ignored. A change applies to posts found from then on. _(Exclude words are hidden and no longer applied since [spec 012](../012-digest-and-forwarded-posts/functional-spec.md) §2.1.)_
     - [x] When a new source is added, Jobbi looks at its vacancies from the last 7 days, following the same rules as hourly checks (exclude words, daily limit, no description). While this first scan runs, the source shows "Scanning…"; its results then appear in the Inbox without reloading the page. If the first scan cannot read the source, it keeps retrying and the source becomes "Unavailable" after 24 hours like any other source. If the user re-adds a source they removed earlier, posts Jobbi already fetched from it before are not shown again.
     - [x] Sources, the search description and exclude words are per user; one user never sees another user's sources or Inbox.
 
@@ -49,9 +49,9 @@ The Inbox is separate from the Application Tracker: a found vacancy is not an ap
 - **As a** user, **I want** Jobbi to check my sources regularly and rate what it finds, **so that** I see the best-fitting vacancies first.
   - **Acceptance Criteria:**
     - [x] Each source is checked every hour. The Sources panel shows, for each source, when it was last checked (relative, e.g. "12 min ago").
-    - [x] Every post or career-page job that Jobbi has not seen before, and that contains none of the exclude words, is evaluated by AI against the search description and the user's profile. The AI decides whether it is a vacancy and whether it matches the description.
+    - [x] Every post or career-page job that Jobbi has not seen before, and that contains none of the exclude words, is evaluated by AI against the search description and the user's profile. The AI decides whether it is a vacancy and whether it matches the description. _(Superseded by [spec 012](../012-digest-and-forwarded-posts/functional-spec.md) §2.1 for posts that list several vacancies.)_ _(Exclude words are no longer applied since spec 012 §2.1.)_
     - [x] **What counts as a match:** the role or field described (e.g. "frontend") decides. A vacancy for that role is shown even if other points (location, remote, salary, seniority, stack) do not fit; those only lower its fit. A point the user marks as mandatory with words like "only" or "must" (e.g. "remote only") becomes a hard requirement: vacancies that clearly break it are not shown. Non-vacancy posts (news, ads, memes) and vacancies for other roles are skipped and never shown.
-    - [x] Each match gets a fit rating with a one-sentence reason in English (e.g. "Remote React role, salary not stated"), plus the company name and role title when they can be determined (career-page jobs already carry both). **High** = every point of the description and profile fits; **Medium** = exactly one point does not fit, or none is contradicted but at least one is not stated; **Low** = two or more points clearly do not fit. Points the post simply does not mention never push a vacancy down to Low.
+    - [x] Each match gets a fit rating with a one-sentence reason in English (e.g. "Remote React role, salary not stated"), plus the company name and role title when they can be determined (career-page jobs already carry both). **High** = every point of the description and profile fits; **Medium** = exactly one point does not fit, or none is contradicted but at least one is not stated; **Low** = two or more points clearly do not fit. Points the post simply does not mention never push a vacancy down to Low. _(Superseded by [spec 012](../012-digest-and-forwarded-posts/functional-spec.md) §2.1 for posts that list several vacancies.)_
     - [x] Reference cases for testing, with the description "Senior frontend, React, remote, from 4000 €" and an empty profile:
       - "Senior React Developer, fully remote, €5000–6000" → shown, High;
       - "Senior React Developer, remote, salary not stated" → shown, Medium;
@@ -63,7 +63,7 @@ The Inbox is separate from the Application Tracker: a found vacancy is not an ap
     - [x] If the AI cannot be reached, nothing is lost: posts wait as long as needed and are evaluated at a later check. While every attempt to reach the AI has failed for more than 1 hour, the Sources panel shows "Vacancy search is temporarily unavailable — new posts will be checked when it's back". A single post the AI repeatedly cannot rate is skipped after 3 attempts, so it does not hold up the others.
     - [x] If a source cannot be read for 24 hours, it is marked "Unavailable" in the Sources panel with one of the reasons "Channel is private or deleted", "Job board not found" or "Could not reach the source". Before 24 hours nothing is shown. The user can remove it. It becomes normal again as soon as a check succeeds.
     - [x] Jobbi evaluates at most 150 posts per user per day (days counted in the user's timezone). When the limit is reached, the Sources panel shows "Daily limit reached — N posts are waiting", where N is all posts waiting; they are evaluated on the following days, oldest first, 150 per day, and are never dropped.
-    - [x] A post or job Jobbi has seen before never creates a second card, including after it was dismissed or its card was deleted. If several posts point to the same job link (for example, the same vacancy reposted in two channels with a link to the company's job page), they appear as one card listing all the channels; the card keeps the date, fit and text of the first post found. Reposts without a shared job link may appear as separate cards.
+    - [x] A post or job Jobbi has seen before never creates a second card, including after it was dismissed or its card was deleted. If several posts point to the same job link (for example, the same vacancy reposted in two channels with a link to the company's job page), they appear as one card listing all the channels; the card keeps the date, fit and text of the first post found. Reposts without a shared job link may appear as separate cards. _(A post that lists several vacancies can give several cards, each with its own text: see [spec 012](../012-digest-and-forwarded-posts/functional-spec.md) §2.1.)_
 
 ### 2.3 The Inbox
 
@@ -109,7 +109,7 @@ The Inbox is separate from the Application Tracker: a found vacancy is not an ap
 ### Out-of-Scope
 
 - **HeadHunter Integration** and **LinkedIn Integration** (separate roadmap items).
-- Private Telegram channels and groups, or reading Telegram as the user's own account.
+- Private Telegram channels and groups, or reading Telegram as the user's own account. _(Forwarding their posts to the bot is supported since [spec 012](../012-digest-and-forwarded-posts/functional-spec.md) §2.2; reading them directly stays out of scope.)_
 - Career pages not on Greenhouse/Lever — possible later spec.
 - Managing sources, the search description or the Inbox from the Telegram bot (bot only notifies).
 - Alerts filtered by fit threshold; per-source search descriptions; changing the daily limit from the UI.

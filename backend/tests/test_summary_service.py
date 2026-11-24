@@ -1,6 +1,6 @@
 import itertools
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import TypeAlias
 
 import pytest
@@ -10,6 +10,7 @@ from app.core.constants import ApplicationStatus
 from app.models.application import Application, ApplicationStatusHistory
 from app.models.user import User
 from app.models.vacancy import Vacancy
+from app.models.vacancy_seen_key import VacancySeenKey
 from app.services.summary_service import (
     EMPTY_STATE_MESSAGE,
     SUMMARY_HEADER,
@@ -228,9 +229,7 @@ async def test_now_accepts_tz_aware_datetime(
         history=[(ApplicationStatus.INTERVIEW, NOW - timedelta(hours=1))],
     )
     # Same instant as NOW, expressed in UTC+2.
-    aware_now = NOW.replace(tzinfo=timezone.utc).astimezone(
-        timezone(timedelta(hours=2))
-    )
+    aware_now = NOW.replace(tzinfo=UTC).astimezone(timezone(timedelta(hours=2)))
 
     summary = await build_summary(db_session, user.id, now=aware_now)
 
@@ -468,3 +467,107 @@ async def test_inbox_line_omitted_when_zero(
     summary = await build_summary(db_session, user.id, now=NOW)
 
     assert INBOX_PREFIX not in summary
+
+
+# ---------------------------------------------------------------------------
+# Posts longer than the AI window (spec 012)
+# ---------------------------------------------------------------------------
+
+AddSeenKey: TypeAlias = Callable[..., Awaitable[None]]
+CUT_PREFIX = "✂️"
+
+
+def _cut_line(count: int) -> str:
+    return (
+        f"✂️ {count} posts in the last 24 hours were longer than Jobbi reads "
+        "(3,000 characters); vacancies at their end may have been missed."
+    )
+
+
+@pytest.fixture
+def add_seen_key(db_session: AsyncSession) -> AddSeenKey:
+    async def _add(
+        user_id: str, *, cut: bool = True, evaluated_at: datetime | None = NOW
+    ) -> None:
+        db_session.add(
+            VacancySeenKey(
+                user_id=user_id,
+                external_key=f"tg:chan/{next(_CARD_KEYS)}",
+                first_seen_at=LONG_AGO,
+                evaluated_at=evaluated_at,
+                cut_for_ai=cut,
+            )
+        )
+        await db_session.commit()
+
+    return _add
+
+
+@pytest.mark.parametrize("count", [1, 3])
+async def test_cut_line_counts_cut_posts_of_the_last_24_hours(
+    db_session: AsyncSession,
+    user: User,
+    make_user: MakeUser,
+    add_application: AddApplication,
+    add_cards: AddCards,
+    add_seen_key: AddSeenKey,
+    count: int,
+) -> None:
+    someone_else = await make_user()
+    await add_application(user.id, ApplicationStatus.APPLIED)
+    await add_cards(user.id, "new")
+    for _ in range(count):
+        await add_seen_key(user.id, evaluated_at=NOW - timedelta(hours=23))
+    # Not counted: exactly 24 h is in; older, not cut, never evaluated,
+    # another user's.
+    await add_seen_key(user.id, evaluated_at=NOW - timedelta(hours=24, seconds=1))
+    await add_seen_key(user.id, cut=False)
+    await add_seen_key(user.id, evaluated_at=None)
+    await add_seen_key(someone_else.id)
+
+    summary = await build_summary(db_session, user.id, now=NOW)
+
+    lines = summary.splitlines()
+    assert _line(summary, CUT_PREFIX) == _cut_line(count)
+    # After the Inbox line, before the blank line and the dashboard link.
+    assert lines[-4].startswith(INBOX_PREFIX)
+    assert lines[-3] == _cut_line(count)
+
+
+async def test_cut_line_window_starts_exactly_24_hours_ago(
+    db_session: AsyncSession, user: User, add_seen_key: AddSeenKey
+) -> None:
+    await add_seen_key(user.id, evaluated_at=NOW - timedelta(hours=24))
+
+    summary = await build_summary(db_session, user.id, now=NOW)
+
+    assert _line(summary, CUT_PREFIX) == _cut_line(1)
+
+
+async def test_cut_line_in_empty_state(
+    db_session: AsyncSession, user: User, add_seen_key: AddSeenKey
+) -> None:
+    await add_seen_key(user.id)
+    await add_seen_key(user.id)
+
+    summary = await build_summary(db_session, user.id, now=NOW)
+
+    assert summary.splitlines()[:3] == [EMPTY_STATE_MESSAGE, _cut_line(2), ""]
+
+
+@pytest.mark.parametrize("with_application", [True, False], ids=["apps", "empty"])
+async def test_cut_line_omitted_when_zero(
+    db_session: AsyncSession,
+    user: User,
+    add_application: AddApplication,
+    add_seen_key: AddSeenKey,
+    with_application: bool,
+) -> None:
+    if with_application:
+        await add_application(user.id, ApplicationStatus.APPLIED)
+    await add_seen_key(user.id, cut=False)
+    await add_seen_key(user.id, evaluated_at=NOW - timedelta(days=2))
+
+    summary = await build_summary(db_session, user.id, now=NOW)
+
+    assert CUT_PREFIX not in summary

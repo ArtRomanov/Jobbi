@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import re
 from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
@@ -24,6 +25,7 @@ from sqlalchemy.ext.asyncio import (
 from app.core.config import get_settings
 from app.core.database import Base
 from app.discovery import service
+from app.discovery.evaluator import MAX_POST_CHARS
 from app.discovery.service import (
     EVAL_PAUSE_S,
     DiscoveryConfig,
@@ -47,6 +49,12 @@ DESCRIPTION = "Senior frontend, React, remote"
 CONFIG = DiscoveryConfig(model="test-model", daily_limit=150)
 GROQ_REQUEST = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
 _POST_RE = re.compile(r"<<<POST (p\d+)>>>\n(.*?)\n<<<END \1>>>", re.DOTALL)
+_LINE_NO_RE = re.compile(r"^L\d+: ?", re.MULTILINE)
+
+
+def _sent_posts(content: str) -> list[tuple[str, str]]:
+    """(prompt key, post text) per fenced post, without the "Ln: " line numbers."""
+    return [(key, _LINE_NO_RE.sub("", body)) for key, body in _POST_RE.findall(content)]
 
 
 # --- infrastructure --------------------------------------------------------------
@@ -177,8 +185,8 @@ class FakeGroq:
     """Answers by post text: "MATCH" → match (fit from "HIGH"/"LOW", else
     medium), "SKIP" → left out of the answer, "BADITEM" → a malformed item
     (match without fit), "GARBAGE" anywhere in a call → the whole answer is
-    not JSON, "NOVAC" → match without `is_vacancy` (live Qwen quirk), anything
-    else → not a vacancy. `errors` are raised by the next calls, one each."""
+    not JSON, "NOVAC" → match without `is_vacancy` (live Qwen quirk),
+    "NOMATCH" → a vacancy that does not match, anything else → not a vacancy. `errors` are raised by the next calls, one each."""
 
     def __init__(self, factory: TrackingFactory | None = None) -> None:
         self.factory = factory
@@ -190,7 +198,7 @@ class FakeGroq:
     async def _create(self, **kwargs: Any) -> SimpleNamespace:
         if self.factory is not None and self.factory.open_transactions():
             self.violations += 1
-        posts = _POST_RE.findall(kwargs["messages"][1]["content"])
+        posts = _sent_posts(kwargs["messages"][1]["content"])
         self.calls.append([text for _, text in posts])
         if self.errors:
             raise self.errors.pop(0)
@@ -211,6 +219,8 @@ class FakeGroq:
             return {"key": key, "is_vacancy": True, "match": True, "fit": None}
         if "NOVAC" in text:
             return {"key": key, "match": True, "fit": "high", "reason": "ok"}
+        if "NOMATCH" in text:
+            return {"key": key, "is_vacancy": True, "match": False, "reason": "Java"}
         if "MATCH" not in text:
             return {"key": key, "is_vacancy": False, "match": False, "reason": "News"}
         fit = "high" if "HIGH" in text else "low" if "LOW" in text else "medium"
@@ -449,9 +459,10 @@ class TestInitialScan:
                 == 1
             )
 
-    async def test_exclude_words_record_key_without_card(
+    async def test_exclude_words_are_not_applied(
         self, factory, db, channel, http, ai, sleep
     ) -> None:
+        # Exclude words are switched off (spec 012): stored, never filtered on.
         user_id = await make_user(db, exclude=["java"])
         await make_source(db, user_id)
         channel.add(10, "MATCH Senior Java engineer")
@@ -459,12 +470,18 @@ class TestInitialScan:
 
         await run_initial_scans(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep)
 
-        assert [r.external_key for r in await vacancies(db)] == [f"tg:{CHANNEL}/11"]
+        assert [r.external_key for r in await vacancies(db)] == [
+            f"tg:{CHANNEL}/10",
+            f"tg:{CHANNEL}/11",
+        ]
         assert await seen_keys(db) == {
-            f"tg:{CHANNEL}/10": None,
+            f"tg:{CHANNEL}/10": NOW,
             f"tg:{CHANNEL}/11": NOW,
         }
-        assert ai.posts_sent == ["MATCH JavaScript developer"]
+        assert ai.posts_sent == [
+            "MATCH Senior Java engineer",
+            "MATCH JavaScript developer",
+        ]
 
     async def test_readded_source_skips_posts_seen_before(
         self, factory, db, channel, http, ai, sleep
@@ -717,6 +734,140 @@ class TestEvaluation:
         assert [len(call) for call in ai.calls] == [5, 2]
         assert ai.posts_sent == [f"MATCH {n}" for n in range(1, 8)]  # oldest first
         assert sleep.calls == [EVAL_PAUSE_S]
+
+    async def test_batches_by_characters(self, factory, db, ai, sleep) -> None:
+        # Windowed text: 3 000 + 3 000 fits the 7 500 budget, a third long
+        # post does not and starts the next batch.
+        user_id = await make_user(db)
+        await make_pending(db, user_id, 3, text="MATCH " + "x" * 3_000)
+        await make_pending(db, user_id, 2, start=4)
+
+        await evaluate_pending(factory, ai, at(NOW), config=CONFIG, sleep=sleep)
+
+        assert [len(call) for call in ai.calls] == [2, 3]
+        assert all(len(text) == MAX_POST_CHARS for text in ai.calls[0])
+        assert ai.calls[1][1:] == ["MATCH 4", "MATCH 5"]
+        assert sleep.calls == [EVAL_PAUSE_S]
+
+    async def test_size_batches_respect_the_daily_cap(
+        self, factory, db, ai, sleep
+    ) -> None:
+        user_id = await make_user(db)
+        config = DiscoveryConfig(model="m", daily_limit=4)
+        await make_pending(db, user_id, 3, text="MATCH " + "x" * 3_000)
+        await make_pending(db, user_id, 3, start=4)
+
+        report = await evaluate_pending(
+            factory, ai, at(NOW), config=config, sleep=sleep
+        )
+
+        # 2 long | 1 long + 1 short (cap of 4 reached, 2 short wait).
+        assert [len(call) for call in ai.calls] == [2, 2]
+        assert report.posts_evaluated == 4
+        assert report.users_capped == {user_id}
+        assert [r.state for r in await vacancies(db)].count("pending") == 2
+
+    async def test_long_posts_are_flagged_cut(
+        self, factory, db, ai, sleep, caplog
+    ) -> None:
+        user_id = await make_user(db)
+        long_tail = "x" * MAX_POST_CHARS
+        await make_pending(db, user_id, 1, text="MATCH " + long_tail)  # 3 008
+        await make_pending(db, user_id, 1, text="news " + long_tail, start=2)
+        await make_pending(db, user_id, 1, text="SKIP " + long_tail, start=3)
+        await make_pending(db, user_id, 1, text="MATCH", start=4)
+        await make_pending(  # exactly the window: read in full
+            db, user_id, 1, text="MATCH " + "y" * (MAX_POST_CHARS - 8), start=5
+        )
+
+        with caplog.at_level(logging.WARNING, logger="app.discovery.service"):
+            report = await evaluate_pending(
+                factory, ai, at(NOW), config=CONFIG, sleep=sleep
+            )
+
+        async with db() as session:
+            flags = dict(
+                (
+                    await session.execute(
+                        select(VacancySeenKey.external_key, VacancySeenKey.cut_for_ai)
+                    )
+                ).all()
+            )
+        assert flags == {
+            "tg:other/1": True,
+            "tg:other/2": True,  # rejected posts count too
+            "tg:other/3": False,  # no verdict yet: not evaluated, not counted
+            "tg:other/4": False,
+            "tg:other/5": False,
+        }
+        keys = await seen_keys(db)
+        assert keys["tg:other/1"] == NOW and keys["tg:other/2"] == NOW
+        assert report.posts_cut == 2
+        assert report.posts_evaluated == 4
+        cut_logs = [
+            r.getMessage() for r in caplog.records if "AI read only" in r.getMessage()
+        ]
+        assert cut_logs == [
+            (
+                f"Post tg:other/1 is {6 + MAX_POST_CHARS + 2} characters long; "
+                f"the AI read only the first {MAX_POST_CHARS}"
+            ),
+            (
+                f"Post tg:other/2 is {5 + MAX_POST_CHARS + 2} characters long; "
+                f"the AI read only the first {MAX_POST_CHARS}"
+            ),
+        ]
+        assert all(
+            r.levelno == logging.WARNING
+            for r in caplog.records
+            if "AI read only" in r.getMessage()
+        )
+
+    async def test_long_board_jobs_are_not_flagged_cut(
+        self, factory, db, ai, sleep, caplog
+    ) -> None:
+        """Board jobs are single positions read windowed; only Telegram posts
+        (possible digests) are reported as cut."""
+        user_id = await make_user(db)
+        long_text = "MATCH " + "x" * MAX_POST_CHARS
+        async with db() as session:
+            for n, key in enumerate(
+                ("gh:acme/1", "lever:acme/2", "lever_eu:acme/3", "teamtailor:acme/4")
+            ):
+                session.add(
+                    VacancySeenKey(user_id=user_id, external_key=key, first_seen_at=NOW)
+                )
+                session.add(
+                    Vacancy(
+                        user_id=user_id,
+                        external_key=key,
+                        url=f"https://jobs.example.com/{n}",
+                        text=long_text,
+                        posted_at=NOW,
+                        found_at=NOW - timedelta(minutes=10 - n),
+                        state="pending",
+                    )
+                )
+            await session.commit()
+
+        with caplog.at_level(logging.WARNING, logger="app.discovery.service"):
+            report = await evaluate_pending(
+                factory, ai, at(NOW), config=CONFIG, sleep=sleep
+            )
+
+        async with db() as session:
+            flags = dict(
+                (
+                    await session.execute(
+                        select(VacancySeenKey.external_key, VacancySeenKey.cut_for_ai)
+                    )
+                ).all()
+            )
+        assert set(flags.values()) == {False}
+        assert all(at_ == NOW for at_ in (await seen_keys(db)).values())
+        assert report.posts_cut == 0
+        assert report.posts_evaluated == 4
+        assert not [r for r in caplog.records if "AI read only" in r.getMessage()]
 
     async def test_no_description_stays_pending(self, factory, db, ai, sleep) -> None:
         user_id = await make_user(db, description=None)
@@ -1381,7 +1532,7 @@ async def test_no_http_or_groq_call_while_a_transaction_is_open(
     )
     lever_board.mount(respx_mock)
     lever_board.add("a", "lever news", NOW - timedelta(days=1))
-    user_id = await make_user(db, exclude=["spam"])
+    user_id = await make_user(db)
     await link_telegram(db, user_id)
     await make_source(db, user_id)
     await make_source(db, user_id, handle="second_channel", scanned=True)
@@ -1404,7 +1555,7 @@ async def test_no_http_or_groq_call_while_a_transaction_is_open(
         )
         await session.commit()
     for n in range(1, 13):
-        stub.add(n, "MATCH" if n % 3 else "spam MATCH")
+        stub.add(n, "MATCH" if n % 3 else "not a match")
 
     await run_initial_scans(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep)
     stub.add(20, "MATCH new")

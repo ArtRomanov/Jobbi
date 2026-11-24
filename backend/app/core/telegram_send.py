@@ -12,9 +12,9 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
-from telegram import Bot
+from telegram import Bot, ReplyParameters
 from telegram.error import Forbidden, RetryAfter, TelegramError
 
 __all__ = ["SleepFn", "describe_error", "send_text", "send_with_retry"]
@@ -25,26 +25,44 @@ SleepFn: TypeAlias = Callable[[float], Awaitable[None]]
 
 
 async def send_with_retry(
-    bot: Bot, chat_id: int, text: str, *, sleep: SleepFn = asyncio.sleep
+    bot: Bot,
+    chat_id: int,
+    text: str,
+    *,
+    sleep: SleepFn = asyncio.sleep,
+    reply_to: int | None = None,
 ) -> None:
     """Send once; on flood control wait the requested time and retry once.
+
+    `reply_to`: id of a message in `chat_id` to reply to. The message is still
+    sent (without the quote) if that message was deleted meanwhile.
 
     Raises:
         TelegramError: any error of the last attempt (including a second
             `RetryAfter`), for callers that handle errors themselves.
     """
+    extra: dict[str, Any] = {}
+    if reply_to is not None:
+        extra["reply_parameters"] = ReplyParameters(
+            message_id=reply_to, allow_sending_without_reply=True
+        )
     try:
-        await bot.send_message(chat_id=chat_id, text=text)
+        await bot.send_message(chat_id=chat_id, text=text, **extra)
     except RetryAfter as exc:
         delay = exc.retry_after
         seconds = delay.total_seconds() if isinstance(delay, timedelta) else delay
         logger.warning("Flood control: retrying message in %ss", seconds)
         await sleep(seconds)
-        await bot.send_message(chat_id=chat_id, text=text)
+        await bot.send_message(chat_id=chat_id, text=text, **extra)
 
 
 async def send_text(
-    bot: Bot, chat_id: int, text: str, *, sleep: SleepFn = asyncio.sleep
+    bot: Bot,
+    chat_id: int,
+    text: str,
+    *,
+    sleep: SleepFn = asyncio.sleep,
+    reply_to: int | None = None,
 ) -> bool:
     """`send_with_retry` that never raises a Telegram error.
 
@@ -52,7 +70,7 @@ async def send_text(
     (`Forbidden`) and any other `TelegramError` are logged and give False.
     """
     try:
-        await send_with_retry(bot, chat_id, text, sleep=sleep)
+        await send_with_retry(bot, chat_id, text, sleep=sleep, reply_to=reply_to)
     except Forbidden:
         logger.warning(
             "Cannot send to chat %s: bot blocked or chat unavailable", chat_id
