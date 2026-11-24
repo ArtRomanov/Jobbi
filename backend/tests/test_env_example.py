@@ -32,6 +32,10 @@ def test_env_example_documents_discovery_settings_with_defaults() -> None:
         _example_value("GROQ_DISCOVERY_MODEL") == fields["GROQ_DISCOVERY_MODEL"].default
     )
     assert (
+        _example_value("GROQ_DISCOVERY_FALLBACK_MODEL")
+        == fields["GROQ_DISCOVERY_FALLBACK_MODEL"].default
+    )
+    assert (
         int(_example_value("DISCOVERY_DAILY_EVAL_LIMIT"))
         == fields["DISCOVERY_DAILY_EVAL_LIMIT"].default
     )

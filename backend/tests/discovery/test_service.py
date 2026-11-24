@@ -191,6 +191,7 @@ class FakeGroq:
     def __init__(self, factory: TrackingFactory | None = None) -> None:
         self.factory = factory
         self.calls: list[list[str]] = []  # post texts per call
+        self.models: list[str] = []  # model per call
         self.errors: list[Exception] = []
         self.violations = 0
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
@@ -200,6 +201,7 @@ class FakeGroq:
             self.violations += 1
         posts = _sent_posts(kwargs["messages"][1]["content"])
         self.calls.append([text for _, text in posts])
+        self.models.append(kwargs["model"])
         if self.errors:
             raise self.errors.pop(0)
         if any("GARBAGE" in text for _, text in posts):
