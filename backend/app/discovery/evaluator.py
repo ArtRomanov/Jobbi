@@ -8,6 +8,7 @@ limited to booleans, enums and short strings.
 """
 
 import logging
+import math
 import re
 import time
 from collections.abc import Callable, Container, Iterable, Mapping, Sequence
@@ -33,6 +34,7 @@ __all__ = [
     "BATCH_CHAR_BUDGET",
     "BATCH_SIZE",
     "DEFAULT_DAILY_RETRY_S",
+    "MAX_DAILY_RETRY_S",
     "MAX_DIGEST_VACANCIES",
     "MAX_POST_CHARS",
     "MAX_REASON_CHARS",
@@ -41,6 +43,7 @@ __all__ = [
     "BatchEvaluation",
     "EvaluationError",
     "EvaluationFormatError",
+    "EvaluationModelNotFoundError",
     "EvaluationRateLimitedError",
     "EvaluationResponse",
     "EvaluationTransportError",
@@ -78,6 +81,9 @@ MAX_COMPLETION_TOKENS = 4_000
 # How long a model counts as out of its daily quota when Groq's 429 names no
 # retry time (neither "try again in ..." nor a `retry-after` header).
 DEFAULT_DAILY_RETRY_S = 15 * 60.0
+# Longest a model counts as out: Groq's daily window is a rolling 24 h, so a
+# longer (or absurd) wait would only keep a working model unused.
+MAX_DAILY_RETRY_S = 24 * 3600.0
 # Groq's 429 message names the limit it hit: "... on tokens per day (TPD): ...".
 _DAILY_LIMIT_RE = re.compile(r"\b(?:TPD|RPD)\b|\bper day\b", re.IGNORECASE)
 # "Please try again in 10m37.632s" / "1h2m3s" / "8.6s" / "250ms".
@@ -227,6 +233,10 @@ class EvaluationRateLimitedError(EvaluationTransportError):
         super().__init__(message)
         self.daily = daily
         self.retry_after_s = retry_after_s
+
+
+class EvaluationModelNotFoundError(EvaluationTransportError):
+    """Groq does not know the model (HTTP 404 `model_not_found`)."""
 
 
 class EvaluationFormatError(EvaluationError):
@@ -763,21 +773,24 @@ def _error_message(exc: groq.APIStatusError) -> str:
 
 
 def _retry_after_s(exc: groq.APIStatusError, message: str) -> float | None:
-    """Groq's wait time: "try again in ..." in the message, else `retry-after`."""
+    """Groq's wait time: "try again in ..." in the message, else `retry-after`.
+    None when neither gives a finite number of seconds."""
+    wait: float | None = None
     if (found := _TRY_AGAIN_RE.search(message)) is not None:
         if found["ms"] is not None:
-            return float(found["ms"]) / 1000
-        if any(found[part] is not None for part in ("h", "m", "s")):
-            return (
+            wait = float(found["ms"]) / 1000
+        elif any(found[part] is not None for part in ("h", "m", "s")):
+            wait = (
                 int(found["h"] or 0) * 3600
                 + int(found["m"] or 0) * 60
                 + float(found["s"] or 0)
             )
-    header = exc.response.headers.get("retry-after")
-    try:
-        return float(header) if header is not None else None
-    except ValueError:
-        return None
+    if wait is None and (header := exc.response.headers.get("retry-after")):
+        try:
+            wait = float(header)
+        except ValueError:
+            wait = None
+    return wait if wait is not None and math.isfinite(wait) else None
 
 
 def _map_status_error(exc: groq.APIStatusError) -> EvaluationError:
@@ -792,7 +805,7 @@ def _map_status_error(exc: groq.APIStatusError) -> EvaluationError:
             retry_after_s=_retry_after_s(exc, message),
         )
     if code == "model_not_found":
-        return EvaluationTransportError("model_not_found")
+        return EvaluationModelNotFoundError("model_not_found")
     if status in (400, 413, 422):
         # e.g. Groq's "json_validate_failed": the model produced invalid JSON.
         return EvaluationFormatError(
@@ -903,8 +916,19 @@ class ModelChooser:
         return [m for m in self.models if self._exhausted_until.get(m, now) <= now]
 
     def mark_exhausted(self, model: str, retry_after_s: float | None) -> None:
-        wait = DEFAULT_DAILY_RETRY_S if retry_after_s is None else retry_after_s
-        self._exhausted_until[model] = self._monotonic() + max(wait, 0.0)
+        """Count `model` out for `retry_after_s` (the default when unknown or
+        not finite), at most `MAX_DAILY_RETRY_S`."""
+        wait = (
+            retry_after_s
+            if retry_after_s is not None and math.isfinite(retry_after_s)
+            else DEFAULT_DAILY_RETRY_S
+        )
+        wait = min(max(wait, 0.0), MAX_DAILY_RETRY_S)
+        self._exhausted_until[model] = self._monotonic() + wait
+
+    def drop_fallback(self) -> None:
+        """Stop using the fallback for the rest of the process."""
+        self.fallback = ""
 
 
 async def evaluate_with_fallback(
@@ -931,6 +955,17 @@ async def evaluate_with_fallback(
     for model in chooser.available():
         try:
             return await evaluate_batch(client, model, description, profile, posts)
+        except EvaluationModelNotFoundError:
+            if model != chooser.fallback:
+                raise
+            # A wrong GROQ_DISCOVERY_FALLBACK_MODEL: one error, then never again
+            # (else each user would get a failing request every run).
+            logger.error(
+                "Groq does not know the fallback model %s; fallback disabled "
+                "until the worker restarts (check GROQ_DISCOVERY_FALLBACK_MODEL)",
+                model,
+            )
+            chooser.drop_fallback()
         except EvaluationRateLimitedError as exc:
             if not exc.daily:
                 raise

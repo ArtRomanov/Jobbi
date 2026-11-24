@@ -210,6 +210,13 @@ class DiscoveryConfig:
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> Self:
         settings = settings or get_settings()
+        fallback = settings.GROQ_DISCOVERY_FALLBACK_MODEL.strip()
+        if fallback and fallback == settings.GROQ_MODEL:
+            logger.warning(
+                "GROQ_DISCOVERY_FALLBACK_MODEL is the chat model %s: discovery "
+                "will spend the chat's daily Groq quota",
+                fallback,
+            )
         return cls(
             model=settings.GROQ_DISCOVERY_MODEL,
             fallback_model=settings.GROQ_DISCOVERY_FALLBACK_MODEL,

@@ -10,9 +10,12 @@ import groq
 import httpx
 import pytest
 
+from app.core.config import Settings
 from app.discovery.evaluator import (
     DEFAULT_DAILY_RETRY_S,
+    MAX_DAILY_RETRY_S,
     EvaluationRateLimitedError,
+    EvaluationTransportError,
     ModelChooser,
     evaluate_with_fallback,
 )
@@ -403,3 +406,148 @@ async def test_forwarded_post_is_rated_by_the_fallback(factory, db, ai, sleep) -
     [card] = await vacancies(db)
     assert (card.state, card.fit) == ("new", "high")
     assert [r.external_key for r in report.forward_results] == ["tgc:1234567890/1"]
+
+
+# --- gate fixes: odd retry times, a wrong fallback name, the chat model ---------
+
+
+@pytest.mark.parametrize("header", ["nan", "inf", "-inf"])
+async def test_non_finite_retry_after_header_counts_as_no_retry_time(
+    header: str,
+) -> None:
+    client = Client()
+    client.completions.errors[PRIMARY] = [
+        rate_limit("tokens per day (TPD)", retry_after=header)
+    ]
+
+    with pytest.raises(EvaluationRateLimitedError) as exc_info:
+        await rate(client, ModelChooser(PRIMARY))
+
+    assert exc_info.value.daily
+    assert exc_info.value.retry_after_s is None
+
+
+@pytest.mark.parametrize("wait", [float("nan"), float("inf")])
+def test_non_finite_wait_marks_the_model_out_for_the_default(wait: float) -> None:
+    clock = Clock()
+    chooser = ModelChooser(PRIMARY, FALLBACK, monotonic=clock)
+
+    chooser.mark_exhausted(PRIMARY, wait)
+    clock.now += DEFAULT_DAILY_RETRY_S - 1
+    assert chooser.available() == [FALLBACK]
+    clock.now += 1
+    assert chooser.available() == [PRIMARY, FALLBACK]
+
+
+def test_huge_wait_is_capped_at_a_day() -> None:
+    clock = Clock()
+    chooser = ModelChooser(PRIMARY, FALLBACK, monotonic=clock)
+
+    chooser.mark_exhausted(PRIMARY, 1e12)
+    clock.now += MAX_DAILY_RETRY_S - 1
+    assert chooser.available() == [FALLBACK]
+    clock.now += 1
+    assert chooser.available() == [PRIMARY, FALLBACK]
+
+
+async def test_huge_try_again_in_is_capped_at_a_day() -> None:
+    clock = Clock()
+    client = Client()
+    client.completions.errors[PRIMARY] = [
+        rate_limit("tokens per day (TPD). Please try again in 99999999h0m0s.")
+    ]
+    chooser = ModelChooser(PRIMARY, FALLBACK, monotonic=clock)
+
+    await rate(client, chooser)
+    clock.now += MAX_DAILY_RETRY_S
+
+    assert chooser.available() == [PRIMARY, FALLBACK]
+
+
+def model_not_found(model: str) -> groq.NotFoundError:
+    body = {
+        "message": f"The model `{model}` does not exist or you do not have access.",
+        "type": "invalid_request_error",
+        "code": "model_not_found",
+    }
+    response = httpx.Response(404, request=GROQ_REQUEST, json={"error": body})
+    return groq.NotFoundError("not found", response=response, body={"error": body})
+
+
+async def test_unknown_fallback_is_dropped_for_the_process_with_one_error(
+    caplog,
+) -> None:
+    clock = Clock()
+    client = Client()
+    client.completions.errors[PRIMARY] = [rate_limit(TPD_MESSAGE)]
+    client.completions.errors[FALLBACK] = [model_not_found(FALLBACK)]
+    chooser = ModelChooser(PRIMARY, FALLBACK, monotonic=clock)
+
+    with caplog.at_level(logging.WARNING, logger="app.discovery.evaluator"):
+        with pytest.raises(EvaluationRateLimitedError) as first:
+            await rate(client, chooser)
+        with pytest.raises(EvaluationRateLimitedError):
+            await rate(client, chooser)
+
+    # The primary's daily 429 decides: the run stops, as without a fallback.
+    assert first.value.daily
+    assert client.completions.models == [PRIMARY, FALLBACK]
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert FALLBACK in errors[0].getMessage()
+    assert chooser.fallback == ""
+    clock.now += 638
+    assert chooser.available() == [PRIMARY]
+
+
+async def test_unknown_primary_still_raises_a_transport_error() -> None:
+    client = Client()
+    client.completions.errors[PRIMARY] = [model_not_found(PRIMARY)]
+    chooser = ModelChooser(PRIMARY, FALLBACK, monotonic=Clock())
+
+    with pytest.raises(EvaluationTransportError) as exc_info:
+        await rate(client, chooser)
+
+    assert not isinstance(exc_info.value, EvaluationRateLimitedError)
+    assert client.completions.models == [PRIMARY]
+    assert chooser.available() == [PRIMARY, FALLBACK]
+
+
+async def test_unknown_fallback_stops_the_run_not_each_user(
+    factory, db, ai, sleep
+) -> None:
+    first = await make_user(db, email="a@example.com")
+    second = await make_user(db, email="b@example.com")
+    await make_pending(db, first, 1)
+    await make_pending(db, second, 1, start=100)
+    ai.errors.extend([rate_limit(TPD_MESSAGE), model_not_found(FALLBACK)])
+
+    await evaluate_pending(factory, ai, at(NOW), config=config(), sleep=sleep)
+
+    assert ai.models == [PRIMARY, FALLBACK]
+    failing = [
+        (await get_settings_row(db, uid)).ai_failing_since for uid in (first, second)
+    ]
+    assert sorted(failing, key=lambda v: v is None) == [NOW, None]
+
+
+def test_startup_warns_when_the_fallback_is_the_chat_model(caplog) -> None:
+    settings = Settings(
+        GROQ_API_KEY="test-key",
+        GROQ_MODEL="qwen/qwen3.8-27b",
+        GROQ_DISCOVERY_FALLBACK_MODEL="qwen/qwen3.8-27b",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="app.discovery.service"):
+        DiscoveryConfig.from_settings(settings)
+
+    assert "chat model" in caplog.text
+
+
+def test_no_warning_for_the_default_fallback(caplog) -> None:
+    settings = Settings(GROQ_API_KEY="test-key")
+
+    with caplog.at_level(logging.WARNING, logger="app.discovery.service"):
+        DiscoveryConfig.from_settings(settings)
+
+    assert "chat model" not in caplog.text
