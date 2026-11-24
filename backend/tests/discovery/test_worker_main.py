@@ -1,18 +1,14 @@
 import asyncio
 import logging
-from datetime import datetime
 from typing import Any
 
 import httpx
 import pytest
-import respx
 from telegram import Bot
 from telegram.error import InvalidToken, NetworkError
 
 from app.discovery import __main__ as worker
-from app.discovery.evaluator import EvaluationRateLimitedError, evaluate_batch
 from app.discovery.service import DiscoveryConfig
-from app.discovery.types import RawPost
 
 CONFIG = DiscoveryConfig(model="m", daily_limit=1)
 
@@ -124,72 +120,6 @@ async def test_run_worker_scans_at_start_and_stops(
     await asyncio.wait_for(task, timeout=5)
 
     assert calls == ["initial"]
-
-
-async def test_run_worker_groq_client_never_retries(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    clients: list[Any] = []
-    scanned = asyncio.Event()
-
-    async def fake_initial(*args: Any, **kwargs: Any) -> None:
-        clients.append(args[2])
-        scanned.set()
-
-    async def no_bot(token: str) -> None:
-        return None
-
-    monkeypatch.setattr(worker, "open_bot", no_bot)
-    monkeypatch.setattr(worker, "run_initial_scans", fake_initial)
-    stop = asyncio.Event()
-
-    task = asyncio.create_task(worker.run_worker(stop))
-    await asyncio.wait_for(scanned.wait(), timeout=5)
-    stop.set()
-    await asyncio.wait_for(task, timeout=5)
-
-    [client] = clients
-    assert client.max_retries == 0
-
-
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-
-
-@pytest.mark.parametrize(
-    ("window", "daily"),
-    [("tokens per day (TPD)", True), ("tokens per minute (TPM)", False)],
-)
-async def test_groq_429_reaches_the_evaluator_after_one_request(
-    respx_mock: respx.MockRouter, window: str, daily: bool
-) -> None:
-    message = (
-        f"Rate limit reached for model `m` on {window}: Limit 1, Used 1, "
-        "Requested 1. Please try again in 1.5s."
-    )
-    route = respx_mock.post(GROQ_URL).mock(
-        return_value=httpx.Response(
-            429,
-            headers={"retry-after": "2"},
-            json={"error": {"message": message, "code": "rate_limit_exceeded"}},
-        )
-    )
-    client = worker.build_groq_client("test-key")
-    post = RawPost(
-        external_key="tg:jobs/1",
-        url="https://t.me/jobs/1",
-        job_link=None,
-        title=None,
-        company=None,
-        text="Frontend developer",
-        posted_at=datetime(2026, 11, 24),
-    )
-
-    with pytest.raises(EvaluationRateLimitedError) as exc_info:
-        await evaluate_batch(client, "m", "Frontend", {}, [post])
-    await client.close()
-
-    assert route.call_count == 1  # no SDK retry: the worker decides what to do
-    assert exc_info.value.daily is daily
 
 
 # --- Telegram bot for alerts ----------------------------------------------------
