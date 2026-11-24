@@ -101,6 +101,8 @@ __all__ = [
     "MAX_PAGES",
     "PENDING_WITHOUT_DESCRIPTION_RETENTION",
     "READ_ERROR_MESSAGES",
+    "TELEGRAM_FIRST_SCAN_LOOKBACK",
+    "TELEGRAM_FIRST_SCAN_MAX_PAGES",
     "WEB_DETAIL_LIMIT",
     "WEB_RUN_BUDGET_S",
     "WEB_SOURCE_DETAIL_BUDGET_S",
@@ -120,6 +122,10 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 LOOKBACK = timedelta(days=7)
+# A Telegram channel's first scan reads only this far back: noisy channels
+# would otherwise send ~200 posts to the AI at once (daily token limit).
+TELEGRAM_FIRST_SCAN_LOOKBACK = timedelta(days=3)
+TELEGRAM_FIRST_SCAN_MAX_PAGES = 4  # ~80 posts
 MAX_PAGES = 10
 # One AI call per pause. gpt-oss-20b spends ~4 000-5 000 tokens per batch of 5,
 # so 30 s (two calls a minute) would exceed the 8 000 tokens/minute account limit.
@@ -692,9 +698,12 @@ async def _fetch_source(
         return board.posts, board.seen_only_keys
     # The first scan stores every post of the window that is not yet a seen
     # key (filtered at insert), so a re-added source skips what it showed before.
+    if initial:
+        cutoff = now - TELEGRAM_FIRST_SCAN_LOOKBACK
     known = set() if initial else await _recent_keys(session_factory, source, cutoff)
+    max_pages = TELEGRAM_FIRST_SCAN_MAX_PAGES if initial else MAX_PAGES
     posts = await fetch_channel_posts(
-        http_client, source.handle, known, cutoff, MAX_PAGES, sleep=sleep
+        http_client, source.handle, known, cutoff, max_pages, sleep=sleep
     )
     return posts, []
 

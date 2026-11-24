@@ -365,6 +365,31 @@ async def get_settings_row(
 
 
 class TestInitialScan:
+    async def test_telegram_first_scan_reads_only_the_last_3_days(
+        self, factory, db, channel, http, ai, sleep
+    ) -> None:
+        user_id = await make_user(db, description=None)
+        await make_source(db, user_id)
+        channel.add(10, "MATCH fresh", NOW - timedelta(days=2, hours=23))
+        channel.add(9, "MATCH four days old", NOW - timedelta(days=4))
+
+        await run_initial_scans(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep)
+
+        assert [r.external_key for r in await vacancies(db)] == [f"tg:{CHANNEL}/10"]
+
+    async def test_telegram_first_scan_reads_at_most_4_pages(
+        self, factory, db, channel, http, ai, sleep
+    ) -> None:
+        user_id = await make_user(db, description=None)
+        await make_source(db, user_id)
+        for post_id in range(1, 201):  # 10 pages of 20, all within the window
+            channel.add(post_id, f"MATCH {post_id}", NOW - timedelta(hours=1))
+
+        await run_initial_scans(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep)
+
+        assert channel.requests == 4
+        assert len(await vacancies(db)) == 80
+
     async def test_stores_pending_posts_with_seen_keys_and_card_source(
         self, factory, db, channel, http, ai, sleep
     ) -> None:
