@@ -294,6 +294,7 @@ export const mockVacancySource = {
   watching_since: null as string | null,
   name_is_custom: false,
   editable: true,
+  pending_count: 0,
 };
 
 /** A saved web page source (watching, not checked since). */

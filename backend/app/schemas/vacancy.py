@@ -87,6 +87,9 @@ class VacancySourceRead(BaseModel):
     watching_since: UtcDatetime | None
     # False while a first-scan attempt runs (PATCH answers 409 then).
     editable: bool
+    # This source's posts still waiting to be rated (`pending`, incl. web rows
+    # whose job page is not read yet).
+    pending_count: int
 
 
 class VacancySearchSettingsRead(BaseModel):

@@ -268,6 +268,32 @@ describe("Sources panel scan status", () => {
     expect(sourceCalls).toBe(3);
   });
 
+  it("shows \"Waiting for AI: N\" only when N > 0 and updates it with polls", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    const pendingCounts = [0, 3, 0];
+    let sourceCalls = 0;
+    server.use(
+      http.get(SOURCES_URL, () => {
+        const pendingCount = pendingCounts[Math.min(sourceCalls, pendingCounts.length - 1)];
+        sourceCalls += 1;
+        return HttpResponse.json({
+          ...mockVacancySourcesEmpty,
+          sources: [{ ...mockVacancySource, scanning: true, pending_count: pendingCount }],
+        });
+      }),
+    );
+    renderWithProviders(<InboxPage />);
+
+    expect(await screen.findByText("Telegram · Scanning…")).toBeInTheDocument();
+    expect(screen.queryByText(/Waiting for AI/)).not.toBeInTheDocument();
+
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(await screen.findByText("Waiting for AI: 3")).toBeInTheDocument();
+
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await waitFor(() => expect(screen.queryByText(/Waiting for AI/)).not.toBeInTheDocument());
+  });
+
   it("stops polling when the panel unmounts", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
     let sourceCalls = 0;

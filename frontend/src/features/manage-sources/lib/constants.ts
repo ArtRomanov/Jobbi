@@ -18,6 +18,8 @@ export const UNAVAILABLE_FALLBACK_REASON = "Could not reach the source";
 export const LAST_CHECKED_PREFIX = "Last checked";
 /** Web page row before its first check after saving. */
 export const WATCHING_SINCE_PREFIX = "Watching since";
+/** Row line for `pending_count` > 0: "Waiting for AI: N". */
+export const PENDING_COUNT_PREFIX = "Waiting for AI:";
 /** How often the source list is re-fetched while any source is scanning. */
 export const SCAN_POLL_INTERVAL_MS = 5000;
 /** How often sources + status are re-fetched otherwise (only while the page is visible). */

@@ -9,7 +9,7 @@ import {
   UNAVAILABLE_FALLBACK_REASON,
   UNAVAILABLE_LABEL,
 } from "../lib/constants";
-import { getCheckedLabel } from "../lib/helpers";
+import { getCheckedLabel, getPendingLabel } from "../lib/helpers";
 import type { SourceSavedHandler } from "../model/types";
 import { EditSourceDialog } from "./edit-source-dialog";
 
@@ -29,7 +29,8 @@ interface SourceListItemProps {
 }
 
 /**
- * One watched source: name, kind, scan/last-checked/availability status, an
+ * One watched source: name, kind, scan/last-checked/availability status,
+ * "Waiting for AI: N" when posts of it wait to be rated, an
  * Edit button (opens `EditSourceDialog`; the Modal returns focus to it on close;
  * `aria-disabled` with a described reason while a first-scan attempt runs,
  * `editable: false`) and a Remove button.
@@ -46,6 +47,7 @@ export function SourceListItem({
   const editHintId = useId();
   const { id, unavailable } = source;
   const checkedLabel = source.scanning ? null : getCheckedLabel(source);
+  const pendingLabel = getPendingLabel(source.pending_count);
   const removeButtonRef = useCallback(
     (element: HTMLButtonElement | null) => onRegisterRemoveButton(id, element),
     [id, onRegisterRemoveButton],
@@ -96,6 +98,11 @@ export function SourceListItem({
           {source.scanning ? ` · ${SCANNING_LABEL}` : null}
           {checkedLabel ? ` · ${checkedLabel}` : null}
         </p>
+        {pendingLabel ? (
+          <p style={{ fontSize: "0.75rem", color: unavailable ? colors.textSecondary : colors.textMuted }}>
+            {pendingLabel}
+          </p>
+        ) : null}
         {/* Plain text in reading order: name, kind, then "Unavailable — reason" */}
         {unavailable ? (
           <p style={{ fontSize: "0.75rem", fontWeight: 600, color: colors.badge.danger.text }}>

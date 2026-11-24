@@ -12,8 +12,8 @@ from app.models.vacancy_source import VacancySource
 from app.schemas.application import PaginatedResponse
 from app.schemas.vacancy import (
     AddToTrackerRequest,
-    AtsHint,
     AddToTrackerResponse,
+    AtsHint,
     DiscoveryStatus,
     DuplicateApplicationConflict,
     ExistingApplicationRef,
@@ -69,6 +69,7 @@ from app.services.vacancy_source_service import (
     is_scanning,
     is_unavailable,
     list_sources,
+    pending_counts,
     preview_source,
     update_search_settings,
 )
@@ -83,7 +84,7 @@ ALREADY_TRACKED_MESSAGE = "You already track this"
 CardAction = Callable[[AsyncSession, str, str], Awaitable[None]]
 
 
-def _source_to_read(source: VacancySource) -> VacancySourceRead:
+def _source_to_read(source: VacancySource, pending_count: int = 0) -> VacancySourceRead:
     return VacancySourceRead(
         id=source.id,
         key=source_key(source.kind, source.handle),
@@ -100,6 +101,7 @@ def _source_to_read(source: VacancySource) -> VacancySourceRead:
             source.initial_scan_completed_at if source.kind == "web" else None
         ),
         editable=not is_attempt_running(source),
+        pending_count=pending_count,
     )
 
 
@@ -131,10 +133,11 @@ async def get_vacancy_sources(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> VacancySourcesResponse:
     sources = await list_sources(db, current_user.id)
+    counts = await pending_counts(db, current_user.id)
     settings_row = await get_search_settings(db, current_user.id)
     status_data = await discovery_status(db, current_user, settings_row)
     return VacancySourcesResponse(
-        sources=[_source_to_read(s) for s in sources],
+        sources=[_source_to_read(s, counts.get(s.id, 0)) for s in sources],
         removed_sources=[
             SourceRef(key=item.key, label=item.label)
             for item in await removed_sources(db, current_user.id)
@@ -260,11 +263,11 @@ async def create_vacancy_source(
         "pages), what it lists now is remembered as seen and the source's "
         "vacancies still waiting for the AI are dropped; same id. Any other "
         "link change (another channel/board, or another kind): the old source "
-        "is removed (its cards stay, shown \"(removed)\") and the new one is "
+        'is removed (its cards stay, shown "(removed)") and the new one is '
         "added with a normal first scan; the response is the NEW source (new "
-        "`id`). Errors as when adding (400, 409 \"Already in your sources\"); "
+        '`id`). Errors as when adding (400, 409 "Already in your sources"); '
         "the edited source is not counted against the duplicate and 30-source "
-        "checks. 409 \"This source is being scanned — try again in a moment\" "
+        'checks. 409 "This source is being scanned — try again in a moment" '
         "while a first-scan attempt runs (`editable` false). 404 for an "
         "unknown or another user's source."
     ),
@@ -303,7 +306,8 @@ async def patch_vacancy_source(
         ) from exc
     except SourceNotFoundError as exc:
         raise not_found("Source") from exc
-    return _source_to_read(source)
+    counts = await pending_counts(db, current_user.id, [source.id])
+    return _source_to_read(source, counts.get(source.id, 0))
 
 
 @router.delete(

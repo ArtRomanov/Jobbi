@@ -8,6 +8,7 @@ import respx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.vacancy import Vacancy
 from app.models.vacancy_search_settings import VacancySearchSettings
 from app.models.vacancy_source import VacancySource
 from app.services import vacancy_source_check, vacancy_source_service
@@ -177,6 +178,71 @@ async def test_list_reports_scanning_and_unavailable(
     assert by_name["@failing_long"]["last_error"] == "Could not read"
 
 
+def _vacancy(
+    user_id: str, source_id: str | None, n: int, state: str = "pending", **extra
+) -> Vacancy:
+    now = _now_naive()
+    return Vacancy(
+        user_id=user_id,
+        source_id=source_id,
+        external_key=f"tg:x/{n}",
+        url=f"https://t.me/x/{n}",
+        text="post",
+        posted_at=now,
+        found_at=now,
+        state=state,
+        **extra,
+    )
+
+
+async def test_list_counts_posts_waiting_for_ai_per_source(
+    client: httpx.AsyncClient,
+    token: str,
+    user_id: str,
+    other_registered_user: dict,
+    db_session: AsyncSession,
+) -> None:
+    busy = await _insert_source(db_session, user_id, "busy")
+    idle = await _insert_source(db_session, user_id, "idle")
+    other_user_id = other_registered_user["user"]["id"]
+    other = await _insert_source(db_session, other_user_id, "busy")
+    db_session.add_all(
+        [
+            _vacancy(user_id, busy.id, 1),
+            # A web row whose job page is not read yet still waits.
+            _vacancy(user_id, busy.id, 2, needs_detail=True),
+            _vacancy(user_id, busy.id, 3, state="new"),
+            _vacancy(user_id, idle.id, 4, state="dismissed"),
+            # Forwarded to the bot: no source, not counted anywhere.
+            _vacancy(user_id, None, 5),
+            _vacancy(other_user_id, other.id, 6),
+        ]
+    )
+    await db_session.commit()
+
+    resp = await client.get(URL, headers=_auth(token))
+
+    counts = {s["display_name"]: s["pending_count"] for s in resp.json()["sources"]}
+    assert counts == {"@busy": 2, "@idle": 0}
+
+
+async def test_patch_returns_the_pending_count(
+    client: httpx.AsyncClient, token: str, user_id: str, db_session: AsyncSession
+) -> None:
+    source = await _insert_source(
+        db_session, user_id, "busy", initial_scan_completed_at=_now_naive()
+    )
+    db_session.add(_vacancy(user_id, source.id, 1))
+    await db_session.commit()
+
+    resp = await client.patch(
+        f"{URL}/{source.id}", json={"name": "Busy"}, headers=_auth(token)
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["pending_count"] == 1
+
+
 async def test_list_requires_auth(client: httpx.AsyncClient) -> None:
     resp = await client.get(URL)
     assert resp.status_code in (401, 403)
@@ -208,6 +274,7 @@ async def test_add_public_channel(
         "job_link_contains",
         "watching_since",
         "editable",
+        "pending_count",
     }
     assert data["url"] is None
     assert data["job_link_contains"] is None
@@ -219,6 +286,7 @@ async def test_add_public_channel(
     assert data["unavailable"] is False
     assert data["last_checked_at"] is None
     assert data["last_error"] is None
+    assert data["pending_count"] == 0
 
     listed = (await client.get(URL, headers=_auth(token))).json()["sources"]
     assert listed == [data]
