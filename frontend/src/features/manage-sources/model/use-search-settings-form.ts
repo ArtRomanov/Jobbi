@@ -9,8 +9,7 @@ import type { UseSearchSettingsFormResult } from "./types";
 /**
  * Draft description for the "What are you looking for?" form. `initial` seeds
  * the draft once (the form is re-mounted when settings load). Save PATCHes
- * only `description` — `exclude` is left out so the stored exclude words stay
- * unchanged (hidden since spec 012) — then shows the server-normalized value,
+ * the description, then shows the server-normalized value,
  * reports it via `onSaved` and toasts "Saved"; a failure becomes an inline error.
  */
 export function useSearchSettingsForm(

@@ -49,7 +49,7 @@ export interface UseSearchSettingsFormResult {
   /** Inline error under the Save button, or null. */
   saveError: string | null;
   isSaving: boolean;
-  /** Save the description (exclude words are not sent); resolves true on success. */
+  /** Save the description; resolves true on success. */
   save: () => Promise<boolean>;
 }
 

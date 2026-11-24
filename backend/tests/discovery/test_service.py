@@ -253,7 +253,6 @@ async def make_user(
     db: async_sessionmaker[AsyncSession],
     *,
     description: str | None = DESCRIPTION,
-    exclude: list[str] | None = None,
     timezone: str | None = None,
     email: str = "u1@example.com",
 ) -> str:
@@ -267,11 +266,7 @@ async def make_user(
         )
         session.add(user)
         await session.flush()
-        session.add(
-            VacancySearchSettings(
-                user_id=user.id, description=description, exclude_terms=exclude or []
-            )
-        )
+        session.add(VacancySearchSettings(user_id=user.id, description=description))
         await session.commit()
         return user.id
 
@@ -461,30 +456,6 @@ class TestInitialScan:
                 )
                 == 1
             )
-
-    async def test_exclude_words_are_not_applied(
-        self, factory, db, channel, http, ai, sleep
-    ) -> None:
-        # Exclude words are switched off (spec 012): stored, never filtered on.
-        user_id = await make_user(db, exclude=["java"])
-        await make_source(db, user_id)
-        channel.add(10, "MATCH Senior Java engineer")
-        channel.add(11, "MATCH JavaScript developer")
-
-        await run_initial_scans(factory, http, ai, at(NOW), config=CONFIG, sleep=sleep)
-
-        assert [r.external_key for r in await vacancies(db)] == [
-            f"tg:{CHANNEL}/10",
-            f"tg:{CHANNEL}/11",
-        ]
-        assert await seen_keys(db) == {
-            f"tg:{CHANNEL}/10": NOW,
-            f"tg:{CHANNEL}/11": NOW,
-        }
-        assert ai.posts_sent == [
-            "MATCH Senior Java engineer",
-            "MATCH JavaScript developer",
-        ]
 
     async def test_readded_source_skips_posts_seen_before(
         self, factory, db, channel, http, ai, sleep
@@ -1535,8 +1506,8 @@ async def test_no_http_or_groq_call_while_a_transaction_is_open(
     )
     lever_board.mount(respx_mock)
     lever_board.add("a", "lever news", NOW - timedelta(days=1))
-    # Web source (spec 010): listing pages and job pages (read, gone, failing,
-    # with an exclude word, not applied since spec 012) are tracked too.
+    # Web source (spec 010): listing pages and job pages (read, gone, failing)
+    # are tracked too.
     from tests.discovery.test_web_service import make_web_source
     from tests.discovery.web_stubs import Sites, WebSite, resolve
 
@@ -1549,9 +1520,9 @@ async def test_no_http_or_groq_call_while_a_transaction_is_open(
     )
     web.add("read", "web job text")
     web.add("gone", "MATCH", status=404)
-    web.add("excl", "spam MATCH")
+    web.add("match", "MATCH")
     web.listed.append("failing")  # no page: answers 500
-    user_id = await make_user(db, exclude=["spam"])
+    user_id = await make_user(db)
     await make_web_source(db, user_id, web)
     await link_telegram(db, user_id)
     await make_source(db, user_id)
@@ -1597,7 +1568,7 @@ async def test_no_http_or_groq_call_while_a_transaction_is_open(
 
     assert board.detail_requests == [1, 3]
     assert web.listing_requests == [1, 2]
-    assert sorted(web.job_requests) == ["excl", "failing", "gone", "read"]
+    assert sorted(web.job_requests) == ["failing", "gone", "match", "read"]
     assert lever_board.requests
     assert len(bot.sent) == 1 and bot.violations == 0
     assert len(http_violations) >= 8 and set(http_violations) == {0}

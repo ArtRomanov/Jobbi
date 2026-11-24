@@ -1676,7 +1676,7 @@ async def _fill_detail(
     company: str | None,
     report: RunReport,
 ) -> bool:
-    """Store the job page (exclude words are not applied since spec 012).
+    """Store the job page.
     False (nothing written) when the source changed since it was loaded."""
     title = title or row.title
     text = text or title or ""
