@@ -2128,27 +2128,35 @@ class _UserEvaluation:
                 rated_per_source=self._rated_per_source,
             )
             if batch is None:
-                full = [
-                    source
-                    for source, n in self._rated_per_source.items()
-                    if n >= PER_SOURCE_RUN_LIMIT
-                ]
-                self._report.posts_deferred += await _count_deferred(
-                    self._session_factory, self._user_id, full, self._skip_ids
-                )
+                await self._count_deferred()
                 return _Outcome.DONE
             if isinstance(batch, _CapReached):
                 await _set_limit_reached(
                     self._session_factory, self._user_id, batch.local_date
                 )
                 self._report.users_capped.add(self._user_id)
+                await self._count_deferred()
                 return _Outcome.DONE
+            outcome = await self._evaluate(batch, batch.rows)
+            if outcome is not None:
+                # The batch was not rated (AI stopped): it does not use the
+                # sources' room, and the run's deferred posts still count.
+                await self._count_deferred()
+                return outcome
             self._rated_per_source.update(
                 row.capped_source_id for row in batch.rows if row.capped_source_id
             )
-            outcome = await self._evaluate(batch, batch.rows)
-            if outcome is not None:
-                return outcome
+
+    async def _count_deferred(self) -> None:
+        """Add the posts held back by PER_SOURCE_RUN_LIMIT to the report."""
+        full = [
+            source
+            for source, n in self._rated_per_source.items()
+            if n >= PER_SOURCE_RUN_LIMIT
+        ]
+        self._report.posts_deferred += await _count_deferred(
+            self._session_factory, self._user_id, full, self._skip_ids
+        )
 
     async def _evaluate(
         self, batch: _Batch, rows: Sequence[_PendingRow]

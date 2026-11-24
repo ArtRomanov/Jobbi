@@ -4,6 +4,7 @@ posts of one source per run (file-backed SQLite, fake Groq, fixed clock)."""
 
 from datetime import datetime, timedelta
 
+import groq
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -18,6 +19,7 @@ from tests.discovery.test_service import (
     at,
     make_source,
     make_user,
+    status_error,
     vacancies,
 )
 
@@ -188,3 +190,50 @@ async def test_rows_without_a_source_are_not_capped_together(
 
     assert ai.posts_sent == [f"MATCH gone{h}" for h in (1, 2, 3, 4)]
     assert report.posts_deferred == 0
+
+
+@pytest.mark.parametrize(
+    ("error", "status"),
+    [(groq.RateLimitError, 429), (groq.InternalServerError, 503)],
+)
+async def test_deferred_counted_when_the_ai_stops_the_run(
+    factory, db, ai, sleep, monkeypatch: pytest.MonkeyPatch, error, status
+) -> None:
+    """A rate limit (stops the run) or a transport error (stops the user)
+    after a source reached its cap: its waiting posts still count."""
+    monkeypatch.setattr(service, "PER_SOURCE_RUN_LIMIT", 3)
+    user_id = await make_user(db)
+    busy = await make_source(db, user_id, handle="busy")
+    quiet = await make_source(db, user_id, handle="quiet")
+    await add_posts(db, user_id, busy, "busy", [1, 2, 3, 4, 5, 6, 7])
+    await add_posts(db, user_id, quiet, "quiet", [8, 9, 10, 11, 12])
+    create = ai.chat.completions.create
+
+    async def fail_second_call(**kwargs):
+        if ai.calls:
+            ai.errors.append(status_error(error, status))
+        return await create(**kwargs)
+
+    monkeypatch.setattr(ai.chat.completions, "create", fail_second_call)
+
+    report = await _evaluate(factory, ai, sleep)
+
+    assert len(ai.calls) == 2  # busy reached its cap in the first batch
+    assert report.posts_deferred == 4  # busy4..busy7
+
+
+async def test_deferred_counted_when_the_daily_cap_ends_the_run(
+    factory, db, ai, sleep, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(service, "PER_SOURCE_RUN_LIMIT", 3)
+    user_id = await make_user(db)
+    busy = await make_source(db, user_id, handle="busy")
+    quiet = await make_source(db, user_id, handle="quiet")
+    await add_posts(db, user_id, busy, "busy", [1, 2, 3, 4, 5, 6, 7])
+    await add_posts(db, user_id, quiet, "quiet", [8, 9, 10])
+    config = DiscoveryConfig(model="m", daily_limit=5)
+
+    report = await _evaluate(factory, ai, sleep, config=config)
+
+    assert len(ai.posts_sent) == 5 and report.users_capped == {user_id}
+    assert report.posts_deferred == 4  # busy4..busy7 were held by its cap
