@@ -3,9 +3,10 @@ import { Button, FormInput, SegmentedControl, colors } from "@/shared/ui";
 import type { SegmentedControlOption } from "@/shared/ui";
 import { CV_NAME_MAX_LENGTH, PHONE_MEDIA_QUERY } from "../config";
 import { useMediaQuery } from "../lib/use-media-query";
-import type { CvTextEditorValues } from "../model/types";
+import type { CvTextEditorValues, CvTextExportValues } from "../model/types";
 import { useCvTextDraft } from "../model/use-cv-text-draft";
 import { useUnsavedChangesGuard } from "../model/use-unsaved-changes-guard";
+import { BaseCvSwitch } from "./base-cv-switch";
 import { CvContentField } from "./cv-content-field";
 import { CvPreviewPane } from "./cv-preview-pane";
 import { UnsavedChangesDialog } from "./unsaved-changes-dialog";
@@ -29,11 +30,11 @@ interface CvTextEditorProps {
   /** Values the editor starts from; read once on mount. */
   initialValues: CvTextEditorValues;
   /**
-   * The last saved version ({"", ""} for a CV not created yet). "Save" is
+   * The last saved version (empty, switch off, for a CV not created yet). "Save" is
    * active and leaving is guarded only while the draft differs from it.
    */
   savedValues: CvTextEditorValues;
-  /** Called with the trimmed name and the text. Errors are the caller's to show. */
+  /** Called with the trimmed name, the text and the switch. Errors are the caller's to show. */
   onSave: (values: CvTextEditorValues) => Promise<void>;
   isSaving: boolean;
   /** Why the last save failed; shown next to "Save". The draft is kept. */
@@ -42,7 +43,7 @@ interface CvTextEditorProps {
    * When given, an "Export PDF" button exports the current draft (unsaved
    * changes included; the name trimmed, possibly empty).
    */
-  onExport?: (values: CvTextEditorValues) => void | Promise<void>;
+  onExport?: (values: CvTextExportValues) => void | Promise<void>;
 }
 
 /**
@@ -85,6 +86,8 @@ export function CvTextEditor({
         error={draft.nameError ?? undefined}
         onChange={(event) => draft.setName(event.target.value)}
       />
+
+      <BaseCvSwitch checked={draft.isBase} onChange={draft.setIsBase} />
 
       {isPhone ? (
         <>

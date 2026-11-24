@@ -7,10 +7,11 @@ import { DESCRIPTION_MAX_LENGTH, SAVED_MESSAGE } from "../lib/constants";
 import type { UseSearchSettingsFormResult } from "./types";
 
 /**
- * Draft description + exclude words for the "What are you looking for?" form.
- * `initial` seeds the drafts once (the form is re-mounted when settings load).
- * Save PATCHes both fields, then shows the server-normalized values, reports
- * them via `onSaved` and toasts "Saved"; a failure becomes an inline error.
+ * Draft description for the "What are you looking for?" form. `initial` seeds
+ * the draft once (the form is re-mounted when settings load). Save PATCHes
+ * only `description` — `exclude` is left out so the stored exclude words stay
+ * unchanged (hidden since spec 012) — then shows the server-normalized value,
+ * reports it via `onSaved` and toasts "Saved"; a failure becomes an inline error.
  */
 export function useSearchSettingsForm(
   initial: VacancySearchSettings | null,
@@ -18,7 +19,6 @@ export function useSearchSettingsForm(
 ): UseSearchSettingsFormResult {
   const { showToast } = useToast();
   const [description, setDescriptionValue] = useState(initial?.description ?? "");
-  const [exclude, setExcludeValue] = useState<readonly string[]>(initial?.exclude ?? []);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   // Guards against a second save before React re-renders with isSaving=true
@@ -30,11 +30,6 @@ export function useSearchSettingsForm(
     setSaveError(null);
   }, []);
 
-  const setExclude = useCallback((values: readonly string[]): void => {
-    setExcludeValue(values);
-    setSaveError(null);
-  }, []);
-
   const save = useCallback(async (): Promise<boolean> => {
     if (isSavingRef.current) return false;
     isSavingRef.current = true;
@@ -43,10 +38,8 @@ export function useSearchSettingsForm(
     try {
       const saved = await updateSearchSettings({
         description: description.trim() === "" ? null : description,
-        exclude: [...exclude],
       });
       setDescriptionValue(saved.description ?? "");
-      setExcludeValue(saved.exclude);
       onSaved(saved);
       showToast(SAVED_MESSAGE, "success");
       return true;
@@ -57,7 +50,7 @@ export function useSearchSettingsForm(
       isSavingRef.current = false;
       setIsSaving(false);
     }
-  }, [description, exclude, onSaved, showToast]);
+  }, [description, onSaved, showToast]);
 
-  return { description, setDescription, exclude, setExclude, saveError, isSaving, save };
+  return { description, setDescription, saveError, isSaving, save };
 }

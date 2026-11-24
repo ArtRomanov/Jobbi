@@ -21,3 +21,6 @@ export const QUICK_ACTIONS = [
       "Please help me prepare for an interview for the {role_title} role at {company_name}. Suggest likely interview questions, key topics to research about the company, and preparation tips.",
   },
 ] as const;
+
+/** Toast after a CV change card is accepted (spec 011 §2.5). */
+export const CARD_ACCEPTED_MESSAGE = "Change applied to your CV";

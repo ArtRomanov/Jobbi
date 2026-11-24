@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from telegram import ReplyParameters
 from telegram.error import BadRequest
 
 # Telegram's limit, counted in UTF-16 code units.
@@ -21,8 +22,16 @@ class FakeBot:
     attempts: int = 0
     violations: int = 0
     sent: list[tuple[int, str]] = field(default_factory=list)
+    # Per sent message: the message id it replies to (None: not a reply).
+    reply_to: list[int | None] = field(default_factory=list)
 
-    async def send_message(self, *, chat_id: int, text: str) -> None:
+    async def send_message(
+        self,
+        *,
+        chat_id: int,
+        text: str,
+        reply_parameters: ReplyParameters | None = None,
+    ) -> None:
         self.attempts += 1
         if self.open_transactions is not None and self.open_transactions():
             self.violations += 1
@@ -31,6 +40,9 @@ class FakeBot:
         if len(text.encode("utf-16-le")) // 2 > MAX_MESSAGE_LENGTH:
             raise BadRequest("Message is too long")
         self.sent.append((chat_id, text))
+        self.reply_to.append(
+            reply_parameters.message_id if reply_parameters is not None else None
+        )
 
     @property
     def texts(self) -> list[str]:

@@ -6,7 +6,7 @@ the pasted search link into a ``SiteListing`` that names the JSON URL of
 each results page and maps one JSON answer to a ``ListingPage`` (the same
 type the HTML parser returns). ``web_scan.read_listing`` then reads that
 endpoint instead of the HTML page; everything after the listing (seen keys,
-the job-page detail step, exclude words, AI) is unchanged. Every other link
+the job-page detail step, AI) is unchanged. Every other link
 keeps the generic HTML path.
 
 The JSON is requested through ``safe_http.fetch_json`` like any user-chosen

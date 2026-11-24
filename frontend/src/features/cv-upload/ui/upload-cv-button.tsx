@@ -7,11 +7,11 @@ import {
   MAX_UPLOAD_BYTES,
   UPLOAD_ERROR_MESSAGES,
 } from "../lib/upload-error-message";
-import type { UploadNoticeRouterState } from "../model/upload-notice-state";
+import type { UploadDraftRouterState } from "../model/upload-draft-state";
 
 /**
- * "Upload CV": picks one PDF/DOCX, uploads it, then opens the new CV's editor
- * with the upload notice in router state (read by `UploadNotice`).
+ * "Upload CV": picks one PDF/DOCX, sends it for text extraction, then opens
+ * `/cvs/new` with the extracted draft in router state (read by `useUploadDraft`).
  */
 export function UploadCvButton() {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -34,11 +34,16 @@ export function UploadCvButton() {
 
     setIsUploading(true);
     try {
-      const cv = await uploadCv(file);
-      const state: UploadNoticeRouterState = {
-        uploadNotice: { truncated: cv.truncated, becameBase: cv.became_base },
+      const extracted = await uploadCv(file);
+      // Nothing is created yet: the editor opens the text as an unsaved draft
+      const state: UploadDraftRouterState = {
+        uploadDraft: {
+          name: extracted.name,
+          content: extracted.content,
+          truncated: extracted.truncated,
+        },
       };
-      void navigate(`/cvs/${cv.id}/edit`, { state });
+      void navigate("/cvs/new", { state });
     } catch (error: unknown) {
       showToast(getUploadErrorMessage(error), "error");
       setIsUploading(false);

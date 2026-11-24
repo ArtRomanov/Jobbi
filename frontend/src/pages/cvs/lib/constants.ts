@@ -10,3 +10,6 @@ export const BASE_LABEL = "Base";
 export const TAILORED_FOR_PREFIX = "For:";
 /** A background refresh failed; the list on screen stays as it was. */
 export const REFRESH_ERROR_MESSAGE = "Could not refresh your CVs. Reload the page to see the latest list.";
+/** Toasts for the row actions (functional spec 2.5). */
+export const CV_DUPLICATED_MESSAGE = "CV duplicated";
+export const CV_DELETED_MESSAGE = "CV deleted";

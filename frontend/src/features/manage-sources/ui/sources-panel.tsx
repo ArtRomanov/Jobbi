@@ -24,7 +24,7 @@ interface SourcesPanelProps {
 /**
  * Inbox "Sources" panel: add a Telegram channel, job board or web page (with an
  * inline preview for pages), manage watched sources and
- * edit the search description + exclude words. `onScanFinished` runs when a
+ * edit the search description. `onScanFinished` runs when a
  * source's scan ends (the page refreshes its vacancy list).
  */
 export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }: SourcesPanelProps) {

@@ -30,6 +30,9 @@ from app.bot.handlers.inbox_forward import (
     NO_TEXT_MESSAGE,
     build_forwarded_post,
 )
+from app.discovery.fetchers.telegram import MAX_TEXT_CHARS
+from app.discovery.types import PostLink
+from app.models.forwarded_post import ForwardedPost
 from app.models.telegram_conversation import TelegramConversation
 from app.models.telegram_link import TelegramLink
 from app.models.user import User
@@ -38,6 +41,7 @@ from app.models.vacancy_search_settings import VacancySearchSettings
 from tests.conftest import TestSessionLocal
 
 CHAT_ID = 424_242
+FORWARD_MESSAGE_ID = 1  # `_message` id in the user's chat with the bot
 PRIVATE_CHANNEL_ID = -1001234567890
 POSTED = datetime(2026, 11, 20, 9, 30, tzinfo=UTC)
 
@@ -178,6 +182,16 @@ def test_post_without_text_is_not_built() -> None:
 # --- the handler -------------------------------------------------------------------
 
 
+def test_reply_texts_follow_the_spec() -> None:
+    assert ADDED_MESSAGE == (
+        "📥 Got it. Jobbi will rate it and add matching vacancies to your Inbox."
+    )
+    assert ADDED_NO_DESCRIPTION_MESSAGE == (
+        "📥 Saved. Describe what you're looking for on the Sources page so Jobbi "
+        "can rate it."
+    )
+
+
 async def test_channel_forward_adds_pending_card(
     db_session: AsyncSession, linked_user: str
 ) -> None:
@@ -193,6 +207,51 @@ async def test_channel_forward_adds_pending_card(
     assert _replies(context) == [ADDED_MESSAGE]
     conversation = await db_session.scalar(select(TelegramConversation))
     assert conversation is None  # no tracker dialog started
+    [forward] = (await db_session.scalars(select(ForwardedPost))).all()
+    assert (
+        forward.user_id,
+        forward.external_key,
+        forward.chat_id,
+        forward.message_id,
+        forward.reported_at,
+    ) == (linked_user, "tgc:1234567890/42", CHAT_ID, FORWARD_MESSAGE_ID, None)
+
+
+async def test_channel_forward_of_a_known_job_link_is_not_merged_at_once(
+    db_session: AsyncSession, linked_user: str
+) -> None:
+    """Merging happens after rating; the bot only says it got the post."""
+    await _set_description(db_session, linked_user, "React, remote")
+    link = "https://jobs.example.com/1"
+    db_session.add(
+        Vacancy(
+            user_id=linked_user,
+            external_key="tg:public/7",
+            url="https://t.me/public/7",
+            job_link=link,
+            text="React role",
+            posted_at=datetime(2026, 11, 19),
+            found_at=datetime(2026, 11, 19),
+            state="new",
+            fit="high",
+        )
+    )
+    await db_session.commit()
+    text = f"Apply: {link}"
+    message = _message(
+        text=text,
+        entities=[MessageEntity(MessageEntity.URL, 7, len(link))],
+        origin=_channel_origin(),
+    )
+    context = _context()
+
+    await dialog.handle_message(_update(message), context)
+
+    assert sorted(card.state for card in await _cards(db_session)) == [
+        "new",
+        "pending",
+    ]
+    assert _replies(context) == [ADDED_MESSAGE]
 
 
 async def test_channel_forward_without_description_says_how_to_rate(
@@ -216,6 +275,7 @@ async def test_same_post_forwarded_twice(
 
     assert len(await _cards(db_session)) == 1
     assert _replies(context)[-1] == ALREADY_SEEN_MESSAGE
+    assert len((await db_session.scalars(select(ForwardedPost))).all()) == 1
 
 
 async def test_media_only_forward_is_rejected(
@@ -228,6 +288,7 @@ async def test_media_only_forward_is_rejected(
 
     assert await _cards(db_session) == []
     assert _replies(context) == [NO_TEXT_MESSAGE]
+    assert (await db_session.scalars(select(ForwardedPost))).all() == []
 
 
 async def test_unlinked_chat_stores_nothing(db_session: AsyncSession) -> None:
@@ -312,3 +373,168 @@ def test_overlong_job_link_is_dropped() -> None:
     _, post = build_forwarded_post(message, _channel_origin())
 
     assert post.job_link is None
+
+
+# --- links per line ----------------------------------------------------------------
+
+
+def _utf16_len(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _url_entity(text: str, url: str) -> MessageEntity:
+    """A URL entity over `url` in `text`, with Telegram's UTF-16 offsets."""
+    start = text.index(url)
+    return MessageEntity(MessageEntity.URL, _utf16_len(text[:start]), _utf16_len(url))
+
+
+def _text_link(text: str, label: str, url: str) -> MessageEntity:
+    start = text.index(label)
+    return MessageEntity(
+        MessageEntity.TEXT_LINK,
+        _utf16_len(text[:start]),
+        _utf16_len(label),
+        url=url,
+    )
+
+
+LINKS_TEXT = (
+    "\n  🔥🔥 Two roles\n"
+    "🚀 Frontend: https://jobs.example.com/fe?utm_source=tg\n"
+    "Chat t.me/acme_chat\n"
+    "👩‍💻 Backend: apply here"
+)
+LINKS_ENTITIES = [
+    _url_entity(LINKS_TEXT, "https://jobs.example.com/fe?utm_source=tg"),
+    _url_entity(LINKS_TEXT, "t.me/acme_chat"),
+    _text_link(LINKS_TEXT, "apply here", "https://jobs.example.com/be/"),
+]
+LINKS_EXPECTED = (
+    PostLink(line=2, url="https://jobs.example.com/fe"),
+    PostLink(line=4, url="https://jobs.example.com/be"),
+)
+
+
+def test_links_carry_lines_of_the_stored_text() -> None:
+    message = _message(text=LINKS_TEXT, entities=LINKS_ENTITIES)
+
+    _, post = build_forwarded_post(message, _channel_origin())
+
+    # The stored text is stripped, so the leading blank line is not counted.
+    assert post.text.split("\n")[0] == "🔥🔥 Two roles"
+    assert post.links == LINKS_EXPECTED
+    assert post.job_link == "https://jobs.example.com/fe"
+
+
+def test_caption_links_carry_lines() -> None:
+    message = _message(text=None, caption=LINKS_TEXT, caption_entities=LINKS_ENTITIES)
+
+    _, post = build_forwarded_post(message, _channel_origin())
+
+    assert post.links == LINKS_EXPECTED
+
+
+def test_text_link_starting_with_a_line_break_counts_on_its_visible_line() -> None:
+    text = "Roles:\n\nDesigner\nEnd"
+    entity = MessageEntity(
+        MessageEntity.TEXT_LINK,
+        text.index("\n"),
+        len("\n\nDesigner"),
+        url="https://jobs.example.com/design",
+    )
+
+    _, post = build_forwarded_post(
+        _message(text=text, entities=[entity]), _channel_origin()
+    )
+
+    assert post.links == (PostLink(line=3, url="https://jobs.example.com/design"),)
+
+
+def test_links_beyond_the_text_cap_are_dropped() -> None:
+    text = (
+        "https://jobs.example.com/kept\n"
+        + "x" * MAX_TEXT_CHARS
+        + " jobs.example.com/cut"
+    )
+    message = _message(
+        text=text,
+        entities=[
+            _url_entity(text, "https://jobs.example.com/kept"),
+            _url_entity(text, "jobs.example.com/cut"),
+        ],
+    )
+
+    _, post = build_forwarded_post(message, _channel_origin())
+
+    assert len(post.text) == MAX_TEXT_CHARS
+    assert post.links == (PostLink(line=1, url="https://jobs.example.com/kept"),)
+
+
+def test_overlong_links_are_not_post_links() -> None:
+    url = "https://jobs.example.com/" + "a" * 2100
+    message = _message(
+        text=f"Apply {url}\nor https://ok.example.com",
+        entities=[
+            MessageEntity(MessageEntity.URL, 6, len(url)),
+            MessageEntity(MessageEntity.URL, 6 + len(url) + 4, 22),
+        ],
+    )
+
+    _, post = build_forwarded_post(message, _channel_origin())
+
+    assert post.links == (PostLink(line=2, url="https://ok.example.com"),)
+
+
+@pytest.mark.parametrize("field", ["text", "caption"])
+def test_emoji_before_a_link_at_line_end_keeps_its_line(field: str) -> None:
+    """Emoji take two UTF-16 units: a naive offset would land on the next line."""
+    text = "🔥🔥🔥🔥🔥🔥 a.io\nNext line"
+    entities = [_url_entity(text, "a.io")]
+    message = (
+        _message(text=text, entities=entities)
+        if field == "text"
+        else _message(text=None, caption=text, caption_entities=entities)
+    )
+
+    _, post = build_forwarded_post(message, _channel_origin())
+
+    assert post.links == (PostLink(line=1, url="https://a.io"),)
+
+
+@pytest.mark.parametrize(
+    "separator",
+    ["\r\n", "\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", " ", " "],
+    ids=["crlf", "cr", "vt", "ff", "fs", "gs", "rs", "nel", "ls", "ps"],
+)
+def test_line_separators_become_line_breaks(separator: str) -> None:
+    """Python's other line boundaries are stored as "\\n", so the lines the AI
+    numbers and the link lines agree; entity offsets still hit their links."""
+    raw = separator.join(["🔥 Jobs", "React: a.io", "Java", "Vue: b.io", "End"])
+    message = _message(
+        text=raw, entities=[_url_entity(raw, "a.io"), _url_entity(raw, "b.io")]
+    )
+
+    _, post = build_forwarded_post(message, _channel_origin())
+
+    assert post.text == "🔥 Jobs\nReact: a.io\nJava\nVue: b.io\nEnd"
+    assert post.links == (
+        PostLink(line=2, url="https://a.io"),
+        PostLink(line=4, url="https://b.io"),
+    )
+
+
+def test_crlf_text_links_keep_their_lines_after_a_leading_break() -> None:
+    raw = "\r\n\r\nRoles:\r\n\r\nDesigner\r\nEnd"
+    entity = MessageEntity(
+        MessageEntity.TEXT_LINK,
+        raw.index("\r\n\r\nDesigner"),
+        len("\r\n\r\nDesigner"),
+        url="https://jobs.example.com/design",
+    )
+
+    _, post = build_forwarded_post(
+        _message(text=raw, entities=[entity]), _channel_origin()
+    )
+
+    assert post.text == "Roles:\n\nDesigner\nEnd"
+    assert post.links == (PostLink(line=3, url="https://jobs.example.com/design"),)

@@ -1,28 +1,21 @@
-import { screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { useLocation } from "react-router-dom";
 import { UploadCvButton, UploadNotice } from "@/features/cv-upload";
+import { CvEditorPage } from "@/pages/cv-editor";
+import { CvsPage } from "@/pages/cvs";
+import { serveCvStore } from "./mocks/cv-store";
+import { mockUploadDraft } from "./mocks/handlers";
 import { server } from "./setup";
 import { renderWithProviders } from "./utils";
 
-const UPLOAD_URL = "http://localhost:8000/api/v1/cvs/upload";
+vi.mock("@/features/cv-pdf", () => ({ downloadCvTextPdf: vi.fn().mockResolvedValue(undefined) }));
 
-const uploadedCv = {
-  id: "cv-new",
-  name: "resume",
-  content: "Ivan Petrov",
-  version: 1,
-  linked_applications_count: 0,
-  created_at: "2026-11-23T10:00:00Z",
-  updated_at: "2026-11-23T10:00:00Z",
-  is_base: false,
-  kind: "own",
-  tailored_for: null,
-  tailored_application_deleted: false,
-  became_base: false,
-  truncated: false,
-};
+const UPLOAD_URL = "http://localhost:8000/api/v1/cvs/upload";
+const CVS_URL = "http://localhost:8000/api/v1/cvs";
+const NOTICE = "Text extracted from your file. Review it and save to add it to your CVs.";
+const CUT_LINE = "The text was longer than 20 000 characters and was cut.";
+const LEAVE_PROMPT = "You have unsaved changes. Leave without saving?";
 
 function pdfFile(name = "resume.pdf", size?: number): File {
   const file = new File(["%PDF-1.4 test"], name, { type: "application/pdf" });
@@ -30,26 +23,18 @@ function pdfFile(name = "resume.pdf", size?: number): File {
   return file;
 }
 
-/** Router state each EditorStub render saw (the notice clears it right away). */
-let editorStates: unknown[] = [];
+/** Bodies of every `POST /cvs` (creating a CV); an upload must add none. */
+let creates: unknown[] = [];
 
-/** Editor stand-in: shows the notice and records the router state it received. */
-function EditorStub() {
-  const location = useLocation();
-  editorStates.push(location.state);
-  return (
-    <div>
-      <p>Editor {location.pathname}</p>
-      <UploadNotice />
-    </div>
-  );
-}
-
+/** The CVs page's upload button at /cvs, the real editor at /cvs/new and /cvs/:id/edit. */
 function renderButton() {
   return renderWithProviders(<UploadCvButton />, {
     initialEntries: ["/cvs"],
     path: "/cvs",
-    routes: [{ path: "/cvs/:id/edit", element: <EditorStub /> }],
+    routes: [
+      { path: "/cvs/new", element: <CvEditorPage /> },
+      { path: "/cvs/:id/edit", element: <CvEditorPage /> },
+    ],
   });
 }
 
@@ -57,9 +42,76 @@ function fileInput(): HTMLInputElement {
   return screen.getByTestId("cv-upload-input");
 }
 
+function textArea(): HTMLTextAreaElement {
+  return screen.getByRole("textbox", { name: "CV text" }) as HTMLTextAreaElement;
+}
+
+function nameInput(): HTMLInputElement {
+  return screen.getByRole("textbox", { name: /cv name/i }) as HTMLInputElement;
+}
+
+function saveButton(): HTMLButtonElement {
+  return screen.getByRole("button", { name: "Save" }) as HTMLButtonElement;
+}
+
+function baseSwitch(): HTMLInputElement {
+  return screen.getByRole("switch", { name: "Set as base CV for every application" }) as HTMLInputElement;
+}
+
+/** The real CVs page at /cvs (list + upload button), the real editor routes. */
+function renderCvsPage() {
+  return renderWithProviders(<CvsPage />, {
+    initialEntries: ["/cvs"],
+    path: "/cvs",
+    routes: [
+      { path: "/cvs/new", element: <CvEditorPage /> },
+      { path: "/cvs/:id/edit", element: <CvEditorPage /> },
+    ],
+  });
+}
+
+/** The CVs page's row for a CV (its name is the row's first span). */
+function rowOf(name: string): HTMLElement {
+  return screen.getByText(name, { selector: "span" }).closest("li")!;
+}
+
+/** Upload a file and wait for the draft to open in the editor. */
+async function uploadDraft(
+  user: ReturnType<typeof userEvent.setup>,
+  render: () => ReturnType<typeof renderButton> = renderButton,
+) {
+  const result = render();
+  if (render === renderCvsPage) await screen.findByRole("region", { name: "My CVs" });
+  await user.upload(fileInput(), pdfFile());
+  await screen.findByDisplayValue(mockUploadDraft.name);
+  return result;
+}
+
 beforeEach(() => {
   localStorage.setItem("jobbi_token", "test-token");
-  editorStates = [];
+  creates = [];
+  server.use(
+    http.post(CVS_URL, async ({ request }) => {
+      const body = (await request.json()) as { name: string; content: string; is_base?: boolean };
+      creates.push(body);
+      return HttpResponse.json(
+        {
+          id: "cv-new",
+          name: body.name,
+          content: body.content,
+          version: 1,
+          linked_applications_count: 0,
+          created_at: "2026-11-23T10:00:00Z",
+          updated_at: "2026-11-23T10:00:00Z",
+          is_base: body.is_base === true,
+          kind: "own",
+          tailored_for: null,
+          tailored_application_deleted: false,
+        },
+        { status: 201 },
+      );
+    }),
+  );
 });
 
 describe("UploadCvButton", () => {
@@ -73,72 +125,137 @@ describe("UploadCvButton", () => {
     expect(input.hidden).toBe(true);
   });
 
-  it("sends the file as multipart and opens the editor with the notice", async () => {
+  it("sends the file as multipart and opens the text as an unsaved draft — nothing is created", async () => {
     let received: FormDataEntryValue | null = null;
     let auth: string | null = null;
     server.use(
       http.post(UPLOAD_URL, async ({ request }) => {
         auth = request.headers.get("Authorization");
         received = (await request.formData()).get("file");
-        return HttpResponse.json(uploadedCv, { status: 201 });
+        return HttpResponse.json(mockUploadDraft);
       }),
     );
     const user = userEvent.setup();
-    const { router } = renderButton();
+    const { router } = await uploadDraft(user);
 
-    await user.upload(fileInput(), pdfFile());
-
-    await waitFor(() => {
-      expect(router.state.location.pathname).toBe("/cvs/cv-new/edit");
-    });
-    expect(editorStates[0]).toEqual({
-      uploadNotice: { truncated: false, becameBase: false },
-    });
+    expect(router.state.location.pathname).toBe("/cvs/new");
     expect(auth).toBe("Bearer test-token");
     expect(received).toBeInstanceOf(File);
     expect((received as unknown as File).name).toBe("resume.pdf");
-    expect(
-      screen.getByText("Text extracted from your file. Check the line breaks and save."),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/was cut/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/base CV/)).not.toBeInTheDocument();
+
+    expect(nameInput()).toHaveValue(mockUploadDraft.name);
+    expect(textArea()).toHaveValue(mockUploadDraft.content);
+    expect(screen.getByRole("status")).toHaveTextContent(NOTICE);
+    expect(screen.queryByText(CUT_LINE)).not.toBeInTheDocument();
+    // The old "This CV is now your base CV." line is gone
+    expect(screen.queryByText(/now your base CV/)).not.toBeInTheDocument();
+    // The draft is unsaved: Save is active, the switch starts off
+    expect(saveButton()).not.toHaveAttribute("aria-disabled");
+    expect(baseSwitch()).not.toBeChecked();
+    expect(creates).toEqual([]);
   });
 
-  it("an upload that became the base adds the base line to the notice", async () => {
-    server.use(
-      http.post(UPLOAD_URL, () =>
-        HttpResponse.json({ ...uploadedCv, is_base: true, became_base: true }, { status: 201 }),
-      ),
-    );
+  it("clears the draft from router state, so a reload opens an empty new CV", async () => {
     const user = userEvent.setup();
-    const { router } = renderButton();
+    const first = await uploadDraft(user);
 
-    await user.upload(fileInput(), pdfFile());
+    await waitFor(() => expect(first.router.state.location.state).toBeNull());
+    expect(first.router.state.location.pathname).toBe("/cvs/new");
+    // The replace neither prompts nor loses the draft
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(textArea()).toHaveValue(mockUploadDraft.content);
+    expect(screen.getByRole("status")).toHaveTextContent(NOTICE);
 
-    await waitFor(() => {
-      expect(router.state.location.pathname).toBe("/cvs/cv-new/edit");
+    const reloadAt = first.router.state.location;
+    first.unmount();
+    renderWithProviders(<CvEditorPage />, { initialEntries: [reloadAt], path: "/cvs/new" });
+
+    expect(nameInput()).toHaveValue("");
+    expect(textArea()).toHaveValue("");
+    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+    expect(saveButton()).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("asks before leaving the draft; Leave discards it and creates nothing", async () => {
+    const user = userEvent.setup();
+    const { router } = await uploadDraft(user);
+    await waitFor(() => expect(router.state.location.state).toBeNull());
+
+    await act(async () => {
+      await router.navigate("/cvs");
     });
-    expect(editorStates[0]).toEqual({ uploadNotice: { truncated: false, becameBase: true } });
-    expect(screen.getByRole("status")).toHaveTextContent("This CV is now your base CV.");
-    expect(screen.queryByText(/was cut/)).not.toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(LEAVE_PROMPT);
+
+    await user.click(within(dialog).getByRole("button", { name: "Leave" }));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/cvs"));
+    expect(screen.getByRole("button", { name: "Upload CV" })).toBeInTheDocument();
+    expect(creates).toEqual([]);
+  });
+
+  it("Stay keeps the draft in the editor", async () => {
+    const user = userEvent.setup();
+    const { router } = await uploadDraft(user);
+
+    await act(async () => {
+      await router.navigate("/cvs");
+    });
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Stay" }));
+
+    expect(router.state.location.pathname).toBe("/cvs/new");
+    expect(textArea()).toHaveValue(mockUploadDraft.content);
+    expect(screen.getByRole("status")).toHaveTextContent(NOTICE);
+    expect(creates).toEqual([]);
+  });
+
+  it("saving the draft creates the CV (not as base) and returns to the CVs list with it", async () => {
+    const user = userEvent.setup();
+    const store = serveCvStore();
+    const { router } = await uploadDraft(user, renderCvsPage);
+
+    await user.click(saveButton());
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/cvs"));
+    expect(screen.getByText("CV saved")).toBeInTheDocument();
+    expect(store.posts).toEqual([
+      { name: mockUploadDraft.name, content: mockUploadDraft.content, is_base: false },
+    ]);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "CV text" })).not.toBeInTheDocument();
+    // The list is fetched again on arrival, so the new CV is in it
+    expect(await screen.findByText(mockUploadDraft.name, { selector: "span" })).toBeInTheDocument();
+    expect(within(rowOf(mockUploadDraft.name)).queryByText("Base")).not.toBeInTheDocument();
+  });
+
+  it("the draft's switch turned on makes the new CV the base", async () => {
+    const user = userEvent.setup();
+    const store = serveCvStore();
+    const { router } = await uploadDraft(user, renderCvsPage);
+
+    await user.click(baseSwitch());
+    await user.click(saveButton());
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/cvs"));
+    expect(screen.getByText("CV saved and set as your base CV")).toBeInTheDocument();
+    expect(store.posts).toEqual([
+      { name: mockUploadDraft.name, content: mockUploadDraft.content, is_base: true },
+    ]);
+    await screen.findByText(mockUploadDraft.name, { selector: "span" });
+    expect(within(rowOf(mockUploadDraft.name)).getByText("Base")).toBeInTheDocument();
+    expect(within(rowOf("Software Engineer CV")).queryByText("Base")).not.toBeInTheDocument();
   });
 
   it("passes the cut flag on, and the notice shows the cut line", async () => {
     server.use(
-      http.post(UPLOAD_URL, () =>
-        HttpResponse.json({ ...uploadedCv, truncated: true }, { status: 201 }),
-      ),
+      http.post(UPLOAD_URL, () => HttpResponse.json({ ...mockUploadDraft, truncated: true })),
     );
     const user = userEvent.setup();
-    renderButton();
+    await uploadDraft(user);
 
-    await user.upload(fileInput(), pdfFile());
-
-    expect(
-      await screen.findByText(
-        "The text was longer than 20 000 characters and was cut.",
-      ),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(CUT_LINE);
   });
 
   it('shows "Uploading…" and is disabled while the upload runs', async () => {
@@ -151,7 +268,7 @@ describe("UploadCvButton", () => {
       http.post(UPLOAD_URL, async () => {
         calls += 1;
         await gate;
-        return HttpResponse.json(uploadedCv, { status: 201 });
+        return HttpResponse.json(mockUploadDraft);
       }),
     );
     const user = userEvent.setup();
@@ -172,7 +289,7 @@ describe("UploadCvButton", () => {
 
     release();
     await waitFor(() => {
-      expect(router.state.location.pathname).toBe("/cvs/cv-new/edit");
+      expect(router.state.location.pathname).toBe("/cvs/new");
     });
   });
 
@@ -199,6 +316,7 @@ describe("UploadCvButton", () => {
     expect(await screen.findByText(text)).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/cvs");
     expect(screen.getByRole("button", { name: "Upload CV" })).not.toHaveAttribute("aria-disabled");
+    expect(creates).toEqual([]);
   });
 
   it("shows the generic message on a network error", async () => {
@@ -218,7 +336,7 @@ describe("UploadCvButton", () => {
     server.use(
       http.post(UPLOAD_URL, () => {
         calls += 1;
-        return HttpResponse.json(uploadedCv, { status: 201 });
+        return HttpResponse.json(mockUploadDraft);
       }),
     );
     const user = userEvent.setup();
@@ -232,47 +350,28 @@ describe("UploadCvButton", () => {
 });
 
 describe("UploadNotice", () => {
-  it("renders nothing without upload state", () => {
-    renderWithProviders(<UploadNotice />);
+  it("shows the draft notice without the cut line", () => {
+    renderWithProviders(<UploadNotice truncated={false} />);
 
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(NOTICE);
+    expect(screen.queryByText(CUT_LINE)).not.toBeInTheDocument();
   });
 
-  it("is shown once: clears the router state, and a reload shows nothing", async () => {
-    const entry = {
-      pathname: "/cvs/1/edit",
-      search: "?x=1",
-      state: { uploadNotice: { truncated: false, becameBase: false } },
-    };
-    const first = renderWithProviders(<UploadNotice />, { initialEntries: [entry] });
+  it("adds the cut line when the text was cut", () => {
+    renderWithProviders(<UploadNotice truncated />);
 
-    expect(screen.getByRole("status")).toHaveTextContent("Text extracted from your file.");
-    await waitFor(() => {
-      expect(first.router.state.location.state).toBeNull();
-    });
-    // Same URL, replaced in place, and the notice stays up for this visit
-    expect(first.router.state.location.pathname).toBe("/cvs/1/edit");
-    expect(first.router.state.location.search).toBe("?x=1");
-    expect(first.router.state.historyAction).toBe("REPLACE");
-    expect(screen.getByRole("status")).toBeInTheDocument();
-
-    // A reload restores the (now empty) history entry
-    const reloadAt = first.router.state.location;
-    first.unmount();
-    renderWithProviders(<UploadNotice />, { initialEntries: [reloadAt] });
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(CUT_LINE);
   });
+});
 
-  it("adds the base line when the CV became the base", () => {
-    renderWithProviders(<UploadNotice />, {
-      initialEntries: [
-        { pathname: "/cvs/1/edit", state: { uploadNotice: { truncated: true, becameBase: true } } },
-      ],
+describe("CvEditorPage — no upload draft", () => {
+  it("ignores router state that is not a draft and opens an empty new CV", () => {
+    renderWithProviders(<CvEditorPage />, {
+      initialEntries: [{ pathname: "/cvs/new", state: { uploadDraft: { name: 1 } } }],
+      path: "/cvs/new",
     });
 
-    const notice = screen.getByRole("status");
-    expect(notice).toHaveTextContent("Text extracted from your file.");
-    expect(notice).toHaveTextContent("was cut.");
-    expect(notice).toHaveTextContent("This CV is now your base CV.");
+    expect(nameInput()).toHaveValue("");
+    expect(screen.queryByText(NOTICE)).not.toBeInTheDocument();
   });
 });

@@ -5,14 +5,16 @@ endpoint. Uses only portable SQLAlchemy constructs (GROUP BY, COALESCE, outer
 join on an aggregate subquery) so it runs unchanged on SQLite and PostgreSQL.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.constants import ApplicationStatus
+from app.discovery.evaluator import MAX_POST_CHARS
 from app.models.application import Application, ApplicationStatusHistory
+from app.models.vacancy_seen_key import VacancySeenKey
 from app.services.vacancy_service import count_new
 
 RECENT_ACTIVITY_WINDOW = timedelta(hours=24)
@@ -26,7 +28,7 @@ def _to_naive_utc(moment: datetime) -> datetime:
     """Timestamps are stored as naive UTC; normalize `now` to match."""
     if moment.tzinfo is None:
         return moment
-    return moment.astimezone(timezone.utc).replace(tzinfo=None)
+    return moment.astimezone(UTC).replace(tzinfo=None)
 
 
 def _plural(count: int, singular: str, plural: str | None = None) -> str:
@@ -92,6 +94,18 @@ async def _count_follow_ups(db: AsyncSession, user_id: str, cutoff: datetime) ->
     return result.scalar_one()
 
 
+async def _count_cut_posts(db: AsyncSession, user_id: str, since: datetime) -> int:
+    """Posts evaluated in the window that were longer than the AI window."""
+    result = await db.execute(
+        select(func.count(VacancySeenKey.id)).where(
+            VacancySeenKey.user_id == user_id,
+            VacancySeenKey.cut_for_ai.is_(True),
+            VacancySeenKey.evaluated_at >= since,
+        )
+    )
+    return result.scalar_one()
+
+
 def _format_pipeline(counts: dict[str, int]) -> str:
     parts = [
         f"{counts.get(ApplicationStatus.RESEARCHING.value, 0)} researching",
@@ -124,6 +138,14 @@ def _format_inbox(count: int) -> str:
     return f"📥 {count} new {word} in Inbox"
 
 
+def _format_cut_posts(count: int) -> str:
+    return (
+        f"✂️ {count} posts in the last 24 hours were longer than Jobbi reads "
+        f"({MAX_POST_CHARS:,} characters); vacancies at their end may have been "
+        "missed."
+    )
+
+
 def _dashboard_line() -> str:
     base_url = get_settings().JOBBI_PUBLIC_URL.rstrip("/")
     return f"🔗 Open your dashboard: {base_url}/dashboard"
@@ -140,15 +162,18 @@ async def build_summary(
         now: Reference time (naive UTC or tz-aware). Defaults to current UTC
             time; injectable for tests.
     """
-    reference = _to_naive_utc(now or datetime.now(timezone.utc))
+    reference = _to_naive_utc(now or datetime.now(UTC))
 
     counts = await _count_by_status(db, user_id)
     # Same number as the Inbox badge.
     new_vacancies = await count_new(db, user_id)
+    cut_posts = await _count_cut_posts(db, user_id, reference - RECENT_ACTIVITY_WINDOW)
     if sum(counts.values()) == 0:
         lines = [EMPTY_STATE_MESSAGE]
         if new_vacancies:
             lines.append(_format_inbox(new_vacancies))
+        if cut_posts:
+            lines.append(_format_cut_posts(cut_posts))
         lines.extend(["", _dashboard_line()])
         return "\n".join(lines)
 
@@ -167,5 +192,7 @@ async def build_summary(
         lines.append(_format_follow_up(follow_ups))
     if new_vacancies:
         lines.append(_format_inbox(new_vacancies))
+    if cut_posts:
+        lines.append(_format_cut_posts(cut_posts))
     lines.extend(["", _dashboard_line()])
     return "\n".join(lines)

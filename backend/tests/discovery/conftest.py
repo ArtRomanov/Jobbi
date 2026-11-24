@@ -3,6 +3,8 @@ test modules in this package (board sources live in `test_board_service.py`)."""
 
 from tests.discovery.test_service import (  # noqa: F401 - re-exported fixtures
     ai,
+    bot,
+    channel,
     db,
     factory,
     http,

@@ -203,7 +203,7 @@ export function ApplicationPanel({
       reset(toFormValues(updated));
       onUpdate();
 
-      showToast("CV duplicated and linked.", "success");
+      showToast("CV duplicated", "success");
       navigate(`/cvs/${duplicated.id}/edit`);
     } catch (err: unknown) {
       handleApiError(err, showToast);
