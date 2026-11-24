@@ -140,6 +140,10 @@ class ListingPage:
     jobs: list[ListingJob] = field(default_factory=list)
     next_url: str | None = None
     ats_hint: AtsHint | None = None
+    # Site listing adapters only: entries the source listed on this page,
+    # usable or not (e.g. archived). A page of only archived entries has no
+    # jobs but is not the end of the listing.
+    item_count: int = 0
 
 
 def _bare_host(host: str) -> str:

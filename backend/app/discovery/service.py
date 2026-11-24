@@ -51,7 +51,7 @@ from app.discovery.evaluator import (
 )
 from app.discovery.fetchers import safe_http
 from app.discovery.fetchers.board_http import fits_columns
-from app.discovery.fetchers.errors import BoardReadError
+from app.discovery.fetchers.errors import BLOCKED_MESSAGE, BoardReadError
 from app.discovery.fetchers.safe_http import PageFetchError, Resolver, UnsafeUrlError
 from app.discovery.fetchers.telegram import SourceReadError, fetch_channel_posts
 from app.discovery.fetchers.web_job import fetch_job
@@ -125,7 +125,7 @@ READ_ERROR_MESSAGES = {
     "private_or_deleted": "Channel is private or deleted",
     "not_found": "Job board not found",
     "unreachable": "Could not reach the source",
-    "blocked": "The site blocks automated readers",
+    "blocked": BLOCKED_MESSAGE,
     "no_vacancies": (
         "No vacancies found — check the link or the 'Job link contains' field"
     ),
@@ -1436,6 +1436,11 @@ async def _read_job_pages(
                 continue
             if not await _count_detail_failure(session_factory, source, row):
                 return _stop_edited(source)
+            if exc.reason == "blocked":
+                # The site challenges automated readers: the other job pages
+                # would be challenged too. They wait for the next check.
+                logger.info("Web source %s: job pages wait (blocked)", source.id)
+                return None
             failures_in_row += 1
         except UnsafeUrlError:
             if not await _count_detail_failure(session_factory, source, row):

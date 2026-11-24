@@ -28,7 +28,7 @@ GEEKJOB_REACT = json.loads((FIXTURES / "geekjob_react.json").read_text("utf-8"))
 GEEKJOB_SEARCH = "https://geekjob.ru/vacancies?qs=react"
 UNREADABLE = "Could not read this job board"
 BOARD_INVALID = "Not a Greenhouse, Lever, Teamtailor or Ashby job board link"
-BLOCKED = "This site blocks automated readers — try its job board link instead"
+BLOCKED = "This site blocks automated readers"
 DUPLICATE = "Already in your sources"
 CF_HEADERS = {
     "content-type": "text/html; charset=UTF-8",

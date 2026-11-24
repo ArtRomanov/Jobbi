@@ -1,17 +1,23 @@
-"""Errors raised by the Greenhouse / Lever board fetchers."""
+"""Errors raised by the board fetchers, and the shared "blocked" text."""
 
 from datetime import datetime
 from typing import Literal
 
-BoardErrorReason = Literal["not_found", "unreachable"]
+BoardErrorReason = Literal["not_found", "unreachable", "blocked"]
+
+# Shown for a bot-protection challenge (reason `blocked`) by the API (preview,
+# add, edit) and as the worker's Unavailable reason: one text everywhere.
+BLOCKED_MESSAGE = "This site blocks automated readers"
 
 
 class BoardReadError(Exception):
     """A job board could not be read.
 
     ``reason`` is ``"not_found"`` when the board does not exist (HTTP 404 or a
-    handle that cannot be a valid board) and ``"unreachable"`` for everything
-    else: network errors, timeouts, 429, 5xx, oversized or malformed responses.
+    handle that cannot be a valid board), ``"blocked"`` for a bot-protection
+    challenge (403/429/503 with ``cf-mitigated: challenge``) and
+    ``"unreachable"`` for everything else: network errors, timeouts, 429, 5xx,
+    oversized or malformed responses.
     """
 
     def __init__(self, reason: BoardErrorReason) -> None:

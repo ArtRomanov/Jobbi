@@ -7,6 +7,7 @@ fetched only through the SSRF-guarded `safe_http` (via `web_scan`).
 """
 
 import asyncio
+import weakref
 
 import httpx
 import structlog
@@ -14,7 +15,7 @@ from bs4 import BeautifulSoup
 
 from app.discovery import web_scan
 from app.discovery.fetchers import ashby, greenhouse, lever, teamtailor
-from app.discovery.fetchers.errors import BoardReadError
+from app.discovery.fetchers.errors import BLOCKED_MESSAGE, BoardReadError
 from app.discovery.fetchers.safe_http import PageFetchError, UnsafeUrlError
 from app.services.vacancy_source_parsing import UNSAFE_LINK_MESSAGE
 
@@ -57,6 +58,33 @@ class BoardUnreadableError(SourceCheckError):
     """The job board does not exist (404) or could not be read in time."""
 
     message = BOARD_UNREADABLE_MESSAGE
+
+
+class SiteBlockedError(SourceCheckError):
+    """The page or board API answered with a bot-protection challenge."""
+
+    message = BLOCKED_MESSAGE
+
+
+def _board_check_error(exc: BaseException) -> SourceCheckError:
+    """The user-facing error for a failed board check."""
+    if isinstance(exc, BoardReadError) and exc.reason == "blocked":
+        return SiteBlockedError()
+    return BoardUnreadableError()
+
+
+# One Ashby live check at a time per event loop: an answer may be 32 MB and
+# its parse thread outlives the 10 s timeout, so parallel adds would stack
+# up memory. Keyed by loop because an asyncio.Semaphore binds to one loop.
+_ashby_slots: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = weakref.WeakKeyDictionary()
+
+
+def _ashby_slot() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    slot = _ashby_slots.get(loop)
+    if slot is None:
+        slot = _ashby_slots[loop] = asyncio.Semaphore(1)
+    return slot
 
 
 async def _fetch_capped(client: httpx.AsyncClient, url: str) -> tuple[int, bytes]:
@@ -141,7 +169,7 @@ async def fetch_greenhouse_board_name(token: str) -> str:
             token=token,
             error=getattr(exc, "reason", type(exc).__name__),
         )
-        raise BoardUnreadableError from exc
+        raise _board_check_error(exc) from exc
     return name[:MAX_DISPLAY_NAME_LENGTH]
 
 
@@ -169,7 +197,7 @@ async def check_lever_board(kind: str, company: str) -> str:
             company=company,
             error=getattr(exc, "reason", type(exc).__name__),
         )
-        raise BoardUnreadableError from exc
+        raise _board_check_error(exc) from exc
     return lever.display_name_from_slug(company)[:MAX_DISPLAY_NAME_LENGTH]
 
 
@@ -192,7 +220,7 @@ async def fetch_teamtailor_board_name(subdomain: str) -> str:
             subdomain=subdomain,
             error=getattr(exc, "reason", type(exc).__name__),
         )
-        raise BoardUnreadableError from exc
+        raise _board_check_error(exc) from exc
     return name[:MAX_DISPLAY_NAME_LENGTH]
 
 
@@ -202,32 +230,35 @@ async def check_ashby_board(org: str) -> str:
     The Posting API has no organization-name field, so the name is derived
     from the slug (`manychat` -> "Manychat").
 
+    Checks run one at a time (``_ashby_slot``); the 10 s budget starts when
+    this check gets its turn.
+
     Raises:
         BoardUnreadableError: unknown board (404), network error, timeout, an
             unexpected response, or the 10 s total budget ran out.
+        SiteBlockedError: the API answered with a bot-protection challenge.
     """
-    try:
-        async with (
-            asyncio.timeout(CHECK_TIMEOUT_SECONDS),
-            httpx.AsyncClient(timeout=CHECK_TIMEOUT_SECONDS) as client,
-        ):
-            await ashby.check_board(client, org)
-    except (TimeoutError, BoardReadError) as exc:
-        logger.warning(
-            "ashby_board_check_failed",
-            org=org,
-            error=getattr(exc, "reason", type(exc).__name__),
-        )
-        raise BoardUnreadableError from exc
+    async with _ashby_slot():
+        try:
+            async with (
+                asyncio.timeout(CHECK_TIMEOUT_SECONDS),
+                httpx.AsyncClient(timeout=CHECK_TIMEOUT_SECONDS) as client,
+            ):
+                await ashby.check_board(client, org)
+        except (TimeoutError, BoardReadError) as exc:
+            logger.warning(
+                "ashby_board_check_failed",
+                org=org,
+                error=getattr(exc, "reason", type(exc).__name__),
+            )
+            raise _board_check_error(exc) from exc
     return ashby.display_name(org)[:MAX_DISPLAY_NAME_LENGTH]
 
 
 # --- web pages -----------------------------------------------------------------
 
 PAGE_UNREADABLE_MESSAGE = "Could not open this page"
-SITE_BLOCKED_MESSAGE = (
-    "This site blocks automated readers — try its job board link instead"
-)
+SITE_BLOCKED_MESSAGE = BLOCKED_MESSAGE
 NO_VACANCIES_MESSAGE = (
     "No vacancies found on this page. Check the link or set 'Job link contains'."
 )
@@ -246,12 +277,6 @@ class PageUnreadableError(SourceCheckError):
     """The first page did not open: network, timeout, HTTP error, not HTML."""
 
     message = PAGE_UNREADABLE_MESSAGE
-
-
-class SiteBlockedError(SourceCheckError):
-    """Page 1 answered with a bot-protection challenge (e.g. Cloudflare)."""
-
-    message = SITE_BLOCKED_MESSAGE
 
 
 class NoVacanciesError(SourceCheckError):

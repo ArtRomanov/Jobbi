@@ -211,7 +211,9 @@ def _parse_teamtailor(text: str) -> ParsedSource | None:
 
 
 def _parse_ashby(text: str) -> ParsedSource | None:
-    match = _ASHBY_LINK.fullmatch(text)
+    # The board page uses fragments for in-page anchors; they never reach
+    # the API request, so `#...` is dropped before the strict match.
+    match = _ASHBY_LINK.fullmatch(text.partition("#")[0])
     if match is None:
         return None
     handle = match["handle"].lower()

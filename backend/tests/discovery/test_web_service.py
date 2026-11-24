@@ -29,7 +29,7 @@ from tests.discovery.web_stubs import JobPage, Sites, WebSite, resolve
 
 WATCHING_SINCE = NOW - timedelta(days=1)
 UNREACHABLE = "Could not reach the source"
-BLOCKED = "The site blocks automated readers"
+BLOCKED = "This site blocks automated readers"
 NO_VACANCIES = "No vacancies found — check the link or the 'Job link contains' field"
 
 

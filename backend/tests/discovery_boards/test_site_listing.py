@@ -300,20 +300,6 @@ def test_huge_answers_are_capped() -> None:
     assert len(page.jobs) == site_listing.MAX_ITEMS_PER_PAGE
 
 
-def test_parse_never_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    listing = site_listing.find_site_listing(SEARCH)
-    assert listing is not None
-
-    def boom(*args: Any) -> Any:
-        raise RuntimeError("parser bug")
-
-    monkeypatch.setattr(site_listing, "_geekjob_jobs", boom)
-
-    page = listing.parse_page(_answer([_item("a1")]), 1, None)
-
-    assert page.jobs == [] and page.next_url is None
-
-
 # --- read_listing with the adapter ------------------------------------------------
 
 
@@ -460,7 +446,8 @@ async def test_read_listing_hostile_json_gives_no_jobs(
 
     result = await _read()
 
-    assert result.jobs == [] and result.pages_read == 1
+    # Unusable entries do not end the listing: page 2 (empty) is read too.
+    assert result.jobs == [] and result.pages_read == 2
 
 
 async def test_other_sites_still_use_the_html_path(

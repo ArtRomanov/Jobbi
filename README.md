@@ -78,7 +78,7 @@ Add sources in Inbox → Sources by pasting a link. Supported:
 
 geekjob.ru search links with a filter (e.g. `geekjob.ru/vacancies?qs=react`) are read from the site's own search results, newest first.
 
-**Doesn't work:** pages that render vacancies with JavaScript ("No vacancies found"; geekjob.ru search is the exception above), sites behind bot protection such as Cloudflare ("This site blocks automated readers — try its job board link instead"), sites behind a login or captcha, listings not sorted newest first (a new vacancy below seen ones can be missed), local/private addresses ("This link can't be used").
+**Doesn't work:** pages that render vacancies with JavaScript ("No vacancies found"; geekjob.ru search is the exception above), sites behind bot protection such as Cloudflare ("This site blocks automated readers" — try its job board link instead), sites behind a login or captcha, listings not sorted newest first (a new vacancy below seen ones can be missed), local/private addresses ("This link can't be used").
 
 **Limits:** per source per hourly check — up to 5 listing pages and 30 job pages opened; the rest waits for the next check. The daily AI limit (`DISCOVERY_DAILY_EVAL_LIMIT`, 150) is shared by all sources.
 

@@ -85,7 +85,6 @@ def test_ashby_org_bounds_accepted(org: str, handle: str) -> None:
         "https://jobs.ashbyhq.com:443/acme",
         "jobs.ashbyhq.com:8080/acme",
         "//jobs.ashbyhq.com/acme",
-        "https://jobs.ashbyhq.com/acme#frag",
         "https://jobs.ashbyhq.com/ac me",
         "https://jobs.ashbyhq.com/<script>",
         "https://jobs.ashbyhq.com/Kcme",  # Kelvin sign

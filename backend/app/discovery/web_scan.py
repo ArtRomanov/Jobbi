@@ -110,7 +110,11 @@ async def _read_page(
         )
         return listing, page.final_url
     document = await fetch_json(
-        page_url, client=client, resolver=resolver, timeout_s=timeout_s
+        page_url,
+        client=client,
+        resolver=resolver,
+        timeout_s=timeout_s,
+        max_redirects=site.max_redirects,
     )
     listing = await asyncio.to_thread(
         site.parse_page, document.data, page_number, job_link_contains
@@ -192,8 +196,13 @@ async def read_listing(
             new_jobs = [job for job in listing.jobs if job.url not in seen_urls]
             seen_urls.update(job.url for job in new_jobs)
             result.jobs.extend(new_jobs)
-            if not new_jobs or await _should_stop(stop_after, new_jobs):
+            if new_jobs:
+                if await _should_stop(stop_after, new_jobs):
+                    break
+            elif site is None or listing.item_count == 0:
                 break
+            # else: an adapter page whose entries were all unusable (e.g.
+            # archived) is not the end of the listing; keep paging.
             candidate = listing.next_url
             if (
                 candidate is not None

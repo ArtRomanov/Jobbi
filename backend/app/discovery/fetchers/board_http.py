@@ -60,6 +60,17 @@ def check_handle(handle: str) -> str:
     return handle
 
 
+_CHALLENGE_STATUSES = frozenset({403, 429, 503})
+
+
+def _is_challenge(response: httpx.Response) -> bool:
+    """A Cloudflare bot challenge (header only: board APIs are JSON/RSS)."""
+    return (
+        response.status_code in _CHALLENGE_STATUSES
+        and response.headers.get("cf-mitigated", "").strip().lower() == "challenge"
+    )
+
+
 async def get_bytes(
     client: httpx.AsyncClient,
     url: str,
@@ -94,6 +105,8 @@ async def get_bytes(
             if response.status_code == 404:
                 raise BoardReadError("not_found")
             if response.status_code != 200:
+                if _is_challenge(response):
+                    raise BoardReadError("blocked")
                 raise BoardReadError("unreachable")
             body = bytearray()
             async for chunk in response.aiter_bytes():

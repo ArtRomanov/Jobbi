@@ -38,7 +38,9 @@ from urllib.parse import parse_qsl, quote, urlencode, urlsplit
 
 import structlog
 
+from app.discovery.fetchers.safe_http import PageFetchError
 from app.discovery.fetchers.web_listing import MAX_TITLE_CHARS, ListingJob, ListingPage
+from app.discovery.normalize import normalize_url
 
 __all__ = [
     "MAX_ITEMS_PER_PAGE",
@@ -61,12 +63,18 @@ class SiteListing:
     """A search on a site read through its JSON endpoint.
 
     ``params`` are the filters sent with every page (without ``page``).
+    ``canonical_url`` is the one listing URL for every spelling of the same
+    search (only the filters the adapter sends, apex host): the source is
+    stored and de-duplicated by it. The JSON endpoint is on a fixed host, so
+    its requests follow no redirects (``max_redirects``).
     """
 
     name: str
     api_url: str
     params: tuple[tuple[str, str], ...]
     parser: PageParser
+    canonical_url: str
+    max_redirects: int = 0
 
     def page_url(self, page: int) -> str:
         """The JSON URL of results page ``page`` (1-based)."""
@@ -78,19 +86,25 @@ class SiteListing:
     def parse_page(
         self, data: Any, page: int, job_link_contains: str | None
     ) -> ListingPage:
-        """Jobs of one JSON answer and the next page URL. Never raises.
+        """Jobs of one JSON answer, how many entries it had, and the next page.
 
         ``job_link_contains`` keeps only job URLs containing it
-        (case-insensitive), as on HTML listings. CPU work on remote input:
-        async callers run it through ``asyncio.to_thread``.
+        (case-insensitive), as on HTML listings. An unexpected shape gives an
+        empty page. CPU work on remote input: async callers run it through
+        ``asyncio.to_thread``.
+
+        Raises:
+            PageFetchError: ``unreachable`` if the parser itself fails (a bug
+                on odd input): the page reads as "could not open", not as
+                "no vacancies". Nothing else is raised.
         """
         try:
             return self.parser(self, data, page, job_link_contains)
-        except Exception as exc:  # noqa: BLE001 - remote JSON must not crash a run
+        except Exception as exc:  # a parser bug on remote JSON: page unreadable
             logger.warning(
                 "site_listing_parse_failed", site=self.name, error=type(exc).__name__
             )
-            return ListingPage()
+            raise PageFetchError("unreachable") from exc
 
 
 # --- geekjob.ru ---------------------------------------------------------------------
@@ -98,12 +112,19 @@ class SiteListing:
 _GEEKJOB_HOSTS = frozenset({"geekjob.ru", "www.geekjob.ru"})
 _GEEKJOB_PATH_RE = re.compile(r"/vacancies(?:/\d{1,4})?/?", re.ASCII)
 _GEEKJOB_API = "https://geekjob.ru/json/find/vacancy"
+_GEEKJOB_LISTING = "https://geekjob.ru/vacancies"
 _GEEKJOB_JOB_URL = "https://geekjob.ru/vacancy/{id}"
 _GEEKJOB_FLAGS = ("pt", "ih", "rm", "rl", "na")
 _GEEKJOB_DEFAULT_MONEY = "120000"
 _GEEKJOB_NEWEST_FIRST = ("sort", "1")
 _TAG_LIST_RE = re.compile(r"\d{1,6}(?:,\d{1,6}){0,49}", re.ASCII)
 _ITEM_ID_RE = re.compile(r"[A-Za-z0-9]{1,64}", re.ASCII)
+# Removed from titles: control characters other than whitespace (NUL breaks
+# PostgreSQL text) and bidi controls (they can reorder what the user reads).
+_INVISIBLE_RE = re.compile(
+    "[\x00-\x08\x0b\x0c\x0e-\x1f\x7f"  # C0 controls (not tab/newlines) and DEL
+    "\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]"  # bidi controls
+)
 
 
 def _geekjob_params(query: str) -> list[tuple[str, str]]:
@@ -127,7 +148,7 @@ def _geekjob_params(query: str) -> list[tuple[str, str]]:
 def _host_without_root_dot(hostname: str | None) -> str:
     """Lowercased host with one trailing (DNS root) dot removed."""
     host = (hostname or "").lower()
-    return host[:-1] if host.endswith(".") else host
+    return host.removesuffix(".")
 
 
 def _match_geekjob(url: str) -> SiteListing | None:
@@ -148,18 +169,22 @@ def _match_geekjob(url: str) -> SiteListing | None:
     params = _geekjob_params(parts.query)
     if not params:
         return None
+    # `money` follows from `s` (the script's fixed amount), so it is left out.
+    filters = [(name, value) for name, value in params if name != "money"]
     return SiteListing(
         name="geekjob",
         api_url=_GEEKJOB_API,
         params=(*params, _GEEKJOB_NEWEST_FIRST),
         parser=_geekjob_page,
+        canonical_url=normalize_url(f"{_GEEKJOB_LISTING}?{urlencode(filters)}"),
     )
 
 
 def _clean_title(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
-    title = " ".join(value.split())[:MAX_TITLE_CHARS]
+    visible = _INVISIBLE_RE.sub("", value)
+    title = " ".join(visible.split())[:MAX_TITLE_CHARS]
     return title or None
 
 
@@ -207,7 +232,15 @@ def _geekjob_page(
     listing: SiteListing, data: Any, page: int, job_link_contains: str | None
 ) -> ListingPage:
     jobs = _geekjob_jobs(data, job_link_contains)
-    return ListingPage(jobs=jobs, next_url=_geekjob_next(listing, data, page))
+    entries = data.get("data") if isinstance(data, dict) else None
+    item_count = (
+        min(len(entries), MAX_ITEMS_PER_PAGE) if isinstance(entries, list) else 0
+    )
+    return ListingPage(
+        jobs=jobs,
+        next_url=_geekjob_next(listing, data, page),
+        item_count=item_count,
+    )
 
 
 # --- registry -------------------------------------------------------------------------

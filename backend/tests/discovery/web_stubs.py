@@ -42,7 +42,8 @@ class WebSite:
     `?page=N`) and job pages at `/<name>/vacancy/<id>`.
 
     Jobs without a page answer 500. `failing_pages` answer 500 too;
-    `blocked_pages` answer a Cloudflare challenge (403 + `cf-mitigated`).
+    `blocked_pages` (listing) and `blocked_jobs` (job pages) answer a
+    Cloudflare challenge (403 + `cf-mitigated`).
     """
 
     name: str = "acme"
@@ -51,6 +52,7 @@ class WebSite:
     pages: dict[str, JobPage] = field(default_factory=dict)
     failing_pages: set[int] = field(default_factory=set)
     blocked_pages: set[int] = field(default_factory=set)
+    blocked_jobs: set[str] = field(default_factory=set)
     requests: list[str] = field(default_factory=list)
     on_request: Callable[[httpx.Request], None] | None = None
 
@@ -95,7 +97,12 @@ class WebSite:
             if page in self.failing_pages:
                 return httpx.Response(500)
             return httpx.Response(200, headers=HTML, text=self._listing(page))
-        job = self.pages.get(path.rsplit("/", 1)[1])
+        job_id = path.rsplit("/", 1)[1]
+        if job_id in self.blocked_jobs:
+            return httpx.Response(
+                403, headers={**HTML, "cf-mitigated": "challenge"}, text=""
+            )
+        job = self.pages.get(job_id)
         if job is None:
             return httpx.Response(500)
         if job.status != 200:

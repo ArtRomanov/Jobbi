@@ -8,7 +8,7 @@ writes in a short one after.
 
 import hashlib
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from urllib.parse import urlsplit
@@ -17,6 +17,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.discovery.fetchers.site_listing import find_site_listing
 from app.discovery.fetchers.web_listing import AtsHint, ListingJob
 from app.discovery.web_scan import MAX_LISTING_PAGES, web_seen_key
 from app.models.vacancy import Vacancy, VacancyCardSource
@@ -227,6 +228,33 @@ async def update_search_settings(
     raise AssertionError("unreachable")  # pragma: no cover
 
 
+def canonical_web_url(url: str) -> str:
+    """The URL a web source is stored and de-duplicated by.
+
+    For a link a site listing adapter reads (a geekjob.ru search) it is the
+    adapter's canonical URL, so every spelling of one search (``www.``,
+    ``/vacancies/<n>``, parameters the site ignores, a repeated ``qs``) is one
+    source; any other link stays as normalized by the parser. Sources stored
+    before this rule keep their URL and hash (no migration): they are still
+    read correctly, an edit to an equivalent spelling is a no-op, but a new
+    add of the same search in canonical form is not matched against them.
+    """
+    listing = find_site_listing(url)
+    return url if listing is None else listing.canonical_url
+
+
+def parse_input(raw: str) -> ParsedSource:
+    """``parse_source_input`` with the web URL made canonical.
+
+    Raises:
+        SourceInputError: see ``parse_source_input``.
+    """
+    parsed = parse_source_input(raw)
+    if parsed.kind != "web" or parsed.url is None:
+        return parsed
+    return replace(parsed, url=canonical_web_url(parsed.url))
+
+
 def url_hash(url: str) -> str:
     """sha256 hex of an already normalized URL (backs the duplicate check)."""
     return hashlib.sha256(url.encode("utf-8")).hexdigest()
@@ -347,7 +375,7 @@ async def preview_source(
             and no job board link (no vacancies + a board link is a 200 with
             `found_count` 0 and the `ats_hint`).
     """
-    parsed = parse_source_input(raw_input)
+    parsed = parse_input(raw_input)
     if parsed.kind != "web":
         return SourcePreview(kind=parsed.kind)
     assert parsed.url is not None
@@ -413,7 +441,7 @@ async def add_source(
             unreadable, unreachable; web: unsafe link, page not readable or
             no vacancies on page 1).
     """
-    parsed = parse_source_input(raw_input)
+    parsed = parse_input(raw_input)
     custom_name = normalize_source_name(name)
     if parsed.kind == "web":
         pattern = normalize_job_link_contains(job_link_contains)
@@ -619,7 +647,7 @@ async def edit_source(
     parsed = (
         None
         if isinstance(raw_input, _Unset) or raw_input is None
-        else parse_source_input(raw_input)
+        else parse_input(raw_input)
     )
     new_pattern = (
         UNSET
@@ -655,7 +683,10 @@ async def edit_source(
     pattern = (
         source.job_link_contains if isinstance(new_pattern, _Unset) else new_pattern
     )
-    if new_url == source.url and pattern == source.job_link_contains:
+    # A source stored before canonical URLs may hold another spelling of the
+    # same search: compare canonical forms, so such an edit is a no-op too.
+    same_url = new_url in (source.url, canonical_web_url(source.url))
+    if same_url and pattern == source.job_link_contains:
         return await rename_source(db, user_id, source_id, name)
     return await _edit_web_source(
         db,

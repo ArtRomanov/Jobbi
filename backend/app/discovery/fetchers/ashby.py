@@ -102,11 +102,19 @@ def job_posted_at(job: dict[str, Any]) -> datetime | None:
         return None
     try:
         parsed = datetime.fromisoformat(value)
-    except ValueError:
+        if parsed.tzinfo is None:
+            return parsed
+        # Out-of-range offsets (`0001-01-01T00:00:00+01:00`) overflow here.
+        return parsed.astimezone(UTC).replace(tzinfo=None)
+    except (ValueError, OverflowError):
         return None
-    if parsed.tzinfo is None:
-        return parsed
-    return parsed.astimezone(UTC).replace(tzinfo=None)
+
+
+def _with_stripped_url(job: Any) -> Any:
+    """``job`` with surrounding whitespace removed from ``jobUrl``."""
+    if isinstance(job, dict) and isinstance(job.get("jobUrl"), str):
+        return {**job, "jobUrl": job["jobUrl"].strip()}
+    return job
 
 
 def _is_usable(org: str, job: Any) -> bool:
@@ -146,7 +154,8 @@ def parse_board(org: str, data: Any) -> list[dict[str, Any]]:
         logger.warning("ashby_job_limit_reached", board=org, jobs=len(entries))
     usable: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
-    for job in entries[:MAX_JOBS]:
+    for entry in entries[:MAX_JOBS]:
+        job = _with_stripped_url(entry)
         if not _is_usable(org, job) or job["id"] in seen_ids:
             continue
         seen_ids.add(job["id"])
@@ -211,7 +220,7 @@ def to_raw_post(
     a usable date gets ``UNKNOWN_POSTED_AT`` (treated as old). The job link is
     stored, never fetched.
     """
-    job_url: str = job["jobUrl"]
+    job_url: str = job["jobUrl"].strip()
     if posted_at is None:
         posted_at = job_posted_at(job) or UNKNOWN_POSTED_AT
     return RawPost(
