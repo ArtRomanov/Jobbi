@@ -6,7 +6,7 @@ It is NOT a copy-paste implementation guide.
 # Technical Specification: Web Page and Aggregator Sources
 
 - **Functional Specification:** `context/spec/010-web-page-and-aggregator-sources/functional-spec.md`
-- **Status:** Draft
+- **Status:** Completed
 - **Author(s):** Poe (AI Technical Architect)
 
 ---

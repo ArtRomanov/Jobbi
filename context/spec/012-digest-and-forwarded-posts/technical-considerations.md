@@ -1,7 +1,7 @@
 # Technical Specification: Digest Posts and Forwarded Posts
 
 - **Functional Specification:** [functional-spec.md](functional-spec.md)
-- **Status:** Approved
+- **Status:** Completed
 - **Author(s):** Poe (AI Architect)
 
 ---
