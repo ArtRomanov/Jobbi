@@ -122,8 +122,9 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 LOOKBACK = timedelta(days=7)
-# A Telegram channel's first scan reads only this far back: noisy channels
-# would otherwise send ~200 posts to the AI at once (daily token limit).
+# A Telegram channel's first scan sends only this far back to the AI (older
+# posts of LOOKBACK are recorded as seen only): noisy channels would otherwise
+# send ~200 posts to the AI at once (daily token limit).
 TELEGRAM_FIRST_SCAN_LOOKBACK = timedelta(days=3)
 TELEGRAM_FIRST_SCAN_MAX_PAGES = 4  # ~80 posts
 MAX_PAGES = 10
@@ -698,14 +699,20 @@ async def _fetch_source(
         return board.posts, board.seen_only_keys
     # The first scan stores every post of the window that is not yet a seen
     # key (filtered at insert), so a re-added source skips what it showed before.
-    if initial:
-        cutoff = now - TELEGRAM_FIRST_SCAN_LOOKBACK
     known = set() if initial else await _recent_keys(session_factory, source, cutoff)
     max_pages = TELEGRAM_FIRST_SCAN_MAX_PAGES if initial else MAX_PAGES
     posts = await fetch_channel_posts(
         http_client, source.handle, known, cutoff, max_pages, sleep=sleep
     )
-    return posts, []
+    if not initial:
+        return posts, []
+    # First scan: only the last TELEGRAM_FIRST_SCAN_LOOKBACK goes to the AI.
+    # Older posts of the 7-day window are recorded as seen only, so the next
+    # hourly read (7-day cutoff) does not bring them back as new, alerted cards.
+    fresh_since = now - TELEGRAM_FIRST_SCAN_LOOKBACK
+    fresh = [post for post in posts if post.posted_at >= fresh_since]
+    seen_only = [post.external_key for post in posts if post.posted_at < fresh_since]
+    return fresh, seen_only
 
 
 async def _scan_source(
@@ -832,7 +839,7 @@ async def _store_posts(
 ) -> None:
     """Record seen keys and insert `pending` cards in one short transaction.
 
-    `seen_only_keys` (board initial scan: jobs outside the window) are only
+    `seen_only_keys` (board or Telegram first scan: posts outside the AI window) are only
     recorded as seen, so they never become cards later. `needs_detail` (web
     listing items) keeps the new cards away from the AI until the detail
     step has read their job page.
