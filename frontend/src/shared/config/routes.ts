@@ -7,6 +7,8 @@ export const APPLICATION_SEARCH_PARAM = "application";
  */
 export const ROUTES = {
   dashboard: "/dashboard",
+  /** The CVs list; the CV editor returns here after every successful save. */
+  cvs: "/cvs",
   /** Dashboard with the application panel open (read by pages/dashboard, then cleared). */
   dashboardApplication: (applicationId: string): string =>
     `/dashboard?${APPLICATION_SEARCH_PARAM}=${encodeURIComponent(applicationId)}`,

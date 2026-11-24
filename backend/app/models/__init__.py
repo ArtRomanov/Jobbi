@@ -3,6 +3,7 @@ from app.models.application import Application, ApplicationStatusHistory
 from app.models.chat_change_card import ChatChangeCard
 from app.models.chat_message import ChatMessage
 from app.models.cv import Cv
+from app.models.forwarded_post import ForwardedPost
 from app.models.password_reset import PasswordResetToken
 from app.models.telegram_connection_code import TelegramConnectionCode
 from app.models.telegram_conversation import TelegramConversation
@@ -20,6 +21,7 @@ __all__ = [
     "ChatChangeCard",
     "ChatMessage",
     "Cv",
+    "ForwardedPost",
     "PasswordResetToken",
     "TelegramConnectionCode",
     "TelegramConversation",

@@ -45,16 +45,10 @@ export const PREVIEW_NO_VACANCIES_TEXT =
   "No vacancies found on this page. Check the link or set 'Job link contains'.";
 
 export const DESCRIPTION_MAX_LENGTH = 500;
-export const EXCLUDE_MAX_ITEMS = 50;
-export const EXCLUDE_TERM_MAX_LENGTH = 64;
-export const EXCLUDE_LIMIT_MESSAGE = "You can add up to 50 exclude words";
 export const NO_DESCRIPTION_HINT = "Describe what you're looking for to start finding vacancies.";
 export const SAVED_MESSAGE = "Saved";
 export const DESCRIPTION_PLACEHOLDER =
   "Senior frontend, React or Vue, remote or EU, from 4000 €, no outsourcing";
-export const EXCLUDE_HINT =
-  "Posts containing any of these words or phrases are skipped. Press Enter or comma to add.";
-
 export const EDIT_SOURCE_TITLE = "Edit source";
 export const EDIT_LABEL = "Edit";
 export const SAVE_LABEL = "Save";

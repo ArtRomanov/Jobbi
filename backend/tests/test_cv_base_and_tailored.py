@@ -23,14 +23,12 @@ from app.models.application import Application
 from app.models.cv import Cv
 from app.models.user import User
 from app.services.vacancy_service import tailored_cv_name
-from tests.cv_upload_files import make_docx
 from tests.test_vacancies_api import add_card
 
 CVS_URL = "/api/v1/cvs"
 APPS_URL = "/api/v1/applications"
 VACANCIES_URL = "/api/v1/vacancies"
 T0 = datetime(2026, 11, 1, 12, 0)
-DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 def _auth(token: str) -> dict[str, str]:
@@ -402,6 +400,230 @@ class TestMakeBase:
 
 
 # ---------------------------------------------------------------------------
+# `is_base` on POST /cvs and PATCH /cvs/{id} (spec 011 slice 9, 2.1 / 2.4)
+# ---------------------------------------------------------------------------
+
+
+async def _patch(
+    client: httpx.AsyncClient, token: str, cv_id: str, body: dict
+) -> httpx.Response:
+    return await client.patch(f"{CVS_URL}/{cv_id}", json=body, headers=_auth(token))
+
+
+class TestCreateWithIsBase:
+    async def test_is_base_true_makes_the_new_cv_the_base(
+        self, client, token, user_id, db_session
+    ) -> None:
+        old = await _make_cv(db_session, user_id, "Old")
+        await _point_base_at(db_session, user_id, old.id)
+
+        resp = await client.post(
+            CVS_URL, json={"name": "New", "is_base": True}, headers=_auth(token)
+        )
+
+        assert resp.status_code == 201
+        body = resp.json()
+        assert (body["is_base"], body["kind"], body["version"]) == (True, "own", 1)
+        assert await _base_cv_id(db_session, user_id) == body["id"]
+
+    @pytest.mark.parametrize("payload", [{}, {"is_base": False}])
+    async def test_without_is_base_the_base_is_untouched(
+        self, client, token, user_id, db_session, payload
+    ) -> None:
+        old = await _make_cv(db_session, user_id, "Old")
+        await _point_base_at(db_session, user_id, old.id)
+
+        resp = await client.post(
+            CVS_URL, json={"name": "New", **payload}, headers=_auth(token)
+        )
+
+        assert resp.status_code == 201
+        assert resp.json()["is_base"] is False
+        assert await _base_cv_id(db_session, user_id) == old.id
+
+    async def test_without_is_base_no_base_is_set(
+        self, client, token, user_id, db_session
+    ) -> None:
+        resp = await client.post(CVS_URL, json={"name": "First"}, headers=_auth(token))
+
+        assert resp.json()["is_base"] is False
+        assert await _base_cv_id(db_session, user_id) is None
+
+    async def test_one_users_create_does_not_touch_anothers_base(
+        self, client, token, other_registered_user, db_session
+    ) -> None:
+        other_id = other_registered_user["user"]["id"]
+        theirs = await _make_cv(db_session, other_id, "Theirs")
+        await _point_base_at(db_session, other_id, theirs.id)
+
+        await client.post(
+            CVS_URL, json={"name": "Mine", "is_base": True}, headers=_auth(token)
+        )
+
+        assert await _base_cv_id(db_session, other_id) == theirs.id
+
+
+class TestPatchIsBase:
+    async def test_true_makes_it_base_without_bumping_version(
+        self, client, token, user_id, db_session
+    ) -> None:
+        old = await _make_cv(db_session, user_id, "Old")
+        cv = await _make_cv(db_session, user_id, "Cv")
+        await _point_base_at(db_session, user_id, old.id)
+
+        resp = await _patch(client, token, cv.id, {"is_base": True, "version": 1})
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert (body["is_base"], body["version"]) == (True, 1)
+        assert await _base_cv_id(db_session, user_id) == cv.id
+
+    async def test_true_with_content_saves_both(
+        self, client, token, user_id, db_session
+    ) -> None:
+        cv = await _make_cv(db_session, user_id, "Cv")
+
+        resp = await _patch(
+            client,
+            token,
+            cv.id,
+            {"content": "# New", "is_base": True, "version": 1},
+        )
+
+        body = resp.json()
+        assert (body["content"], body["is_base"], body["version"]) == (
+            "# New",
+            True,
+            2,
+        )
+        assert await _base_cv_id(db_session, user_id) == cv.id
+
+    async def test_false_clears_the_base_when_it_is_this_cv(
+        self, client, token, user_id, db_session
+    ) -> None:
+        cv = await _make_cv(db_session, user_id, "Cv")
+        await _point_base_at(db_session, user_id, cv.id)
+
+        resp = await _patch(client, token, cv.id, {"is_base": False, "version": 1})
+
+        assert resp.status_code == 200
+        assert (resp.json()["is_base"], resp.json()["version"]) == (False, 1)
+        assert await _base_cv_id(db_session, user_id) is None
+
+    async def test_false_on_a_non_base_cv_is_a_no_op(
+        self, client, token, user_id, db_session
+    ) -> None:
+        base = await _make_cv(db_session, user_id, "Base")
+        cv = await _make_cv(db_session, user_id, "Cv")
+        await _point_base_at(db_session, user_id, base.id)
+
+        resp = await _patch(client, token, cv.id, {"is_base": False, "version": 1})
+
+        assert resp.status_code == 200
+        assert resp.json()["is_base"] is False
+        assert await _base_cv_id(db_session, user_id) == base.id
+
+    @pytest.mark.parametrize("payload", [{}, {"is_base": None}])
+    async def test_absent_or_null_leaves_the_base_alone(
+        self, client, token, user_id, db_session, payload
+    ) -> None:
+        cv = await _make_cv(db_session, user_id, "Cv")
+        await _point_base_at(db_session, user_id, cv.id)
+
+        resp = await _patch(
+            client, token, cv.id, {"content": "# Edit", "version": 1, **payload}
+        )
+
+        assert resp.json()["is_base"] is True
+        assert await _base_cv_id(db_session, user_id) == cv.id
+
+    async def test_tailored_copy_becomes_own_and_keeps_its_link(
+        self, client, token, user_id, db_session
+    ) -> None:
+        application = await _make_application(db_session, user_id)
+        copy = await _make_cv(
+            db_session,
+            user_id,
+            "Copy",
+            updated_minutes=5,
+            kind="tailored",
+            tailored_for_application_id=application.id,
+        )
+
+        resp = await _patch(client, token, copy.id, {"is_base": True, "version": 1})
+
+        body = resp.json()
+        assert (body["kind"], body["is_base"], body["version"]) == ("own", True, 1)
+        saved = await _fresh_cv(db_session, copy.id)
+        assert saved.tailored_for_application_id == application.id
+        assert saved.updated_at == T0 + timedelta(minutes=5)
+
+    @pytest.mark.parametrize("is_base", [True, False])
+    async def test_stale_version_is_409_and_changes_nothing(
+        self, client, token, user_id, db_session, is_base
+    ) -> None:
+        base = await _make_cv(db_session, user_id, "Base")
+        cv = await _make_cv(db_session, user_id, "Cv")
+        # True would move the base to `cv`; False would clear it from `cv`.
+        current = base.id if is_base else cv.id
+        await _point_base_at(db_session, user_id, current)
+
+        resp = await _patch(client, token, cv.id, {"is_base": is_base, "version": 0})
+
+        assert resp.status_code == 409
+        assert resp.json() == {"detail": "CV_CHANGED"}
+        assert await _base_cv_id(db_session, user_id) == current
+
+    async def test_cv_saved_elsewhere_after_the_read_is_409(
+        self, client, token, user_id, db_session
+    ) -> None:
+        """The base write itself is version-guarded, not only the read."""
+        from app.services import cv_service
+
+        cv = await _make_cv(db_session, user_id, "Cv")
+        real_get_cv = cv_service.get_cv
+        calls = 0
+
+        async def _get_then_saved_elsewhere(db, owner_id, cv_id):
+            nonlocal calls
+            calls += 1
+            found = await real_get_cv(db, owner_id, cv_id)
+            if calls == 1:
+                # Not synchronized: the CV just read keeps version 1.
+                await db.execute(
+                    update(Cv)
+                    .where(Cv.id == cv_id)
+                    .values(version=Cv.version + 1)
+                    .execution_options(synchronize_session=False)
+                )
+            return found
+
+        with patch.object(cv_service, "get_cv", _get_then_saved_elsewhere):
+            resp = await _patch(client, token, cv.id, {"is_base": True, "version": 1})
+
+        assert resp.status_code == 409
+        assert await _base_cv_id(db_session, user_id) is None
+
+    async def test_another_users_cv_is_404_and_no_base_changes(
+        self, client, token, user_id, other_registered_user, db_session
+    ) -> None:
+        other_id = other_registered_user["user"]["id"]
+        theirs = await _make_cv(db_session, other_id, "Theirs")
+        await _point_base_at(db_session, other_id, theirs.id)
+        mine = await _make_cv(db_session, user_id, "Mine")
+        await _point_base_at(db_session, user_id, mine.id)
+
+        for is_base in (True, False):
+            resp = await _patch(
+                client, token, theirs.id, {"is_base": is_base, "version": 1}
+            )
+            assert resp.status_code == 404
+
+        assert await _base_cv_id(db_session, other_id) == theirs.id
+        assert await _base_cv_id(db_session, user_id) == mine.id
+
+
+# ---------------------------------------------------------------------------
 # Delete / duplicate
 # ---------------------------------------------------------------------------
 
@@ -443,40 +665,6 @@ async def test_dangling_base_pointer_counts_as_no_base(
     ]
     one = await client.get(f"{CVS_URL}/{own.id}", headers=_auth(token))
     assert one.json()["is_base"] is False
-
-
-async def test_upload_replaces_a_dangling_base_pointer(
-    client, token, user_id, db_session
-) -> None:
-    await _point_base_at(db_session, user_id, "missing-cv-id")
-
-    resp = await client.post(
-        f"{CVS_URL}/upload",
-        files={"file": ("up.docx", make_docx(), DOCX_MIME)},
-        headers=_auth(token),
-    )
-
-    assert resp.status_code == 201
-    body = resp.json()
-    assert body["became_base"] is True
-    assert body["is_base"] is True
-    assert await _base_cv_id(db_session, user_id) == body["id"]
-
-
-async def test_upload_replaces_a_pointer_to_another_users_cv(
-    client, token, user_id, other_registered_user, db_session
-) -> None:
-    theirs = await _make_cv(db_session, other_registered_user["user"]["id"], "Theirs")
-    await _point_base_at(db_session, user_id, theirs.id)
-
-    resp = await client.post(
-        f"{CVS_URL}/upload",
-        files={"file": ("up.docx", make_docx(), DOCX_MIME)},
-        headers=_auth(token),
-    )
-
-    assert resp.json()["became_base"] is True
-    assert [cv["is_base"] for cv in await _list(client, token)] == [True]
 
 
 async def test_deleting_another_cv_keeps_the_base(

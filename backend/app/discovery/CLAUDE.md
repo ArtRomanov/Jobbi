@@ -1,6 +1,6 @@
 # Discovery worker (`python -m app.discovery`)
 
-Hourly check of vacancy sources → exclude words → Groq evaluation → Inbox → Telegram alerts. Run one instance only.
+Hourly check of vacancy sources → Groq evaluation (exclude words are not applied since spec 012) → Inbox → Telegram alerts. Run one instance only.
 
 - **Source kinds and fetchers** (`fetchers/`): `telegram` (`telegram.py`); `greenhouse` / `lever` / `lever_eu` / `teamtailor` via `board_scan.py` (`greenhouse.py`, `lever.py`, `teamtailor.py` — RSS through `lxml` with entities and network off); `web` via `web_scan.py` (`web_listing.py` parses a listing, `web_job.py` reads one job page).
 - **Web = two steps.** Listing step: up to 5 pages, stops after the first page with a seen key; new jobs are stored `pending` + `needs_detail`. Detail step: up to 30 job pages per source per check (JSON-LD `JobPosting`, else `trafilatura.extract`); after 3 failed reads the row is evaluated by its listing title. The evaluator skips `needs_detail` rows.

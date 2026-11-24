@@ -1,10 +1,13 @@
 # CV Editor Page
 
 Route page for `/cvs/new` and `/cvs/:id/edit`; composes `CvTextEditor` (`@/features/cv-text-editor`), loads/saves the CV and, in edit mode, passes `onExport` so the editor's current draft goes to `downloadCvTextPdf`.
-- A ref (`isSavingRef`) drops a second Save while one is in flight.
 
-- `cv` is the last saved/loaded CV; PATCH always sends its `version` and keeps the returned one.
-- The editor is keyed by `editorSeed`, which changes only when a different CV loads. After "Create" the page navigates to `/cvs/<id>/edit` (replace); React Router keeps this page instance, so the editor and its draft stay mounted and the CV is not fetched again (`cvRef` already holds it). `cv` state and `cvRef` change together, only via `setSavedCv`.
-- Passes `savedValues` (from `cv`, or empty for a new CV) for dirty tracking, and `saveError` from `getCvSaveErrorMessage` instead of a toast on a failed save; a 409 never reloads or overwrites the draft.
-- Under the title: a "Base" badge when `cv.is_base`, and for a tailored copy "Tailored for: " + `CvTailoredFor` (`entities/cv`; dashboard link or "Application deleted"). Read from the last saved/loaded `cv`, so nothing shows on `/cvs/new`.
-- `UploadNotice` (`@/features/cv-upload`) sits above the editor: right after an upload it shows the extracted-text notice from router state, then clears that state (replace, same URL) so a reload does not show it again.
+- Every successful save (create, upload draft, edit) shows the save toast and navigates to `ROUTES.cvs` with `replace`. Replace because the unsaved-changes guard never blocks `REPLACE` (the editor's draft is still "dirty" vs. `savedValues` at that moment; the page never feeds the saved CV back in), and Back from the list does not reopen a saved form. `ToastProvider` sits in the app's root route, above all pages, so the toast survives the move; the CVs page refetches its list on mount.
+- A failed save (any error, incl. 409 `CV_CHANGED`) stays on the editor: `saveError` from `getCvSaveErrorMessage` is shown next to Save, the draft is untouched, the guard stays on.
+- `isSavingRef` drops a second Save while one is in flight; after a success it (and `isSaving`) stay on until the page unmounts, so Save cannot fire twice.
+- `cv` is the loaded CV (null on `/cvs/new`); PATCH sends its `version`. `cv` state and `cvRef` change together, only via `setSavedCv`, and only when a CV loads (or the instance moves to `/cvs/new`).
+- The editor is keyed by `editorSeed`, which changes only when a different CV loads or a fresh `/cvs/new` starts in the same page instance (React Router reuses it across the two routes).
+- Passes `savedValues` (from `cv`, or empty for a new CV) for dirty tracking.
+- Under the title: a "Base" badge when `cv.is_base`, and for a tailored copy "Tailored for: " + `CvTailoredFor` (`entities/cv`; dashboard link or "Application deleted"). Read from the loaded `cv`, so nothing shows on `/cvs/new`.
+- Upload draft (spec 2.3): on `/cvs/new`, `useUploadDraft()` (`@/features/cv-upload`) gives the extracted `{name, content, truncated}` from router state; it seeds the editor (switch off) and, since `savedValues` stay empty, the draft is dirty: Save active, guard on, "Leave" drops it and nothing is created. `UploadNotice` shows above the editor. A reload opens an empty new CV (the hook clears the router state).
+- Base CV switch (label "Set as base CV for every application"): POST always sends `is_base`; PATCH sends it only when the switch differs from the loaded `cv.is_base` (never clears a base set elsewhere). Only a save that sent `is_base` (switch changed; on POST, switch on) gets a base toast, from the saved CV vs. the one before: became base → "CV saved and set as your base CV", stopped being base → "CV saved. You have no base CV now."; every other save → "CV saved" (a base change made elsewhere is not announced as this save's).

@@ -32,6 +32,7 @@ __all__ = [
     "MAX_FIELD_CHARS",
     "MAX_MESSAGE_CHARS",
     "AlertCard",
+    "clip_field",
     "default_inbox_url",
     "format_alert",
     "send_run_alerts",
@@ -101,7 +102,9 @@ def _strip_controls(value: str) -> str:
     )
 
 
-def _clip(value: str, limit: int = MAX_FIELD_CHARS) -> str:
+def clip_field(value: str, limit: int = MAX_FIELD_CHARS) -> str:
+    """One line of untrusted text for a bot message: control characters
+    dropped, whitespace collapsed, cut to `limit`."""
     value = _strip_controls(value)
     value = " ".join(value.split())  # no line breaks inside one alert line
     return value if len(value) <= limit else f"{value[: limit - 1].rstrip()}…"
@@ -109,8 +112,8 @@ def _clip(value: str, limit: int = MAX_FIELD_CHARS) -> str:
 
 def _line(card: AlertCard) -> str:
     fit = _FIT_LABELS.get(card.fit or "", "Unrated")
-    role = _clip(card.title or "") or "Unknown role"
-    company = _clip(card.company or "") or "Unknown company"
+    role = clip_field(card.title or "") or "Unknown role"
+    company = clip_field(card.company or "") or "Unknown company"
     return f"{fit} · {role} — {company}"
 
 

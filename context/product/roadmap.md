@@ -52,7 +52,11 @@ _Extend Jobbi with external job sources to streamline the research step._
 
 - [x] **Telegram Bot Integration**
   - [x] **Job Alerts via Telegram:** Receive notifications about new matching jobs directly in Telegram.
-  - [x] **Quick Add from Telegram:** Forward a job posting to Jobbi's bot to create an application entry automatically.
+  - [x] **Quick Add from Telegram:** Send or forward a job posting to Jobbi's bot to create an application entry automatically. A post forwarded from a channel goes to the Inbox instead (see Vacancy Discovery).
+
+- [ ] **Vacancy Discovery (Inbox)**
+  - [x] **Watched Sources & AI Rating:** Jobbi checks the user's public Telegram channels and Greenhouse/Lever career pages every hour, rates new posts against a plain-text search description, and collects matches in an Inbox, with alerts in Telegram (spec 009).
+  - [ ] **Digest & Forwarded Posts:** A post that lists several vacancies is split, and only matching vacancies become cards; posts forwarded to the bot from any channel, private ones included, are rated the same way, and the bot reports the result (spec 012).
 
 - [ ] **HeadHunter Integration**
   - [ ] **Job Search & Import:** Search HeadHunter from within Jobbi and import job postings directly as application entries.

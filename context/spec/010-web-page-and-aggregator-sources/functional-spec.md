@@ -10,7 +10,7 @@
 
 Spec 009 watches Telegram channels and Greenhouse/Lever boards. Most vacancies the user cares about are on **job aggregators** (hirify.me, geekjob.ru, hirehi.ru, careerspace.app, ingamejob.com) and on **company career pages** that use none of those boards (Playrix, Ostrovok, Wrike, EPAM, Avito…). The user checks these by hand today.
 
-**Desired outcome:** the user pastes any aggregator search link or career-page link into Sources, with the site's own filters already in the link (e.g. `?q=react&remote=1`). Jobbi checks it every hour, opens every new vacancy to read its text, and runs it through the same pipeline as spec 009 (exclude words → AI match and fit → Inbox → bot alert). No per-site setup in code: everything is configured in the UI.
+**Desired outcome:** the user pastes any aggregator search link or career-page link into Sources, with the site's own filters already in the link (e.g. `?q=react&remote=1`). Jobbi checks it every hour, opens every new vacancy to read its text, and runs it through the same pipeline as spec 009 (AI match and fit → Inbox → bot alert; exclude words were switched off by spec 012). No per-site setup in code: everything is configured in the UI.
 
 **Success criteria:**
 - The user can watch an aggregator search or career page by pasting its link, with no code change per site.
@@ -65,7 +65,7 @@ Spec 009 watches Telegram channels and Greenhouse/Lever boards. Most vacancies t
   - **Acceptance Criteria:**
     - [ ] Each Web page source is checked every hour. Jobbi reads the listing page by page, up to **5 pages**, and stops at the first page that contains a vacancy it has already seen.
     - [ ] Per check, Jobbi opens at most **30 new vacancies** per source to read their text; the rest are taken at the next check and nothing is lost.
-    - [ ] Each opened vacancy goes through spec 009 unchanged: exclude words, AI match and fit, the daily limit of 150 evaluations, merging by job link, 30-day card lifetime. Company and role come from the AI (as for Telegram posts); the listing title is used as the role when the AI can't determine one.
+    - [ ] Each opened vacancy goes through spec 009 unchanged: AI match and fit (exclude words are not applied since spec 012), the daily limit of 150 evaluations, merging by job link, 30-day card lifetime. Company and role come from the AI (as for Telegram posts); the listing title is used as the role when the AI can't determine one.
     - [ ] If a vacancy's own page cannot be opened, it is retried at the next check; after 3 failed checks it is evaluated using only its title from the listing.
     - [ ] The card's "date posted" is the date on the vacancy's page when Jobbi can find one, otherwise the time Jobbi found it.
     - [ ] **Unavailable** (after 24 hours, as in spec 009) has two reasons for Web page sources: "Could not reach the source" (the page does not open) and "No vacancies found — check the link or the 'Job link contains' field" (the page opens but lists no vacancies). The mark clears on the next successful check.

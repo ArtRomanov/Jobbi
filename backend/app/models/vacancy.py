@@ -1,7 +1,9 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     ForeignKey,
     Index,
@@ -74,6 +76,10 @@ class Vacancy(Base):
     company: Mapped[str | None] = mapped_column(String(255))
     # Plain text, at most 20 000 chars (enforced by the worker).
     text: Mapped[str] = mapped_column(Text, nullable=False)
+    # Outside links of a pending post as `[line, url]` pairs (1-based line of
+    # `text`), to pick each digest vacancy's job link (spec 012). NULL for rows
+    # stored before spec 012, for board jobs and for cards made from a digest.
+    links: Mapped[list[list[Any]] | None] = mapped_column(JSON)
     posted_at: Mapped[datetime] = mapped_column(nullable=False)
     found_at: Mapped[datetime] = mapped_column(
         nullable=False, server_default=func.now()

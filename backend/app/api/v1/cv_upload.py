@@ -1,4 +1,7 @@
-"""``POST /api/v1/cvs/upload``: create an own CV from a PDF or DOCX file.
+"""``POST /api/v1/cvs/upload``: extract the text of a PDF or DOCX file.
+
+Nothing is saved: the response is a draft the client shows in the editor, and
+the CV is created by ``POST /cvs`` when the user saves it.
 
 Size limits, in the order they apply:
 
@@ -24,16 +27,12 @@ from typing import Annotated
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.routing import APIRoute
-from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import Message, Receive
 
-from app.api.v1.cvs import cv_to_read
-from app.core.deps import get_current_user, get_db
-from app.models.user import User
-from app.schemas.cv import CvCreate, CvUploadRead
-from app.services.cv_service import create_uploaded_cv
+from app.core.deps import get_current_user
+from app.schemas.cv import CvExtractRead
 from app.services.cv_upload import (
     MAX_UPLOAD_BYTES,
     CvUploadError,
@@ -124,9 +123,12 @@ def _error_doc(code: str, meaning: str) -> dict[str, object]:
 
 @router.post(
     "/upload",
-    response_model=CvUploadRead,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create a CV from an uploaded PDF or DOCX",
+    response_model=CvExtractRead,
+    # Auth only: the draft is not stored, so the user is not otherwise used.
+    dependencies=[Depends(get_current_user)],
+    status_code=status.HTTP_200_OK,
+    summary="Extract a CV draft from an uploaded PDF or DOCX",
+    description="Returns the file's text as an unsaved draft; creates nothing.",
     responses={
         400: _error_doc(UploadFailed.code, "the file could not be read"),
         413: _error_doc(FileTooLarge.code, "the file is larger than 5 MB"),
@@ -136,9 +138,7 @@ def _error_doc(code: str, meaning: str) -> dict[str, object]:
 )
 async def upload_user_cv(
     file: Annotated[UploadFile, File(description="One PDF or DOCX file, up to 5 MB")],
-    current_user: Annotated[User, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(get_db)],
-) -> CvUploadRead:
+) -> CvExtractRead:
     try:
         # One byte over the cap is enough for extract_cv_text to refuse it.
         data = await file.read(MAX_UPLOAD_BYTES + 1)
@@ -157,19 +157,7 @@ async def upload_user_cv(
             status_code=HTTPStatus.BAD_REQUEST, detail=UploadFailed.code
         ) from exc
 
-    cv, became_base = await create_uploaded_cv(
-        db, current_user.id, CvCreate(name=extracted.name, content=extracted.text)
-    )
-    logger.info(
-        "cv_uploaded",
-        cv_id=cv.id,
-        truncated=extracted.truncated,
-        became_base=became_base,
-    )
-    # Built from the same CvRead the other CV endpoints return, so new CvRead
-    # fields show up here without changes.
-    return CvUploadRead(
-        **(await cv_to_read(db, current_user.id, cv)).model_dump(),
-        became_base=became_base,
-        truncated=extracted.truncated,
+    logger.info("cv_extracted", truncated=extracted.truncated)
+    return CvExtractRead(
+        name=extracted.name, content=extracted.text, truncated=extracted.truncated
     )

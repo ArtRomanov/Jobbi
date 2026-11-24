@@ -430,22 +430,21 @@ async def test_job_page_retried_and_rated_by_title_after_three_failures(
     assert card.title == "Frontend Developer"
 
 
-async def test_exclude_word_found_only_in_the_job_text_drops_the_card(
+async def test_exclude_words_are_not_applied_to_the_job_text(
     factory, db, site, http, ai, sleep
 ) -> None:
+    # Spec 012 switched exclude words off: stored words no longer drop cards.
     user_id = await make_user(db, exclude=["php"])
-    source_id = await make_web_source(db, user_id, site)
+    await make_web_source(db, user_id, site)
     site.add("a", "MATCH, our stack is PHP and Laravel")
     site.add("b", "MATCH React role")
 
-    report = await check(factory, http, ai, sleep)
+    await check(factory, http, ai, sleep)
 
-    assert report.posts_excluded == 1
-    [sent] = ai.posts_sent
-    assert "MATCH React role" in sent
-    [card] = await vacancies(db)
-    assert card.url.endswith("/b")
-    assert site.key(source_id, "a") in await seen_keys(db)
+    assert sorted(card.url.rsplit("/", 1)[1] for card in await vacancies(db)) == [
+        "a",
+        "b",
+    ]
 
 
 @pytest.mark.parametrize("status", [404, 410])

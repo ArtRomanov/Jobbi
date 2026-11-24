@@ -1,4 +1,8 @@
-"""Tests for ``POST /api/v1/cvs/upload`` (spec 011, section 2.3)."""
+"""Tests for ``POST /api/v1/cvs/upload`` (spec 011, section 2.3).
+
+The endpoint only extracts text: it returns ``{name, content, truncated}`` as
+an unsaved draft and writes nothing to the database.
+"""
 
 from collections.abc import AsyncIterator
 
@@ -70,36 +74,29 @@ def fail_if_extracted(monkeypatch: pytest.MonkeyPatch) -> None:
 # --------------------------------------------------------------------------
 
 
-async def test_upload_pdf_creates_cv(client: httpx.AsyncClient, token: str) -> None:
+async def test_upload_pdf_returns_draft_and_creates_nothing(
+    client: httpx.AsyncClient, token: str
+) -> None:
     data = make_pdf([["Иван Петров", "Python Developer", "Опыт: 7 лет"]])
 
     resp = await _upload(client, token, data, filename="Иван_CV.pdf")
 
-    assert resp.status_code == 201
+    assert resp.status_code == 200
     body = resp.json()
+    assert set(body) == {"name", "content", "truncated"}
     assert body["name"] == "Иван_CV"
     assert "Иван Петров" in body["content"]
     assert body["content"].index("Иван") < body["content"].index("Python")
-    # The user had no base CV, so the first upload becomes it.
-    assert body["became_base"] is True
-    assert body["is_base"] is True
-    assert body["kind"] == "own"
     assert body["truncated"] is False
-    assert body["version"] == 1
-    assert body["linked_applications_count"] == 0
-
-    stored = await client.get(f"{CVS_URL}/{body['id']}", headers=_auth(token))
-    assert stored.status_code == 200
-    assert stored.json()["content"] == body["content"]
-    assert stored.json()["name"] == "Иван_CV"
+    assert await _list_cvs(client, token) == []
 
 
-async def test_upload_docx_with_table_creates_cv(
+async def test_upload_docx_with_table_returns_its_text(
     client: httpx.AsyncClient, token: str
 ) -> None:
     resp = await _upload(client, token, make_docx(), "resume.docx", DOCX_MIME)
 
-    assert resp.status_code == 201
+    assert resp.status_code == 200
     body = resp.json()
     assert body["name"] == "resume"
     content = body["content"]
@@ -115,7 +112,7 @@ async def test_upload_type_is_judged_by_content_not_name(
     # A real DOCX sent with a .pdf name and PDF MIME type is still a DOCX.
     resp = await _upload(client, token, make_docx(), "cv.pdf", PDF_MIME)
 
-    assert resp.status_code == 201
+    assert resp.status_code == 200
     assert "Навыки" in resp.json()["content"]
 
 
@@ -126,7 +123,7 @@ async def test_long_text_is_cut_and_flagged(
 
     resp = await _upload(client, token, data, "long.docx", DOCX_MIME)
 
-    assert resp.status_code == 201
+    assert resp.status_code == 200
     body = resp.json()
     assert body["truncated"] is True
     assert 0 < len(body["content"]) <= MAX_TEXT_CHARS
@@ -146,7 +143,7 @@ async def test_cv_name_comes_from_file_name(
 ) -> None:
     resp = await _upload(client, token, make_docx(), filename, DOCX_MIME)
 
-    assert resp.status_code == 201
+    assert resp.status_code == 200
     assert resp.json()["name"] == expected
 
 
@@ -304,39 +301,38 @@ async def test_upload_requires_auth(client: httpx.AsyncClient, token: str) -> No
     assert await _list_cvs(client, token) == []
 
 
-async def test_uploaded_cv_belongs_to_the_uploader_only(
+async def test_upload_creates_no_cv_and_keeps_the_cv_count(
     client: httpx.AsyncClient, token: str, other_registered_user: dict
 ) -> None:
     other_token = other_registered_user["access_token"]
+    created = await client.post(CVS_URL, json={"name": "Typed"}, headers=_auth(token))
+    assert created.status_code == 201
+    before = await _list_cvs(client, token)
 
     resp = await _upload(client, token, make_docx(), "mine.docx", DOCX_MIME)
-    assert resp.status_code == 201
-    cv_id = resp.json()["id"]
 
-    assert [cv["id"] for cv in await _list_cvs(client, token)] == [cv_id]
+    assert resp.status_code == 200
+    assert await _list_cvs(client, token) == before
     assert await _list_cvs(client, other_token) == []
-    other_get = await client.get(f"{CVS_URL}/{cv_id}", headers=_auth(other_token))
-    assert other_get.status_code == 404
 
 
 # --------------------------------------------------------------------------
-# Base CV on upload (spec 011, 2.3 / 2.4)
+# Base CV: upload never sets or changes it (spec 011, 2.3 / 2.4)
 # --------------------------------------------------------------------------
 
 
-async def test_only_the_first_upload_becomes_base(
+async def test_upload_with_no_base_does_not_set_one(
     client: httpx.AsyncClient, token: str
 ) -> None:
-    first = await _upload(client, token, make_docx(), "first.docx", DOCX_MIME)
-    second = await _upload(client, token, make_docx(), "second.docx", DOCX_MIME)
+    created = await client.post(CVS_URL, json={"name": "Typed"}, headers=_auth(token))
 
-    assert first.json()["became_base"] is True
-    assert second.json()["became_base"] is False
-    assert second.json()["is_base"] is False
+    resp = await _upload(client, token, make_docx(), "up.docx", DOCX_MIME)
+
+    assert resp.status_code == 200
+    assert "became_base" not in resp.json()
     listed = await _list_cvs(client, token)
-    assert [(cv["name"], cv["is_base"]) for cv in listed] == [
-        ("first", True),
-        ("second", False),
+    assert [(cv["id"], cv["is_base"]) for cv in listed] == [
+        (created.json()["id"], False)
     ]
 
 
@@ -349,40 +345,6 @@ async def test_upload_keeps_an_existing_base(
 
     resp = await _upload(client, token, make_docx(), "up.docx", DOCX_MIME)
 
-    assert resp.json()["became_base"] is False
+    assert resp.status_code == 200
     listed = await _list_cvs(client, token)
     assert [cv["id"] for cv in listed if cv["is_base"]] == [base_id]
-
-
-async def test_upload_with_own_cvs_but_no_base_becomes_base(
-    client: httpx.AsyncClient, token: str
-) -> None:
-    await client.post(CVS_URL, json={"name": "Typed"}, headers=_auth(token))
-
-    resp = await _upload(client, token, make_docx(), "up.docx", DOCX_MIME)
-
-    assert resp.json()["became_base"] is True
-
-
-async def test_upload_base_is_per_user(
-    client: httpx.AsyncClient, token: str, other_registered_user: dict
-) -> None:
-    other_token = other_registered_user["access_token"]
-    await _upload(client, token, make_docx(), "mine.docx", DOCX_MIME)
-
-    resp = await _upload(client, other_token, make_docx(), "theirs.docx", DOCX_MIME)
-
-    assert resp.json()["became_base"] is True
-    mine = await _list_cvs(client, token)
-    assert [cv["is_base"] for cv in mine] == [True]
-
-
-async def test_rejected_upload_does_not_set_a_base(
-    client: httpx.AsyncClient, token: str
-) -> None:
-    bad = await _upload(client, token, b"not a pdf", "cv.pdf", PDF_MIME)
-    assert bad.status_code == 415
-
-    good = await _upload(client, token, make_docx(), "ok.docx", DOCX_MIME)
-
-    assert good.json()["became_base"] is True

@@ -83,4 +83,33 @@ describe("CvsPage", () => {
       content: mockCvs[0]!.content,
     });
   });
+
+  it('confirms a delete with the toast "CV deleted"', async () => {
+    const user = userEvent.setup();
+    window.confirm = vi.fn().mockReturnValue(true);
+    let deleted: string | null = null;
+    server.use(
+      http.delete("*/api/v1/cvs/:id", ({ params }) => {
+        deleted = params.id as string;
+        return HttpResponse.json({ message: "CV deleted" });
+      }),
+    );
+    renderWithProviders(<CvsPage />);
+    await screen.findByText("Frontend Developer CV");
+
+    await user.click(screen.getByRole("button", { name: "Delete Frontend Developer CV" }));
+
+    expect(await screen.findByText("CV deleted")).toBeInTheDocument();
+    expect(deleted).toBe("cv-2");
+  });
+
+  it('confirms a duplicate with the toast "CV duplicated"', async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<CvsPage />);
+    await screen.findByText("Frontend Developer CV");
+
+    await user.click(screen.getByRole("button", { name: "Duplicate Frontend Developer CV" }));
+
+    expect(await screen.findByText("CV duplicated")).toBeInTheDocument();
+  });
 });

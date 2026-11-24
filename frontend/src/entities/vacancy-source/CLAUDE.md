@@ -8,3 +8,4 @@ Sources the user watches for vacancies (Telegram channels; Greenhouse, Lever and
 - `DELETE` returns 204 with no body; the client turns that into `null`.
 - `updateSearchSettings` is a partial PATCH and returns the server-normalized settings (trimmed, exclude terms lowercased + deduped, empty description → `null`); show those, not what was sent.
 - `updateVacancySource(id, patch)` is a partial PATCH (`name` now; `input` / `job_link_contains` in Slice 6) returning the updated source; `name: null` or "" → default name. `name_is_custom` tells whether `display_name` is the user's name.
+- Exclude words are hidden since spec 012: the UI neither shows nor sends `exclude`, but the field stays in the API types (and the stored words in the DB) until backlog #12 removes it.
