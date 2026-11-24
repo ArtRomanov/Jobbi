@@ -1,6 +1,6 @@
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, StringConstraints
 
 from app.schemas.telegram import UtcDatetime
 
@@ -91,7 +91,6 @@ class VacancySourceRead(BaseModel):
 
 class VacancySearchSettingsRead(BaseModel):
     description: str | None = None
-    exclude: list[str] = []
 
 
 class VacancySearchSettingsUpdate(BaseModel):
@@ -103,7 +102,6 @@ class VacancySearchSettingsUpdate(BaseModel):
 
     # Explicit null (or blank text) turns the search off.
     description: str | None = None
-    exclude: list[str] = Field(default_factory=list)
 
 
 class DiscoveryStatus(BaseModel):

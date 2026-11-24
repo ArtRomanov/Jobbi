@@ -184,14 +184,6 @@ async def test_forwarding_the_same_post_twice_stores_it_once(factory, db) -> Non
     assert [f.message_id for f in await _forwards(db)] == [MESSAGE_ID]
 
 
-async def test_forwarded_post_ignores_exclude_terms(factory, db) -> None:
-    user_id = await make_user(db, exclude=["java"])
-
-    outcome = await _store(factory, user_id, _post(text="Java developer"))
-
-    assert outcome is ForwardOutcome.ADDED
-
-
 async def test_repost_of_a_card_is_not_merged_at_store(factory, db) -> None:
     user_id = await make_user(db)
     link = "https://jobs.example.com/42"

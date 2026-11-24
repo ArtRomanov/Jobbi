@@ -114,10 +114,7 @@ def _settings_to_read(
 ) -> VacancySearchSettingsRead:
     if settings_row is None:
         return VacancySearchSettingsRead()
-    return VacancySearchSettingsRead(
-        description=settings_row.description,
-        exclude=list(settings_row.exclude_terms),
-    )
+    return VacancySearchSettingsRead(description=settings_row.description)
 
 
 @router.get(
@@ -323,11 +320,10 @@ async def delete_vacancy_source(
 @router.patch(
     "/vacancy-search-settings",
     response_model=VacancySearchSettingsRead,
-    summary="Update the search description and exclude words",
+    summary="Update the search description",
     description=(
         "Partial update: fields left out stay unchanged. A null or blank "
-        "description turns the search off. Exclude words are trimmed, "
-        "lowercased and de-duplicated. 400 when a limit is exceeded."
+        "description turns the search off. 400 when the description is too long."
     ),
 )
 async def patch_vacancy_search_settings(
@@ -341,7 +337,6 @@ async def patch_vacancy_search_settings(
             db,
             current_user.id,
             description=body.description if "description" in fields else UNSET,
-            exclude=body.exclude if "exclude" in fields else UNSET,
         )
     except SearchSettingsError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=exc.message) from exc

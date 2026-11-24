@@ -12,7 +12,6 @@ interface SearchSettingsFormProps {
 
 /**
  * "What are you looking for?": search description (500 chars, live counter).
- * Exclude words are hidden since spec 012 (stored ones are kept, never sent).
  * Re-mount it (via `key`) when the saved settings first load so the draft
  * starts from them.
  */
