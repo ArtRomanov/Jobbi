@@ -12,6 +12,7 @@ const BASE_URL = "http://localhost:8000";
 const CARD_TITLE = /^CV text — change \d+$/;
 const ACCEPT = /^Accept change \d+$/;
 const REJECT = /^Reject change \d+$/;
+const OUTDATED = "Outdated — newer messages below";
 
 function renderChatPage(applicationId: string) {
   return renderWithProviders(<ChatPage />, {
@@ -214,6 +215,59 @@ describe("ChatPage change cards", () => {
 
     expect(await within(cards[0]!).findByText("Accepted")).toBeInTheDocument();
     expect(within(cards[1]!).getByRole("button", { name: ACCEPT })).toBeEnabled();
+  });
+
+  it("only the newest message's cards can be decided; older ones say outdated", async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/v1/applications/:id/chat`, () =>
+        HttpResponse.json([
+          userMessage,
+          {
+            ...assistantMessage,
+            cards: [
+              mockChangeCards.replace,
+              { ...mockChangeCards.remove, state: "accepted" },
+            ],
+          },
+          { ...userMessage, id: "msg-3", content: "And the summary?" },
+          // The newest reply has no cards: every card above is outdated
+          { ...assistantMessage, id: "msg-4", content: "Looks fine.", cards: [] },
+        ]),
+      ),
+    );
+    renderChatPage("app-1");
+
+    await screen.findByText("Looks fine.");
+    const [pending, accepted] = screen.getAllByRole("article", { name: CARD_TITLE });
+    expect(within(pending!).getByText(OUTDATED)).toBeInTheDocument();
+    expect(within(pending!).queryByRole("button")).not.toBeInTheDocument();
+    // Decided cards keep their own label, without the outdated note
+    expect(within(accepted!).getByText("Accepted")).toBeInTheDocument();
+    expect(within(accepted!).queryByText(OUTDATED)).not.toBeInTheDocument();
+  });
+
+  it("makes the cards outdated as soon as a new message is sent, while it streams", async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/v1/applications/:id/chat`, () =>
+        HttpResponse.json([userMessage, assistantMessage]),
+      ),
+      // The reply never arrives: the stream is still running
+      http.post(`${BASE_URL}/api/v1/applications/:id/chat`, async () => {
+        await delay("infinite");
+        return new HttpResponse(null);
+      }),
+    );
+    const user = userEvent.setup();
+    renderChatPage("app-1");
+    await screen.findByText("Here are two edits.");
+    expect(screen.getAllByRole("button", { name: ACCEPT })).toHaveLength(2);
+
+    await user.type(screen.getByRole("textbox", { name: "Chat message" }), "More");
+    await user.keyboard("{Enter}");
+
+    expect(await screen.findAllByText(OUTDATED)).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: ACCEPT })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: REJECT })).not.toBeInTheDocument();
   });
 
   /**
