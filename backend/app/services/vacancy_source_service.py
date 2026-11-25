@@ -41,7 +41,7 @@ from app.services.vacancy_source_parsing import (
     parse_source_input,
 )
 
-MAX_SOURCES = 30
+MAX_SOURCES = 50
 UNAVAILABLE_AFTER = timedelta(hours=24)
 # A first-scan lease older than this belongs to a crashed worker.
 ATTEMPT_LEASE_TTL = timedelta(minutes=10)
@@ -49,7 +49,7 @@ MAX_SOURCE_NAME_LENGTH = 100
 MAX_JOB_LINK_CONTAINS_LENGTH = 100
 PREVIEW_TITLES = 5
 
-SOURCE_LIMIT_MESSAGE = "You can watch up to 30 sources"
+SOURCE_LIMIT_MESSAGE = f"You can watch up to {MAX_SOURCES} sources"
 DUPLICATE_SOURCE_MESSAGE = "Already in your sources"
 NAME_TOO_LONG_MESSAGE = "Name can be up to 100 characters"
 BAD_JOB_LINK_CONTAINS_MESSAGE = "'Job link contains' must be 1–100 characters"

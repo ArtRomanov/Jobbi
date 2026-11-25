@@ -139,7 +139,7 @@ describe("InboxPage", () => {
     [400, "Enter a Telegram channel as @name or a t.me/name link"],
     [400, "This channel is not public or does not exist"],
     [400, "Could not reach Telegram. Please try again."],
-    [400, "You can watch up to 30 sources"],
+    [400, "You can watch up to 50 sources"],
     [409, "Already in your sources"],
   ])("shows the %i error %s inline and keeps the input", async (status, detail) => {
     server.use(http.post(SOURCES_URL, () => HttpResponse.json({ detail }, { status })));
