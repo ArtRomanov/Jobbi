@@ -1,0 +1,108 @@
+{
+  "label": "after4-partial",
+  "model": "qwen/qwen3.8-27b",
+  "stopped": null,
+  "results": [
+    {
+      "id": "shorter_react",
+      "scores": {
+        "requests_ok": 2,
+        "requests_total": 2,
+        "did_something": true,
+        "reply_matches_cards": true,
+        "no_foreign_tools": true,
+        "no_invented_facts": true,
+        "no_vacancy_only_facts": true,
+        "passed": true,
+        "requests": {
+          "shorter": true,
+          "sections kept": true
+        },
+        "foreign_tools": [],
+        "invented": [],
+        "vacancy_only": [],
+        "described_edits": [
+          0
+        ]
+      },
+      "tokens": {
+        "calls": 2,
+        "prompt": 3986,
+        "completion": 552,
+        "total": 4538
+      },
+      "turns": [
+        {
+          "user": "Make it shorter and focus on React",
+          "reply": "Let me first make sure I have the current version of the CV before proposing edits.",
+          "cards": [
+            {
+              "op": "replace",
+              "before": "Frontend engineer with 8 years of experience building web apps for fintech and e-commerce. Focus on performance, design systems and developer experience.",
+              "after": "Frontend engineer with 8 years of experience, focused on React, TypeScript and performance. Proven track record building design systems and large-scale web apps for fintech and e-commerce.",
+              "position": null,
+              "anchor": null
+            },
+            {
+              "op": "replace",
+              "before": "**Frontend:** TypeScript, JavaScript, Vue 3, React, Redux, HTML, CSS, Sass\n**Tooling:** Vite, Webpack, Jest, Playwright, Storybook\n**Other:** Node.js, REST, GraphQL, CI/CD, Figma",
+              "after": "**Frontend:** React, TypeScript, JavaScript, Redux, HTML, CSS, Sass\n**Tooling:** Vite, Webpack, Jest, Playwright, Storybook\n**Other:** Node.js, GraphQL, CI/CD, Figma",
+              "position": null,
+              "anchor": null
+            },
+            {
+              "op": "replace",
+              "before": "**Rebuilt the checkout widget in Vue 3:** cut bundle size by 38% and raised conversion by 4%. **Scope:** 3 engineers, 40k daily users.",
+              "after": "**Rebuilt the checkout widget:** cut bundle size by 38% and raised conversion by 4%. **Scope:** 3 engineers, 40k daily users.",
+              "position": null,
+              "anchor": null
+            },
+            {
+              "op": "remove",
+              "before": "- **Built a reusable filter and search UI:** increased search usage by 22%. **Scope:** catalog of 60k items.",
+              "after": "",
+              "position": null,
+              "anchor": null
+            },
+            {
+              "op": "remove",
+              "before": "- AWS Certified Cloud Practitioner (2022)\n- Google UX Design Certificate (2020)",
+              "after": "",
+              "position": null,
+              "anchor": null
+            }
+          ],
+          "accepted": 5,
+          "accept_failed": []
+        }
+      ],
+      "outline_before": {
+        "sections": [
+          "PROFILE",
+          "SKILLS",
+          "EXPERIENCE",
+          "CERTIFICATIONS",
+          "LANGUAGES"
+        ],
+        "h3": 2,
+        "exp_bullets": 8,
+        "exp_bullets_action_result_scope": 8,
+        "chars": 1863
+      },
+      "outline_after": {
+        "sections": [
+          "PROFILE",
+          "SKILLS",
+          "EXPERIENCE",
+          "CERTIFICATIONS",
+          "LANGUAGES"
+        ],
+        "h3": 2,
+        "exp_bullets": 7,
+        "exp_bullets_action_result_scope": 7,
+        "chars": 1687
+      },
+      "final_cv": "# Alex Morgan\nSenior Frontend Engineer\nalex.morgan@example.com · +1 555 010 2030 · Lisbon, Portugal · github.com/alexmorgan-dev\n\n## PROFILE\n\nFrontend engineer with 8 years of experience, focused on React, TypeScript and performance. Proven track record building design systems and large-scale web apps for fintech and e-commerce.\n\n## SKILLS\n\n**Frontend:** React, TypeScript, JavaScript, Redux, HTML, CSS, Sass\n**Tooling:** Vite, Webpack, Jest, Playwright, Storybook\n**Other:** Node.js, GraphQL, CI/CD, Figma\n\n## EXPERIENCE\n\n### Lead Frontend Engineer — Northwind Pay\nMar 2021 – Present\n\nPayments platform, team of 12 engineers.\n\n- **Rebuilt the checkout widget:** cut bundle size by 38% and raised conversion by 4%. **Scope:** 3 engineers, 40k daily users.\n- **Introduced a shared design system:** reduced UI bugs by 30% across products. **Scope:** 5 product teams, 120 components.\n- **Set up Playwright end-to-end tests:** caught 25 regressions before release in the first quarter. **Scope:** 2 web apps, CI on every PR.\n- **Migrated the merchant dashboard to TypeScript:** removed a whole class of runtime errors. **Scope:** 180k lines, 6 months.\n\n### Frontend Engineer — Bluefin Retail\nJun 2017 – Feb 2021\n\nOnline store for home goods, 2M monthly visitors.\n\n- **Moved product pages to server-side rendering:** improved LCP from 4.1s to 1.9s. **Scope:** 15k product pages.\n- **Automated visual regression checks with Storybook:** cut manual QA time by half. **Scope:** 200 stories.\n- **Mentored junior developers:** two were promoted within a year. **Scope:** 4 mentees.\n\n## CERTIFICATIONS\n\n\n## LANGUAGES\n\n**English:** fluent (C1)\n**Portuguese:** native\n**Spanish:** intermediate (B1)\n"
+    }
+  ]
+}

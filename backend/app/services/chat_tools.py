@@ -27,8 +27,10 @@ PROPOSE_CV_EDIT_TOOL: dict[str, Any] = {
         "description": (
             "Propose ONE edit to the candidate's CV text. The user sees it as a "
             "card and decides to accept or reject it; nothing changes before "
-            "that. Call it once per separate edit. Quote CV passages exactly as "
-            "they appear in the CV block, character for character."
+            "that. Call it once per separate edit; when the user asks for "
+            "several changes, call it several times in the same reply. Quote CV "
+            "passages exactly as they appear in the CV block, character for "
+            "character."
         ),
         "parameters": {
             "type": "object",
@@ -50,7 +52,12 @@ PROPOSE_CV_EDIT_TOOL: dict[str, Any] = {
                 },
                 "after": {
                     "type": "string",
-                    "description": "replace/insert: the new text.",
+                    "description": (
+                        "replace/insert: the new text. Every fact in it (skill, "
+                        "tool, employer, date, number, achievement) must already "
+                        "be in the CV or come from the user's messages; never "
+                        "take a skill or tool from the job post."
+                    ),
                 },
                 "position": {
                     "type": "string",

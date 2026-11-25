@@ -1,6 +1,6 @@
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import groq
 import structlog
@@ -48,14 +48,43 @@ _DATA_RULE = (
 
 
 _CV_EDIT_RULES = (
-    "To change the CV, call the propose_cv_edit tool, once per separate edit; "
-    "never write the edited CV out in your reply instead. The user accepts or "
-    "rejects each proposed edit, and nothing changes before that. In "
-    "`before` and `anchor`, quote the CV exactly as it appears in the CV block, "
-    "character for character (same spelling, punctuation, Markdown and line "
-    "breaks). Keep each quote short, but long enough to appear only once in the "
-    "CV. In your reply, briefly say what each edit does. Earlier edits the user "
-    "accepted are already in the CV block above."
+    "CV edit rules:\n"
+    "1. Handle every request in the user's latest message. Each separate change "
+    "is its own propose_cv_edit call, and all of them go in this same reply: "
+    "several calls in one reply are normal (one per section, bullet or line you "
+    "change). Never write the edited CV out in your reply instead.\n"
+    "2. If you cannot make a requested change (for example, the CV lacks the "
+    "facts it needs), do not propose anything for it: say plainly why, and ask "
+    "for what you need.\n"
+    "3. Never invent facts. Facts about the candidate (employers, jobs, dates, "
+    "numbers, technologies, clients, certificates, languages, achievements) "
+    "come only from the CV block or the user's messages. The job post tells "
+    "you what to emphasise, not what the candidate has done: never add a skill "
+    "or experience from the job post that the CV does not show; mention the "
+    "gap in your reply instead (never add the job post's technologies to the "
+    "skills unless the CV or the user says the candidate has them). You may "
+    "reword, reorder, shorten and emphasise what is there.\n"
+    "4. The user's explicit instruction wins: when they give exact wording, use "
+    "it word for word; when they ask to remove something, remove it; when they "
+    "ask for a shorter CV, cut text rather than add it.\n"
+    "5. In your reply, describe only the edits you actually propose in it, one "
+    "short line each, in the same order. Never describe an edit you do not "
+    "propose, and never say you will do something later.\n"
+    "6. propose_cv_edit is your only tool. Never mention or pretend to use any "
+    "other tool or action: the CV block above is always the current CV, with "
+    "every edit the user accepted already in it, so never say you will fetch, "
+    "load, re-read or check the CV.\n"
+    '7. When the user wants an accepted edit undone ("no, keep the old '
+    'wording"), it is a request like any other: propose an edit that puts the '
+    "earlier text back. The edit notes in the chat quote that earlier text.\n"
+    "8. In `before` and `anchor`, quote the CV exactly as it appears in the CV "
+    "block, character for character (same spelling, punctuation, Markdown and "
+    "line breaks). Keep each quote short, but long enough to appear only once "
+    "in the CV. Each edit changes its own passage: two edits must not quote "
+    "overlapping text.\n"
+    "9. The user accepts or rejects each proposed edit; nothing changes before "
+    "that. Reply in the language of the user's latest message, but write CV "
+    "text in the language the CV is written in."
 )
 _NO_CV_RULES = (
     "No CV is linked to this application, so you cannot propose CV edits. If "
@@ -128,6 +157,8 @@ async def stream_llm_response(
     system_prompt: str,
     messages: list[dict[str, str]],
     tools: list[dict[str, Any]] | None = None,
+    *,
+    tool_choice: Literal["auto", "required"] = "auto",
 ) -> AsyncIterator[str | LlmToolCall]:
     """Stream the LLM's response.
 
@@ -143,8 +174,11 @@ async def stream_llm_response(
         {"role": "system", "content": system_prompt},
         *messages,
     ]
+    # Several edit calls in one reply are expected (one card per change).
     tool_kwargs: dict[str, Any] = (
-        {"tools": tools, "tool_choice": "auto"} if tools else {}
+        {"tools": tools, "tool_choice": tool_choice, "parallel_tool_calls": True}
+        if tools
+        else {}
     )
     names: dict[int, list[str]] = {}
     arguments: dict[int, list[str]] = {}

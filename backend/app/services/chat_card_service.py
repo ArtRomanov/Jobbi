@@ -22,6 +22,13 @@ from app.services import cv_service
 from app.services.chat_tools import CvEdit
 
 HISTORY_QUOTE_CHARS = 60
+# The latest reply's accepted replace/remove cards quote the text they took out
+# in full (up to this cap), so "no, put the old wording back" can be proposed.
+HISTORY_FULL_QUOTE_CHARS = 2_000
+REMOVED_TEXT_LABEL = (
+    "Earlier text this accepted edit took out (no longer in the CV; to restore "
+    "it, propose an edit that puts it back):"
+)
 
 # The CV write is `cv_service.update_cv_content_if_version`. Both modules
 # import each other as modules (cv_service needs `mark_cv_cards_stale`), so
@@ -224,26 +231,35 @@ CARD_NOTE_HEADER = (
 )
 
 
-def card_history_line(card: ChatChangeCard) -> str:
+def card_history_line(card: ChatChangeCard, *, quote_removed: bool = False) -> str:
     """One line telling the model what became of a card it proposed.
 
-    The quote is model-produced text: `card_history_note` fences (and so
-    defangs) it.
+    With `quote_removed`, an accepted replace/remove card also lists the full
+    text it took out of the CV, indented under the line, so the model can
+    restore it. The quotes are model-produced text: `card_history_note`
+    fences (and so defangs) them.
     """
     quoted = card.after_text if card.op == "insert" else card.before_text
     quoted = " ".join(quoted.split())
     if len(quoted) > HISTORY_QUOTE_CHARS:
         quoted = quoted[:HISTORY_QUOTE_CHARS] + "…"
-    return f"- {card.state}: {card.op} '{quoted}'"
+    line = f"- {card.state}: {card.op} '{quoted}'"
+    if not (quote_removed and card.state == "accepted" and card.op != "insert"):
+        return line
+    removed = card.before_text[:HISTORY_FULL_QUOTE_CHARS]
+    indented = "\n".join(f"    {text}" for text in removed.splitlines())
+    return f"{line}\n  {REMOVED_TEXT_LABEL}\n{indented}"
 
 
-def card_history_note(cards: Sequence[ChatChangeCard]) -> str:
+def card_history_note(
+    cards: Sequence[ChatChangeCard], *, quote_removed: bool = False
+) -> str:
     """A system note listing the cards of one reply, sent after that reply.
 
     The card lines go in a fenced data block (`app.core.prompt_fence`), so a
     quoted passage cannot pose as instructions inside a system message.
     """
-    lines = "\n".join(card_history_line(c) for c in cards)
+    lines = "\n".join(card_history_line(c, quote_removed=quote_removed) for c in cards)
     return "\n".join([CARD_NOTE_HEADER, fence(CARD_NOTE_LABEL, lines)])
 
 

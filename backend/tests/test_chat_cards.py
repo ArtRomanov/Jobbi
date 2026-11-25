@@ -20,6 +20,7 @@ from app.models.cv import Cv
 from app.services import cv_service
 from app.services.chat_card_service import (
     CARD_NOTE_HEADER,
+    REMOVED_TEXT_LABEL,
     apply_card_edit,
     normalize_newlines,
 )
@@ -393,6 +394,9 @@ async def test_history_puts_card_lines_in_a_system_note_after_the_reply(
         CARD_NOTE_HEADER,
         "<<<DATA CARD EDITS>>>",
         f"- accepted: replace '{long_before}'",
+        # The latest reply quotes what its accepted cards took out, in full.
+        f"  {REMOVED_TEXT_LABEL}",
+        f"    {long_before}",
         "- rejected: remove '- jQuery'",
         "- pending: insert '- Docker'",
         "<<<END CARD EDITS>>>",
