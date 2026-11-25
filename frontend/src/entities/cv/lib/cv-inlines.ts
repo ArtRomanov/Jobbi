@@ -56,14 +56,15 @@ export function trimInlines(nodes: readonly CvInline[]): CvInline[] {
   const out = [...nodes];
   const first = out[0];
   if (first?.kind === "text") {
-    const text = first.text.replace(/^\s+/, "");
+    const text = first.text.trimStart();
     if (text === "") out.shift();
     else out[0] = { kind: "text", text };
   }
   const lastIndex = out.length - 1;
   const last = out[lastIndex];
   if (last?.kind === "text") {
-    const text = last.text.replace(/\s+$/, "");
+    // trimEnd, not /\s+$/: that regex is quadratic on a long run of spaces
+    const text = last.text.trimEnd();
     if (text === "") out.pop();
     else out[lastIndex] = { kind: "text", text };
   }
@@ -71,7 +72,9 @@ export function trimInlines(nodes: readonly CvInline[]): CvInline[] {
 }
 
 /** " · ", " | " and " • " between contacts (spaces on both sides, so "a|b" stays one part). */
-const CONTACT_SEPARATOR = /\s+[·|•]\s+/u;
+// `(?<!\s)`: start only at the first space of a run, so a long run of spaces
+// is scanned once, not once per space (quadratic on a 20 000-char line).
+const CONTACT_SEPARATOR = /(?<!\s)\s+[·|•]\s+/u;
 
 /**
  * Splits a line into parts on contact separators found in top-level text

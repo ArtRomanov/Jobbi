@@ -1,5 +1,6 @@
 import {
   buildCvLayout,
+  buildCvLayoutFromBlocks,
   isDateRangeLine,
   parseCvMarkdown,
   type CvBlock,
@@ -406,5 +407,20 @@ describe("buildCvLayout keeps every word (property)", () => {
         throw new Error(`Text changed for input:\n${markdown}\n\n${String(error)}`);
       }
     }
+  });
+});
+
+describe("buildCvLayout speed (the preview re-runs it while typing)", () => {
+  // Header heuristics used regexes that are quadratic on one long line
+  // (~1.3 s for 20 000 characters, per deferred keystroke).
+  it.each([
+    ["one long word", "a".repeat(19_990)],
+    ["hyphenated run", "a-".repeat(9_995)],
+    ["long run of spaces", `1${" ".repeat(19_990)}x`],
+  ])("lays out a 20 000-character line under the name quickly (%s)", (_label, line) => {
+    const blocks = parseCvMarkdown(`# Jane\n${line}`);
+    const started = performance.now();
+    buildCvLayoutFromBlocks(blocks);
+    expect(performance.now() - started).toBeLessThan(250);
   });
 });

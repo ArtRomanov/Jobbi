@@ -59,7 +59,9 @@ const MAX_TITLE_LENGTH = 80;
 const MAX_PLAIN_CONTACT_LENGTH = 60;
 const EMAIL_SIGN = /\S@\S/u;
 const PHONE_SIGN = /\+?\d[\d\s().-]{6,}\d/u;
-const WEB_SIGN = /(?:https?:\/\/|www\.)\S|[\w-]+\.(?:com|io|dev|me|org|net|ru)\/\S/iu;
+// `(?<![\w-])`: start only at the beginning of a word, so a long run of
+// letters is scanned once, not once per letter (quadratic on a 20 000-char line)
+const WEB_SIGN = /(?:https?:\/\/|www\.)\S|(?<![\w-])[\w-]+\.(?:com|io|dev|me|org|net|ru)\/\S/iu;
 
 function isContactLike(line: readonly CvInline[]): boolean {
   const text = inlineText(line);
