@@ -116,7 +116,13 @@ function renderEntry(entry: CvLayoutEntry, key: number, ctx: RenderContext): Rea
   const head = (
     <div className={C.entryHead}>
       <TitleTag className={C.entryTitle}>{renderInlines(entry.title, ctx)}</TitleTag>
-      {entry.dates ? <span className={C.entryDates}>{renderInlines(entry.dates, ctx)}</span> : null}
+      {entry.dates ? (
+        <span className={C.entryDates}>
+          {/* Keeps title and dates apart in the text ("Engineer · Jan", not "EngineerJan") */}
+          {entry.datesSeparator ? <span className={C.visuallyHidden}>{entry.datesSeparator}</span> : null}
+          {renderInlines(entry.dates, ctx)}
+        </span>
+      ) : null}
     </div>
   );
   return (

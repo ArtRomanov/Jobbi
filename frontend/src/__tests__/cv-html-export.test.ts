@@ -66,10 +66,22 @@ describe("renderCvHtml", () => {
     ]);
     const head = doc.querySelector(".cv-entry-head");
     expect(head?.querySelector("h3.cv-entry-title")?.textContent).toBe("Lead — Acme");
-    expect(head?.querySelector(".cv-entry-dates")?.textContent).toBe("Jan 2020 – Present");
+    // The dates line was on its own line: a hidden space keeps "Acme Jan" apart in the text
+    expect(head?.textContent).toBe("Lead — Acme Jan 2020 – Present");
+    expect(head?.querySelector(".cv-entry-dates > .cv-hidden-text")?.textContent).toBe(" ");
+    expect(head?.querySelector(".cv-entry-dates")?.lastChild?.textContent).toBe("Jan 2020 – Present");
     expect(doc.querySelector(".cv-context")?.textContent).toBe("Fintech; React.");
     expect(doc.querySelectorAll("ul.cv-list > li")).toHaveLength(2);
     expect(doc.querySelector("li strong")?.textContent).toBe("Led:");
+  });
+
+  it("keeps the separator between a title and its dates in the text, hidden from view", () => {
+    const head = parse(render("### Engineer · Jan 2020 – Present\n- a")).querySelector(".cv-entry-head");
+    expect(head?.textContent).toBe("Engineer · Jan 2020 – Present");
+    expect(head?.querySelector(".cv-entry-title")?.textContent).toBe("Engineer");
+    expect(head?.querySelector(".cv-hidden-text")?.textContent).toBe(" · ");
+    // The CSS hides it from view (clip), it stays in copied text and for screen readers
+    expect(render("")).toMatch(/\.cv-hidden-text\{position:absolute;[^}]*clip:rect\(0 0 0 0\)/);
   });
 
   it("keeps every word of the CV in order", () => {

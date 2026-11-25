@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { listCvs, deleteCv, duplicateCv, groupCvs, type Cv } from "@/entities/cv";
-import { downloadCvHtml } from "@/features/cv-html-export";
+import { CV_HTML_DOWNLOAD_ERROR_MESSAGE, downloadCvHtml } from "@/features/cv-html-export";
 import { downloadCvTextPdf } from "@/features/cv-pdf";
 import { UploadCvButton } from "@/features/cv-upload";
 import { PageCard, PageHeader, Button, colors, useToast } from "@/shared/ui";
@@ -128,8 +128,8 @@ export function CvsPage() {
       setDownloadingHtmlId(cv.id);
       try {
         await downloadCvHtml({ name: cv.name, content: cv.content });
-      } catch (err: unknown) {
-        handleApiError(err, showToast);
+      } catch {
+        showToast(CV_HTML_DOWNLOAD_ERROR_MESSAGE, "error");
       } finally {
         setDownloadingHtmlId(null);
       }

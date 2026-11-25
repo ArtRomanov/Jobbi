@@ -31,6 +31,8 @@ export const CV_LAYOUT_CLASSES = {
   entryHead: "cv-entry-head",
   entryTitle: "cv-entry-title",
   entryDates: "cv-entry-dates",
+  /** In the text (copy, screen readers) but not seen: the title/dates separator. */
+  visuallyHidden: "cv-hidden-text",
   paragraph: "cv-p",
   context: "cv-context",
   list: "cv-list",
@@ -61,6 +63,7 @@ export const CV_LAYOUT_CSS = `
 .cv-entry-head{display:flex;justify-content:space-between;align-items:baseline;gap:8pt;margin:0 0 2pt;break-after:avoid;page-break-after:avoid}
 .cv-entry-title{flex:1 1 auto;min-width:0;font-family:${BODY_FONT};font-size:9.5pt;font-weight:700;color:${ink}}
 .cv-entry-dates{flex:0 0 auto;max-width:45%;font-size:8pt;color:${muted};text-align:right}
+.cv-hidden-text{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);white-space:pre}
 .cv-p{margin:0 0 5.5pt;orphans:2;widows:2}
 .cv-context{color:${muted}}
 .cv-context strong{color:${muted}}

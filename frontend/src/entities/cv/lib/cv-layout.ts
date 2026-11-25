@@ -14,7 +14,8 @@ import { parseCvMarkdown, type CvBlock, type CvInline, type CvListItem } from ".
  * Layout of a CV for the designed views (editor preview and "Download HTML").
  * Built from `parseCvMarkdown` blocks: it only decides WHERE existing text
  * goes (header, sections, entries with dates on the right); it never adds,
- * drops or rewrites text. Whatever matches no rule stays a plain block.
+ * removes or reorders words. Contact separators (" | ", " • ") are shown as
+ * " · ". Whatever matches no rule stays a plain block.
  */
 export interface CvLayout {
   /** Present only when the CV starts with `# Name`. */
@@ -48,6 +49,13 @@ export interface CvLayoutEntry {
   title: CvInline[];
   /** The date range shown at the right of the title row. */
   dates: CvInline[] | null;
+  /**
+   * What separated title and dates in the text (" · " / " | " on the title
+   * line, " " for a dates line of its own); null without dates. The views
+   * keep it in the text, visually hidden, so title and dates never glue
+   * together ("EngineerJan") when the text is copied or read out.
+   */
+  datesSeparator: string | null;
   blocks: CvLayoutBlock[];
 }
 
@@ -63,15 +71,14 @@ const PHONE_SIGN = /\+?\d[\d\s().-]{6,}\d/u;
 // letters is scanned once, not once per letter (quadratic on a 20 000-char line)
 const WEB_SIGN = /(?:https?:\/\/|www\.)\S|(?<![\w-])[\w-]+\.(?:com|io|dev|me|org|net|ru)\/\S/iu;
 
-function isContactLike(line: readonly CvInline[]): boolean {
+/** An email, phone number or link/URL: what makes header lines "contacts". */
+function hasContactSign(line: readonly CvInline[]): boolean {
   const text = inlineText(line);
-  return (
-    hasLink(line) ||
-    hasSeparator(line) ||
-    EMAIL_SIGN.test(text) ||
-    PHONE_SIGN.test(text) ||
-    WEB_SIGN.test(text)
-  );
+  return hasLink(line) || EMAIL_SIGN.test(text) || PHONE_SIGN.test(text) || WEB_SIGN.test(text);
+}
+
+function isContactLike(line: readonly CvInline[]): boolean {
+  return hasContactSign(line) || hasSeparator(line);
 }
 
 function lineLength(line: readonly CvInline[]): number {
@@ -97,11 +104,18 @@ interface HeaderResult {
  * looks like a contact; the following short / contact-like lines are the
  * contacts. Further paragraphs join the contacts only when every line in them
  * looks like a contact. Anything else stays a normal block after the header.
+ *
+ * Title and contacts come as a pair: they are taken only when the contact
+ * lines hold a real contact (email, phone, link/URL). Otherwise nothing under
+ * the name is guessed: the name stands alone and the lines stay normal text,
+ * so a summary or a skills line never becomes the big title or "contacts".
  */
 function buildHeader(name: CvInline[], blocks: readonly CvBlock[]): HeaderResult {
   const header: CvLayoutHeader = { name, title: null, contacts: [] };
+  const nameOnly: HeaderResult = { header: { name, title: null, contacts: [] }, rest: [...blocks] };
   let index = 0;
   const leftover: CvBlock[] = [];
+  let hasRealContact = false;
 
   const first = blocks[0];
   if (first?.kind === "paragraph") {
@@ -115,11 +129,12 @@ function buildHeader(name: CvInline[], blocks: readonly CvBlock[]): HeaderResult
     for (let line = lines[lineIndex]; line !== undefined; line = lines[lineIndex]) {
       if (!isContactLike(line) && lineLength(line) > MAX_PLAIN_CONTACT_LENGTH) break;
       header.contacts.push(...splitOnSeparators(line));
+      hasRealContact ||= hasContactSign(line);
       lineIndex += 1;
     }
     if (lineIndex === 0) {
       // Nothing matched (e.g. a long summary right under the name): leave it be
-      return { header, rest: [...blocks] };
+      return nameOnly;
     }
     index = 1;
     if (lineIndex < lines.length) {
@@ -130,33 +145,42 @@ function buildHeader(name: CvInline[], blocks: readonly CvBlock[]): HeaderResult
         if (block.kind !== "paragraph") break;
         const blockLines = splitLines(block.children).filter((line) => !isBlankLine(line));
         if (blockLines.length === 0 || !blockLines.every(isContactLike)) break;
+        if (!blockLines.some(hasContactSign)) break;
         for (const line of blockLines) header.contacts.push(...splitOnSeparators(line));
+        hasRealContact = true;
         index += 1;
       }
     }
   }
+  if (!hasRealContact) return nameOnly;
   return { header, rest: [...leftover, ...blocks.slice(index)] };
 }
 
 interface TitleSplit {
   title: CvInline[];
   dates: CvInline[] | null;
+  datesSeparator: string | null;
 }
 
 /** "### Engineer · Jan 2020 – Present": the date range after the last " · " / " | ". */
 function splitTitleDates(title: CvInline[]): TitleSplit {
+  const noDates: TitleSplit = { title, dates: null, datesSeparator: null };
   const last = title[title.length - 1];
-  if (last?.kind !== "text") return { title, dates: null };
-  const match = /^(.*\S)\s+[·|]\s+(\S.*)$/su.exec(last.text);
-  const [, before, dates] = match ?? [];
-  if (before === undefined || dates === undefined || !isDateRangeLine(dates)) {
-    return { title, dates: null };
+  if (last?.kind !== "text") return noDates;
+  const match = /^(.*\S)(\s+[·|]\s+)(\S.*)$/su.exec(last.text);
+  const [, before, separator, dates] = match ?? [];
+  if (before === undefined || separator === undefined || dates === undefined || !isDateRangeLine(dates)) {
+    return noDates;
   }
   return {
     title: [...title.slice(0, -1), { kind: "text", text: before }],
     dates: [{ kind: "text", text: dates }],
+    datesSeparator: separator,
   };
 }
+
+/** Stands for the line break between a title and a dates line of its own. */
+const DATES_LINE_SEPARATOR = " ";
 
 function toLayoutBlock(block: CvBlock): CvLayoutBlock | null {
   switch (block.kind) {
@@ -174,7 +198,7 @@ function toLayoutBlock(block: CvBlock): CvLayoutBlock | null {
 /** An entry: `### Title`, its dates (title row or the next line), then its blocks. */
 function buildEntry(heading: CvInline[], blocks: readonly CvBlock[]): CvLayoutEntry {
   const split = splitTitleDates(heading);
-  const entry: CvLayoutEntry = { kind: "entry", title: split.title, dates: split.dates, blocks: [] };
+  const entry: CvLayoutEntry = { kind: "entry", ...split, blocks: [] };
   const body = [...blocks];
 
   const first = body[0];
@@ -182,6 +206,7 @@ function buildEntry(heading: CvInline[], blocks: readonly CvBlock[]): CvLayoutEn
     const [firstLine = [], ...rest] = splitLines(first.children);
     if (isDateRangeLine(inlineText(firstLine))) {
       entry.dates = trimInlines(firstLine);
+      entry.datesSeparator = DATES_LINE_SEPARATOR;
       body.shift();
       if (rest.some((line) => !isBlankLine(line))) {
         body.unshift({ kind: "paragraph", children: joinLines(rest) });

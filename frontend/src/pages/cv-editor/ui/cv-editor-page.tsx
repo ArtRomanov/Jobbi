@@ -7,7 +7,7 @@ import {
   type CvTextEditorValues,
   type CvTextExportValues,
 } from "@/features/cv-text-editor";
-import { downloadCvHtml } from "@/features/cv-html-export";
+import { CV_HTML_DOWNLOAD_ERROR_MESSAGE, downloadCvHtml } from "@/features/cv-html-export";
 import { downloadCvTextPdf } from "@/features/cv-pdf";
 import { UploadNotice, useUploadDraft, type UploadDraft } from "@/features/cv-upload";
 import { Badge, PageCard, PageHeader, colors, useToast } from "@/shared/ui";
@@ -196,8 +196,8 @@ export function CvEditorPage() {
     async (values: CvTextExportValues): Promise<void> => {
       try {
         await downloadCvHtml(values);
-      } catch (err: unknown) {
-        handleApiError(err, showToast);
+      } catch {
+        showToast(CV_HTML_DOWNLOAD_ERROR_MESSAGE, "error");
       }
     },
     [showToast],

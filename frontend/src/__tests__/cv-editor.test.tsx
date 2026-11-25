@@ -13,7 +13,10 @@ import { server } from "./setup";
 import { renderWithProviders, type RenderWithProvidersResult } from "./utils";
 
 vi.mock("@/features/cv-pdf", () => ({ downloadCvTextPdf: vi.fn().mockResolvedValue(undefined) }));
-vi.mock("@/features/cv-html-export", () => ({ downloadCvHtml: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("@/features/cv-html-export", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/cv-html-export")>()),
+  downloadCvHtml: vi.fn().mockResolvedValue(undefined),
+}));
 
 const CVS_URL = "*/api/v1/cvs";
 const CV_URL = "*/api/v1/cvs/:id";
@@ -241,6 +244,18 @@ describe("CvEditorPage — edit", () => {
     expect(downloadCvTextPdf).not.toHaveBeenCalled();
   });
 
+  it('says "Couldn\'t create the file." when the HTML download fails', async () => {
+    const user = userEvent.setup();
+    vi.mocked(downloadCvHtml).mockRejectedValueOnce(new Error("Disk full"));
+    renderEditor("/cvs/cv-1/edit");
+    await screen.findByDisplayValue("Software Engineer CV");
+
+    await user.click(screen.getByRole("button", { name: "Download HTML" }));
+
+    expect(await screen.findByText("Couldn't create the file.")).toBeInTheDocument();
+    expect(screen.queryByText("Network error. Check your connection.")).not.toBeInTheDocument();
+  });
+
   it("shows the preview in the designed layout: dates on the title row", async () => {
     const user = userEvent.setup();
     renderEditor("/cvs/new");
@@ -255,7 +270,8 @@ describe("CvEditorPage — edit", () => {
     expect(within(preview).getByRole("heading", { level: 2, name: "Jane" })).toBeInTheDocument();
     const titleRow = within(preview).getByRole("heading", { level: 4, name: "Lead" }).parentElement!;
     expect(titleRow).toHaveClass("cv-entry-head");
-    expect(titleRow).toHaveTextContent("Lead2020 – 2022");
+    // A boundary stays between title and dates in the text (not "Lead2020")
+    expect(titleRow).toHaveTextContent("Lead 2020 – 2022");
     expect(within(preview).getByRole("link", { name: /jane@example.com/ })).toHaveAttribute("target", "_blank");
   });
 

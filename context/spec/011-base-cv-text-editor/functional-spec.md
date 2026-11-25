@@ -143,8 +143,9 @@ The user already has a CV — usually a PDF or Word file — and wants Jobbi to 
 
 - **As a** user, **I want** the exported PDF to contain my whole CV, **so that** I can send it to employers.
   - **Acceptance Criteria:**
-    - [x] "Export PDF" produces a file named "<CV name>.pdf" (characters not allowed in file names are replaced with "_") that contains the whole CV text, formatted like the preview (headings, bold, italic, lists, clickable web and email links), on A4 pages with page breaks as needed. The CV name itself is not printed; the document starts with the CV text.
+    - [x] "Export PDF" produces a file named "<CV name>.pdf" (characters not allowed in file names are replaced with "_") that contains the whole CV text, formatted with headings, bold, italic, lists and clickable web and email links, on A4 pages with page breaks as needed. The CV name itself is not printed; the document starts with the CV text.
     - [x] Russian (Cyrillic) text appears correctly in the PDF, in the preview and in the editor.
+    - Note (2026-11-25): since 2.9 the editor preview shows the designed layout of "Download HTML", so the PDF no longer looks like the preview. By user decision the react-pdf PDF keeps its simple style for now; this note changes no behaviour.
     - [x] The PDF of a CV with empty text has only the CV name as its title.
 
 ### 2.9 Download HTML (follow-up, backlog #11)
@@ -152,7 +153,7 @@ The user already has a CV — usually a PDF or Word file — and wants Jobbi to 
 - **As a** user, **I want** a designed version of my CV that I can print to PDF from my browser, **so that** what I send to employers looks professional.
   - **Acceptance Criteria:**
     - [ ] Next to "PDF" on the CVs page ("HTML") and next to "Export PDF" in the editor of a saved CV ("Download HTML") there is a download of the CV as one self-contained HTML file named "<CV name>.html" (same file-name rules as the PDF; the editor uses the current draft). Opened in a browser it shows an A4 sheet; the browser's "Print → Save as PDF" gives A4 pages.
-    - [ ] Appearance only: the file contains exactly the CV text, never added to, removed or reworded. Only the layout changes: the `#` name and the line under it in large condensed capitals with a thick rule, the contact lines in one line joined with " · ", `##` sections in condensed capitals, a date-range line right after a `###` title shown at the right of the title row, the paragraph between a title and its bullet list in grey, bullets with small blue dots. Text that matches none of these patterns (for example an uploaded CV with no markup) is shown as plain paragraphs.
+    - [ ] Appearance only: the file never adds, removes or reorders words of the CV; contact separators (" | ", " • ") are shown as " · ". Only the layout changes: the `#` name and the line under it in large condensed capitals with a thick rule, the contact lines in one line joined with " · " (the line under the name and the contacts are used only when the contacts hold an email, phone number or link; otherwise those lines stay normal text), `##` sections in condensed capitals, a date-range line right after a `###` title (or a range after " · " / " | " on the title line) shown at the right of the title row, with the separator kept in the text so copied text reads "Engineer · Jan 2020" (a range followed by more than a short note, e.g. "2019 – 2021, led migration to React", stays a normal line), the paragraph between a title and its bullet list in grey, bullets with small blue dots. Text that matches none of these patterns (for example an uploaded CV with no markup) is shown as plain paragraphs.
     - [ ] The editor preview shows the same design as the downloaded file.
     - [ ] Russian (Cyrillic) text appears correctly; links stay clickable (web and email only); the file runs no scripts and loads nothing from the internet.
     - [ ] "Export PDF" (2.8) is unchanged and stays available.

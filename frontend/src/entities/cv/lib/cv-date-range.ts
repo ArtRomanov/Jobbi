@@ -15,16 +15,27 @@ const PRESENT =
 const END = `(?:по\\s+)?(?:${PRESENT}|${DATE})`;
 const SEPARATOR = "\\s*(?:[-–—−]+|to|until|till|до|по)\\s*";
 const START_WORD = "(?:(?:since|from|с|со)\\s+)?";
-// Something short may follow the range: "(2 years)", ", Berlin", " · Remote"
-const TAIL = "(?:\\s*(?:[,;·|•(]|[-–—]\\s).*)?";
+// Something short may follow the range: "(2 years)", ", Berlin", " · Remote".
+// Captured so its length can be checked (see MAX_DATE_TAIL_LENGTH).
+const TAIL = "((?:\\s*(?:[,;·|•(]|[-–—]\\s).*)?)";
 
 const DATE_RANGE_LINE = new RegExp(
   `^\\s*[([]?\\s*${START_WORD}${DATE}${SEPARATOR}${END}\\s*[)\\]]?${TAIL}$`,
   "iu",
 );
 
+/** Separators and spaces that open the tail (not counted in its length). */
+const TAIL_LEAD = /^[\s,;·|•\-–—]+/u;
+
 /** A dates line is short; a long line that merely starts with a year is prose. */
 export const MAX_DATE_LINE_LENGTH = 80;
+
+/**
+ * The note after the range is short: "San Francisco, CA", "(1 year 8 months)".
+ * Longer is prose ("2019 – 2021, led migration to React": 22 characters after
+ * the comma), so the line stays a normal line.
+ */
+export const MAX_DATE_TAIL_LENGTH = 20;
 
 /**
  * True when `line` is a date range (optionally followed by a short note), e.g.
@@ -32,5 +43,9 @@ export const MAX_DATE_LINE_LENGTH = 80;
  */
 export function isDateRangeLine(line: string): boolean {
   const trimmed = line.trim();
-  return trimmed.length > 0 && trimmed.length <= MAX_DATE_LINE_LENGTH && DATE_RANGE_LINE.test(trimmed);
+  if (trimmed.length === 0 || trimmed.length > MAX_DATE_LINE_LENGTH) return false;
+  const match = DATE_RANGE_LINE.exec(trimmed);
+  if (!match) return false;
+  const tail = (match[1] ?? "").replace(TAIL_LEAD, "");
+  return tail.length <= MAX_DATE_TAIL_LENGTH;
 }

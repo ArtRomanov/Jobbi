@@ -8,6 +8,8 @@ import {
   type CvLayout,
   type CvLayoutItem,
 } from "@/entities/cv";
+// Lazy-only module (see features/cv-html-export/CLAUDE.md): read directly
+import { renderCvHtml } from "@/features/cv-html-export/lib/render-cv-html";
 
 const text = (value: string): CvInline => ({ kind: "text", text: value });
 
@@ -137,6 +139,8 @@ describe("isDateRangeLine", () => {
     "(2018 – 2020)",
     "Oct 2015 to Mar 2017",
     "2018 – Current",
+    "Jan 2020 – Present, San Francisco",
+    "Май 2020 — по н.в. (2 года)",
   ])("matches %j", (line) => {
     expect(isDateRangeLine(line)).toBe(true);
   });
@@ -151,6 +155,9 @@ describe("isDateRangeLine", () => {
     "Acme, Berlin | 2020 – 2022",
     "2020 - 2022 " + "x".repeat(80),
     "mayday 2020 - 2021",
+    // Prose after the range: the line is a sentence, not a dates line
+    "2019 – 2021, led migration to React",
+    "Май 2020 — по н.в., руководил командой из 5 человек",
   ])("does not match %j", (line) => {
     expect(isDateRangeLine(line)).toBe(false);
   });
@@ -224,6 +231,45 @@ describe("buildCvLayout", () => {
     expect(layout.sections[0]?.heading).toEqual([text("Experience")]);
   });
 
+  it("leaves the lines under the name as normal text when none of them is a contact", () => {
+    const layout = buildCvLayout("# Jane\nFrontend engineer who ships\nReact, TypeScript, Node.js / GraphQL, Docker");
+    expect(layout.header).toEqual({ name: [text("Jane")], title: null, contacts: [] });
+    expect(layout.sections[0]?.items).toEqual([
+      {
+        kind: "paragraph",
+        children: [
+          text("Frontend engineer who ships"),
+          { kind: "break" },
+          text("React, TypeScript, Node.js / GraphQL, Docker"),
+        ],
+        isContext: false,
+      },
+    ]);
+  });
+
+  it("does not count ' · ' alone as a contact sign", () => {
+    const layout = buildCvLayout("# Jane\nEngineer\nReact · Vue · Node");
+    expect(layout.header).toEqual({ name: [text("Jane")], title: null, contacts: [] });
+  });
+
+  it("lays out a CV without contacts: the title line stays a paragraph, sections and dates still work", () => {
+    const cv = "# Jane Doe\nSenior Frontend Engineer\n\n## Experience\n### Lead\n2020 – 2022\n- Did";
+    const layout = buildCvLayout(cv);
+    expect(layout.header).toEqual({ name: [text("Jane Doe")], title: null, contacts: [] });
+    expect(layout.sections[0]).toEqual({
+      heading: null,
+      items: [{ kind: "paragraph", children: [text("Senior Frontend Engineer")], isContext: false }],
+    });
+    expect(layout.sections[1]?.items[0]).toMatchObject({ kind: "entry", dates: [text("2020 – 2022")] });
+    expectSameText(cv);
+  });
+
+  it("takes title and contacts when a later contact paragraph holds a real contact", () => {
+    const layout = buildCvLayout("# Jane\nEngineer\nBerlin\n\n[GitHub](https://github.com/jane)");
+    expect(layout.header?.title).toEqual([text("Engineer")]);
+    expect(layout.header?.contacts.map(inlineText)).toEqual(["Berlin", "GitHub"]);
+  });
+
   it("groups ## sections and ### entries with dates on the title row", () => {
     const layout = buildCvLayout(EN_CV);
     expect(layout.sections.map((s) => s.heading && inlineText(s.heading))).toEqual([
@@ -236,6 +282,8 @@ describe("buildCvLayout", () => {
       kind: "entry",
       title: [text("Frontend Lead — Acme")],
       dates: [text("Jan 2020 – Present")],
+      // The dates were on their own line: a line break separated them
+      datesSeparator: " ",
     });
     // The paragraph between the title and the bullets is the muted context
     expect(lead?.kind === "entry" && lead.blocks[0]).toEqual({
@@ -249,6 +297,8 @@ describe("buildCvLayout", () => {
       kind: "entry",
       title: [text("Engineer — Beta")],
       dates: [text("2017 – 2019")],
+      // The separator written between title and dates is kept (shown hidden)
+      datesSeparator: " · ",
     });
   });
 
@@ -273,6 +323,7 @@ describe("buildCvLayout", () => {
         kind: "entry",
         title: [text("Jobbi")],
         dates: null,
+        datesSeparator: null,
         blocks: [
           { kind: "paragraph", children: [text("A job tracker.")], isContext: false },
           { kind: "paragraph", children: [text("More text.")], isContext: false },
@@ -333,6 +384,11 @@ describe("buildCvLayout", () => {
     expect(layout.sections[0]?.items[1]).toMatchObject({ ordered: true, start: 3 });
   });
 
+  it("keeps a date range followed by prose as the entry's first line", () => {
+    const layout = buildCvLayout("### Dev\n2019 – 2021, led migration to React\n- a");
+    expect(layout.sections[0]?.items[0]).toMatchObject({ dates: null });
+  });
+
   it("does not treat a date-like sentence in a paragraph as dates", () => {
     const layout = buildCvLayout("### Dev\nIn 2019 – 2021 I built a bank with many users across Europe and Asia.");
     expect(layout.sections[0]?.items[0]).toMatchObject({ dates: null });
@@ -355,6 +411,8 @@ const FRAGMENTS = [
   "## Опыт",
   "### Lead — Acme",
   "### Dev · 2019 – 2021",
+  "### QA | Jan 2018 – Dec 2018",
+  "2019 – 2021, led migration to React",
   "Jan 2020 – Present",
   "Март 2019 — по н.в.",
   "2018-2020, Remote",
@@ -405,6 +463,52 @@ describe("buildCvLayout keeps every word (property)", () => {
         expectSameText(markdown);
       } catch (error: unknown) {
         throw new Error(`Text changed for input:\n${markdown}\n\n${String(error)}`);
+      }
+    }
+  });
+});
+
+const BLOCK_TAGS = new Set(["P", "H1", "H2", "H3", "H4", "UL", "OL", "LI", "DIV", "HEADER", "SECTION", "MAIN", "BODY"]);
+
+/**
+ * Text of the rendered HTML as a reader gets it: block elements end a line,
+ * inline ones do not. The entry title row is one visual line (flex), so its
+ * children count as inline: a title glued to its dates ("EngineerJan") shows.
+ */
+function renderedText(node: Node, isInRow = false): string {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
+  if (!(node instanceof Element)) return "";
+  if (node.tagName === "BR") return "\n";
+  const isRow = node.classList.contains("cv-entry-head");
+  const inner = Array.from(node.childNodes, (child) => renderedText(child, isRow)).join("");
+  return BLOCK_TAGS.has(node.tagName) && !isInRow ? `\n${inner}\n` : inner;
+}
+
+function expectSameRenderedText(markdown: string): void {
+  const html = renderCvHtml(buildCvLayout(markdown), { title: "CV" });
+  const body = new DOMParser().parseFromString(html, "text/html").body;
+  expect(words(renderedText(body))).toEqual(words(blocksText(parseCvMarkdown(markdown))));
+}
+
+describe("the rendered HTML keeps every word with its boundaries (property)", () => {
+  it("keeps a boundary between an entry title and its dates", () => {
+    expectSameRenderedText("### Engineer · Jan 2020 – Present\n- a");
+    expectSameRenderedText("### Lead\n2020 – 2022\n- a");
+  });
+
+  it("holds for 400 random CVs", () => {
+    const random = makeRandom(20261126);
+    for (let run = 0; run < 400; run += 1) {
+      const lineCount = 1 + Math.floor(random() * 25);
+      const lines: string[] = [];
+      for (let i = 0; i < lineCount; i += 1) {
+        lines.push(FRAGMENTS[Math.floor(random() * FRAGMENTS.length)] ?? "");
+      }
+      const markdown = lines.join("\n");
+      try {
+        expectSameRenderedText(markdown);
+      } catch (error: unknown) {
+        throw new Error(`Rendered text changed for input:\n${markdown}\n\n${String(error)}`);
       }
     }
   });
