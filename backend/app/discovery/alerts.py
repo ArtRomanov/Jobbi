@@ -1,9 +1,16 @@
 """Grouped Telegram alerts for the cards a discovery run made `new`.
 
-One message per user per run, only for cards that are not from a first scan
-and not yet handled. `alert_handled_at` is set on those cards in every case
-(no bot, no Telegram link, send failed), so linking Telegram later never
-brings a message about old cards, and a card is never announced twice.
+Per user per run, only cards not yet handled:
+- cards from hourly checks: one message ("🔎 N new vacancies");
+- cards from a source's first scan (backlog #30), grouped by source: one
+  message per source when at most `MAX_SEPARATE_SOURCES` sources have
+  matches, else one combined message. A first-scan card rated in a later run
+  (daily cap, per-source cap, AI down) is summarised in that run. A card whose
+  source was removed is handled without a message.
+
+`alert_handled_at` is set on every loaded card in every case (no bot, no
+Telegram link, send failed), so linking Telegram later never brings a message
+about old cards, and a card is never announced twice.
 
 Same invariant as `service.py`: no network I/O while a transaction is open
 (read → send → short write).
@@ -16,6 +23,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TypeAlias
+from urllib.parse import urlencode
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
@@ -26,15 +34,22 @@ from app.core.config import get_settings
 from app.core.telegram_send import SleepFn, send_text
 from app.models.telegram_link import TelegramLink
 from app.models.vacancy import Vacancy
+from app.models.vacancy_source import VacancySource
+from app.services.vacancy_service import source_key
 
 __all__ = [
     "MAX_ALERT_LINES",
     "MAX_FIELD_CHARS",
     "MAX_MESSAGE_CHARS",
+    "MAX_SEPARATE_SOURCES",
     "AlertCard",
+    "SourceCards",
     "clip_field",
     "default_inbox_url",
+    "first_scan_messages",
     "format_alert",
+    "format_source_alert",
+    "format_sources_summary",
     "send_run_alerts",
 ]
 
@@ -51,6 +66,9 @@ MAX_FIELD_CHARS = 80
 _ALERTABLE_STATES = ("new", "seen")
 _FIT_LABELS = {"high": "High", "medium": "Medium", "low": "Low"}
 _FIT_RANK = {"high": 0, "medium": 1, "low": 2}
+# First-scan matches from more sources than this go into one combined message.
+MAX_SEPARATE_SOURCES = 3
+_TELEGRAM_KIND = "telegram"
 
 SessionFactory: TypeAlias = Callable[[], AsyncSession]
 Clock: TypeAlias = Callable[[], datetime]
@@ -62,6 +80,20 @@ class AlertCard:
     title: str | None
     company: str | None
     posted_at: datetime
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SourceCards:
+    """First-scan cards of one source (`name` is the source's display name)."""
+
+    kind: str
+    handle: str
+    name: str
+    cards: tuple[AlertCard, ...]
+
+    @property
+    def key(self) -> str:
+        return source_key(self.kind, self.handle)
 
 
 def default_inbox_url() -> str:
@@ -117,16 +149,43 @@ def _line(card: AlertCard) -> str:
     return f"{fit} · {role} — {company}"
 
 
+def _matching(count: int) -> str:
+    return "1 matching vacancy" if count == 1 else f"{count} matching vacancies"
+
+
+def _source_name(source: SourceCards) -> str:
+    # Channel titles come from strangers: same cleaning as card fields.
+    return clip_field(source.name) or clip_field(source.handle) or "Unknown source"
+
+
+def _fit_to_limit(compose: Callable[[int], str], shown: int, max_chars: int) -> str:
+    """`compose(shown)` with as many card lines as fit in `max_chars`."""
+    text = compose(shown)
+    while shown > 0 and _telegram_len(text) > max_chars:
+        shown -= 1
+        text = compose(shown)
+    # Last resort (an absurdly long Inbox URL): a cut message beats none.
+    while _telegram_len(text) > max_chars:
+        text = text[:-1]
+    return text
+
+
 def format_alert(
-    cards: Sequence[AlertCard], inbox_url: str, *, max_chars: int = MAX_MESSAGE_CHARS
+    cards: Sequence[AlertCard],
+    inbox_url: str,
+    *,
+    header: str | None = None,
+    max_chars: int = MAX_MESSAGE_CHARS,
 ) -> str:
     """The alert text (functional spec 2.4). `cards` must not be empty.
 
+    `header` replaces "🔎 N new vacancies" (a source's first-scan summary).
     If the text would exceed `max_chars`, trailing card lines are dropped and
     counted in "+M more in Inbox"; the header and the Inbox link always stay.
     """
     count = len(cards)
-    header = "🔎 1 new vacancy" if count == 1 else f"🔎 {count} new vacancies"
+    if header is None:
+        header = "🔎 1 new vacancy" if count == 1 else f"🔎 {count} new vacancies"
     card_lines = [_line(card) for card in _ordered(cards)[:MAX_ALERT_LINES]]
     link = f"🔗 Open Inbox: {inbox_url}"
 
@@ -137,15 +196,66 @@ def format_alert(
         lines.extend(["", link])
         return "\n".join(lines)
 
-    shown = len(card_lines)
-    text = compose(shown)
-    while shown > 0 and _telegram_len(text) > max_chars:
-        shown -= 1
-        text = compose(shown)
-    # Last resort (an absurdly long Inbox URL): a cut message beats none.
-    while _telegram_len(text) > max_chars:
-        text = text[:-1]
-    return text
+    return _fit_to_limit(compose, len(card_lines), max_chars)
+
+
+def format_source_alert(
+    source: SourceCards, inbox_url: str, *, max_chars: int = MAX_MESSAGE_CHARS
+) -> str:
+    """First-scan summary of one source; its Inbox link filters by the source."""
+    noun = "channel" if source.kind == _TELEGRAM_KIND else "source"
+    header = f"🔎 New {noun} {_source_name(source)}: {_matching(len(source.cards))}"
+    link = f"{inbox_url}?{urlencode({'source': source.key})}"
+    return format_alert(source.cards, link, header=header, max_chars=max_chars)
+
+
+def format_sources_summary(
+    sources: Sequence[SourceCards],
+    inbox_url: str,
+    *,
+    max_chars: int = MAX_MESSAGE_CHARS,
+) -> str:
+    """First-scan summary of several sources in one message: per source a
+    "<name> (N)" line and its card lines, at most `MAX_ALERT_LINES` card lines
+    in all (in `sources` order); the rest is counted in "+M more in Inbox"."""
+    total = sum(len(source.cards) for source in sources)
+    header = f"🔎 New sources: {_matching(total)} from {len(sources)} sources"
+    sections: list[tuple[str, list[str]]] = []
+    budget = MAX_ALERT_LINES
+    for source in sources:
+        lines = [_line(card) for card in _ordered(source.cards)[:budget]]
+        budget -= len(lines)
+        sections.append((f"{_source_name(source)} ({len(source.cards)})", lines))
+    link = f"🔗 Open Inbox: {inbox_url}"
+
+    def compose(shown: int) -> str:
+        lines = [header]
+        left = shown
+        for title, card_lines in sections:
+            taken = card_lines[:left]
+            if not taken:
+                break
+            lines.extend(["", title, *taken])
+            left -= len(taken)
+        if total > shown:
+            lines.append(f"+{total - shown} more in Inbox")
+        lines.extend(["", link])
+        return "\n".join(lines)
+
+    shown = sum(len(card_lines) for _, card_lines in sections)
+    return _fit_to_limit(compose, shown, max_chars)
+
+
+def first_scan_messages(sources: Sequence[SourceCards], inbox_url: str) -> list[str]:
+    """One message per source, or one combined message for more than
+    `MAX_SEPARATE_SOURCES` sources. Sources with the most matches first."""
+    ordered = sorted(
+        (source for source in sources if source.cards),
+        key=lambda source: (-len(source.cards), _source_name(source).casefold()),
+    )
+    if len(ordered) > MAX_SEPARATE_SOURCES:
+        return [format_sources_summary(ordered, inbox_url)]
+    return [format_source_alert(source, inbox_url) for source in ordered]
 
 
 async def send_run_alerts(
@@ -159,9 +269,9 @@ async def send_run_alerts(
 ) -> int:
     """Alert each user about the cards that became `new` in this run.
 
-    `run_card_ids_by_user` may include first-scan cards and cards that have
-    left the Inbox since; they are filtered here. Returns the number of
-    messages sent.
+    `run_card_ids_by_user` may include cards that have left the Inbox since
+    or were handled already; they are filtered here. Returns the number of
+    messages sent (a user may get several: hourly + first-scan summaries).
     """
     url = inbox_url or default_inbox_url()
     sent = 0
@@ -170,10 +280,9 @@ async def send_run_alerts(
         if not card_ids:
             continue
         try:
-            if await _alert_user(
+            sent += await _alert_user(
                 session_factory, bot, user_id, card_ids, clock, url, sleep
-            ):
-                sent += 1
+            )
         except SQLAlchemyError:
             # One user's database trouble must not stop the others' alerts.
             logger.exception("Alerts for user %s failed", user_id)
@@ -188,44 +297,92 @@ async def _alert_user(
     clock: Clock,
     inbox_url: str,
     sleep: SleepFn,
-) -> bool:
-    """Send (maybe) and mark handled; True when a message was sent."""
-    is_sent = False
-    cards, chat_id = await _load(session_factory, user_id, card_ids)
-    if cards and bot is not None and chat_id is not None:
-        text = format_alert(cards, inbox_url)
-        is_sent = await send_text(bot, chat_id, text, sleep=sleep)
-        if is_sent:
-            logger.info("Alert sent to user %s: %d card(s)", user_id, len(cards))
-        else:
-            logger.warning("Alert for user %s could not be sent", user_id)
+) -> int:
+    """Send (maybe) and mark handled; returns the number of messages sent."""
+    sent = 0
+    loaded = await _load(session_factory, user_id, card_ids)
+    if bot is not None and loaded.chat_id is not None:
+        texts = first_scan_messages(loaded.first_scan, inbox_url)
+        if loaded.hourly:
+            texts.insert(0, format_alert(loaded.hourly, inbox_url))
+        for text in texts:
+            if await send_text(bot, loaded.chat_id, text, sleep=sleep):
+                sent += 1
+            else:
+                logger.warning("Alert for user %s could not be sent", user_id)
+        if sent:
+            logger.info(
+                "Alerts sent to user %s: %d message(s); %d hourly card(s), "
+                "%d first-scan source(s)",
+                user_id,
+                sent,
+                len(loaded.hourly),
+                len(loaded.first_scan),
+            )
     await _mark_handled(session_factory, user_id, card_ids, clock())
-    return is_sent
+    return sent
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Loaded:
+    hourly: list[AlertCard]
+    first_scan: list[SourceCards]
+    chat_id: int | None
 
 
 async def _load(
     session_factory: SessionFactory, user_id: str, card_ids: list[str]
-) -> tuple[list[AlertCard], int | None]:
+) -> _Loaded:
+    hourly: list[AlertCard] = []
+    by_source: dict[str, tuple[str, str, str, list[AlertCard]]] = {}
     async with session_factory() as session:
         rows = await session.execute(
             select(
-                Vacancy.fit, Vacancy.title, Vacancy.company, Vacancy.posted_at
-            ).where(
+                Vacancy.fit,
+                Vacancy.title,
+                Vacancy.company,
+                Vacancy.posted_at,
+                Vacancy.from_initial_scan,
+                VacancySource.id.label("source_id"),
+                VacancySource.kind,
+                VacancySource.handle,
+                VacancySource.display_name,
+            )
+            .outerjoin(
+                VacancySource,
+                (VacancySource.id == Vacancy.source_id)
+                & (VacancySource.user_id == Vacancy.user_id),
+            )
+            .where(
                 Vacancy.user_id == user_id,
                 Vacancy.id.in_(card_ids),
-                Vacancy.from_initial_scan.is_(False),
                 Vacancy.alert_handled_at.is_(None),
                 Vacancy.state.in_(_ALERTABLE_STATES),
             )
         )
-        cards = [
-            AlertCard(fit=fit, title=title, company=company, posted_at=posted_at)
-            for fit, title, company, posted_at in rows
-        ]
+        for row in rows:
+            alert_card = AlertCard(
+                fit=row.fit,
+                title=row.title,
+                company=row.company,
+                posted_at=row.posted_at,
+            )
+            if not row.from_initial_scan:
+                hourly.append(alert_card)
+            elif row.source_id is not None:
+                group = by_source.setdefault(
+                    row.source_id, (row.kind, row.handle, row.display_name, [])
+                )
+                group[3].append(alert_card)
+            # Else a first-scan card whose source was removed: handled, unsent.
         chat_id = await session.scalar(
             select(TelegramLink.chat_id).where(TelegramLink.user_id == user_id)
         )
-    return cards, chat_id
+    first_scan = [
+        SourceCards(kind=kind, handle=handle, name=name, cards=tuple(cards))
+        for kind, handle, name, cards in by_source.values()
+    ]
+    return _Loaded(hourly=hourly, first_scan=first_scan, chat_id=chat_id)
 
 
 async def _mark_handled(

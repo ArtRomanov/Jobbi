@@ -1,9 +1,11 @@
 import { useCallback, useId, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { SourcesPanel } from "@/features/manage-sources";
-import { DEFAULT_INBOX_FILTERS, InboxFilters } from "@/features/inbox-filters";
+import { InboxFilters } from "@/features/inbox-filters";
 import type { InboxFilterValues } from "@/features/inbox-filters";
 import type { RemovedVacancySource, VacancySource } from "@/entities/vacancy-source";
 import { PageCard, PageHeader, VISUALLY_HIDDEN_STYLE } from "@/shared/ui";
+import { initialFilters } from "../lib/helpers";
 import { VacancyList } from "./vacancy-list";
 
 /** Inbox: filterable vacancies found in the user's sources, plus the Sources panel. */
@@ -14,7 +16,9 @@ export function InboxPage() {
   const vacanciesHeadingId = useId();
   const titleRef = useRef<HTMLHeadingElement>(null);
   const focusTitle = useCallback(() => titleRef.current?.focus(), []);
-  const [filters, setFilters] = useState<InboxFilterValues>(DEFAULT_INBOX_FILTERS);
+  // `?source=<key>` is read once: later filter changes do not touch the URL
+  const [searchParams] = useSearchParams();
+  const [filters, setFilters] = useState<InboxFilterValues>(() => initialFilters(searchParams));
   // Mirrored from the Sources panel, so the filter needs no request of its own
   const [sources, setSources] = useState<readonly VacancySource[]>([]);
   const [removedSources, setRemovedSources] = useState<readonly RemovedVacancySource[]>([]);

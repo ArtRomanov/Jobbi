@@ -15,10 +15,19 @@ from telegram.error import Forbidden, NetworkError, RetryAfter
 
 from app.core.database import Base
 from app.discovery import alerts
-from app.discovery.alerts import AlertCard, format_alert, send_run_alerts
+from app.discovery.alerts import (
+    AlertCard,
+    SourceCards,
+    first_scan_messages,
+    format_alert,
+    format_source_alert,
+    format_sources_summary,
+    send_run_alerts,
+)
 from app.models.telegram_link import TelegramLink
 from app.models.user import User
 from app.models.vacancy import Vacancy
+from app.models.vacancy_source import VacancySource
 from tests.discovery.fake_bot import FakeBot
 
 NOW = datetime(2026, 11, 22, 12, 0)
@@ -190,6 +199,163 @@ class TestFormatAlert:
         assert len(text.splitlines()) == 2 + 10 + 2
 
 
+# --- first-scan summaries -----------------------------------------------------------
+
+
+def group(
+    name: str,
+    cards: list[AlertCard],
+    *,
+    kind: str = "telegram",
+    handle: str = "relocats",
+) -> SourceCards:
+    return SourceCards(kind=kind, handle=handle, name=name, cards=tuple(cards))
+
+
+class TestFirstScanFormat:
+    def test_one_source_exact_text(self) -> None:
+        text = format_source_alert(
+            group("IT Relocation", [card("high", "Passage", "Passage Co")]), INBOX
+        )
+
+        assert text == (
+            "🔎 New channel IT Relocation: 1 matching vacancy\n"
+            "\n"
+            "High · Passage — Passage Co\n"
+            "\n"
+            f"🔗 Open Inbox: {INBOX}?source=telegram%3Arelocats"
+        )
+
+    def test_plural_and_non_telegram_kind(self) -> None:
+        text = format_source_alert(
+            group("Acme", [card(), card()], kind="greenhouse", handle="acme"), INBOX
+        )
+
+        lines = text.splitlines()
+        assert lines[0] == "🔎 New source Acme: 2 matching vacancies"
+        assert lines[-1] == f"🔗 Open Inbox: {INBOX}?source=greenhouse%3Aacme"
+
+    def test_source_key_is_url_encoded(self) -> None:
+        text = format_source_alert(
+            group("Site", [card()], kind="web", handle="a b&c=d/é"), INBOX
+        )
+
+        assert text.splitlines()[-1] == (
+            f"🔗 Open Inbox: {INBOX}?source=web%3Aa+b%26c%3Dd%2F%C3%A9"
+        )
+
+    def test_source_name_is_cleaned(self) -> None:
+        text = format_source_alert(group("IT\u202eRelo\ncation", [card()]), INBOX)
+
+        assert text.splitlines()[0] == (
+            "🔎 New channel ITRelo cation: 1 matching vacancy"
+        )
+
+    def test_one_source_caps_at_ten_lines(self) -> None:
+        cards = [card("low", f"Low {n}", hours_ago=n) for n in range(1, 13)]
+
+        lines = format_source_alert(group("IT Relocation", cards), INBOX).splitlines()
+
+        assert lines[0] == "🔎 New channel IT Relocation: 12 matching vacancies"
+        assert lines[2:12] == [f"Low · Low {n} — Acme" for n in range(1, 11)]
+        assert lines[12] == "+2 more in Inbox"
+        assert lines[-1].startswith(f"🔗 Open Inbox: {INBOX}?source=")
+
+    def test_combined_exact_text(self) -> None:
+        sources = [
+            group("IT Relocation", [card("low", "A"), card("high", "B")]),
+            group("Acme", [card("medium", "C")], kind="lever", handle="acme"),
+            group("Beta", [card("high", "D")], kind="ashby", handle="beta"),
+            group("Gamma", [card("low", "E")], kind="web", handle="g"),
+        ]
+
+        text = format_sources_summary(sources, INBOX)
+
+        assert text == (
+            "🔎 New sources: 5 matching vacancies from 4 sources\n"
+            "\n"
+            "IT Relocation (2)\n"
+            "High · B — Acme\n"
+            "Low · A — Acme\n"
+            "\n"
+            "Acme (1)\n"
+            "Medium · C — Acme\n"
+            "\n"
+            "Beta (1)\n"
+            "High · D — Acme\n"
+            "\n"
+            "Gamma (1)\n"
+            "Low · E — Acme\n"
+            "\n"
+            f"🔗 Open Inbox: {INBOX}"
+        )
+
+    def test_combined_caps_card_lines_overall(self) -> None:
+        sources = [
+            group(f"S{n}", [card("medium", f"R{n}.{i}") for i in range(4)])
+            for n in range(1, 5)
+        ]
+
+        lines = format_sources_summary(sources, INBOX).splitlines()
+
+        assert lines[0] == "🔎 New sources: 16 matching vacancies from 4 sources"
+        assert [line for line in lines if line.startswith("Medium · ")] == [
+            f"Medium · R{n}.{i} — Acme" for n in (1, 2) for i in range(4)
+        ] + ["Medium · R3.0 — Acme", "Medium · R3.1 — Acme"]
+        assert "S3 (4)" in lines
+        assert "S4 (4)" not in lines
+        assert lines[-3:] == ["+6 more in Inbox", "", f"🔗 Open Inbox: {INBOX}"]
+
+    def test_combined_fits_the_char_limit(self) -> None:
+        sources = [
+            group(f"S{n}", [card("high", f"Role {n}.{i}") for i in range(3)])
+            for n in range(1, 5)
+        ]
+        full = format_sources_summary(sources, INBOX)
+
+        text = format_sources_summary(sources, INBOX, max_chars=len(full) - 30)
+
+        lines = text.splitlines()
+        assert telegram_len(text) <= len(full) - 30
+        shown = [line for line in lines if line.startswith("High · ")]
+        assert lines[-3] == f"+{12 - len(shown)} more in Inbox"
+        assert lines[-1] == f"🔗 Open Inbox: {INBOX}"
+
+    def test_huge_names_still_fit_telegram(self) -> None:
+        sources = [
+            group("N" * 300, [card("high", "R" * 200, "C" * 200)] * 3) for _ in range(5)
+        ]
+
+        assert telegram_len(format_sources_summary(sources, INBOX)) <= 4096
+
+    def test_up_to_three_sources_one_message_each_most_matches_first(self) -> None:
+        sources = [
+            group("Small", [card()], handle="small"),
+            group("Big", [card(), card(), card()], handle="big"),
+            group("Mid", [card(), card()], handle="mid"),
+        ]
+
+        texts = first_scan_messages(sources, INBOX)
+
+        assert [text.splitlines()[0] for text in texts] == [
+            "🔎 New channel Big: 3 matching vacancies",
+            "🔎 New channel Mid: 2 matching vacancies",
+            "🔎 New channel Small: 1 matching vacancy",
+        ]
+
+    def test_more_than_three_sources_one_combined_message(self) -> None:
+        sources = [group(f"S{n}", [card()], handle=f"s{n}") for n in range(4)]
+
+        [text] = first_scan_messages(sources, INBOX)
+
+        assert text.splitlines()[0] == (
+            "🔎 New sources: 4 matching vacancies from 4 sources"
+        )
+
+    def test_no_sources_no_messages(self) -> None:
+        assert first_scan_messages([], INBOX) == []
+
+
 def telegram_len(text: str) -> int:
     return len(text.encode("utf-16-le")) // 2
 
@@ -267,11 +433,14 @@ async def make_card(
     fit: str = "medium",
     title: str | None = "Frontend Developer",
     initial: bool = False,
+    source_id: str | None = None,
+    handled: datetime | None = None,
     hours_ago: int = 1,
 ) -> str:
     async with db() as session:
         vacancy = Vacancy(
             user_id=user_id,
+            source_id=source_id,
             external_key=f"tg:chan/{next(_KEYS)}",
             url="https://t.me/chan/1",
             title=title,
@@ -282,12 +451,32 @@ async def make_card(
             state=state,
             fit=fit,
             from_initial_scan=initial,
-            # As stored by the worker: first-scan cards are handled at insert.
-            alert_handled_at=NOW - timedelta(hours=1) if initial else None,
+            alert_handled_at=handled,
         )
         session.add(vacancy)
         await session.commit()
         return vacancy.id
+
+
+async def make_source(
+    db: async_sessionmaker[AsyncSession],
+    user_id: str,
+    name: str,
+    *,
+    kind: str = "telegram",
+    handle: str | None = None,
+) -> str:
+    async with db() as session:
+        source = VacancySource(
+            user_id=user_id,
+            kind=kind,
+            handle=handle or f"chan{next(_KEYS)}",
+            default_name=name,
+            display_name=name,
+        )
+        session.add(source)
+        await session.commit()
+        return source.id
 
 
 async def handled_at(
@@ -359,31 +548,6 @@ class TestSendRunAlerts:
         assert await run(factory, None, {user_id: ids}) == 0
 
         assert await handled_at(db, ids) == [NOW]
-
-    async def test_initial_scan_cards_are_never_announced(
-        self, factory, db, bot
-    ) -> None:
-        user_id = await make_user(db)
-        initial_ids = [await make_card(db, user_id, initial=True) for _ in range(3)]
-        hourly_id = await make_card(db, user_id, title="Hourly")
-
-        await run(factory, bot, {user_id: [*initial_ids, hourly_id]})
-
-        assert len(bot.sent) == 1
-        assert bot.texts[0].splitlines()[0] == "🔎 1 new vacancy"
-        assert "Hourly" in bot.texts[0]
-        # First-scan cards keep the timestamp from their insert.
-        assert await handled_at(db, initial_ids) == [NOW - timedelta(hours=1)] * 3
-
-    async def test_only_initial_scan_cards_sends_nothing(
-        self, factory, db, bot
-    ) -> None:
-        user_id = await make_user(db)
-        ids = [await make_card(db, user_id, initial=True)]
-
-        await run(factory, bot, {user_id: ids})
-
-        assert bot.sent == []
 
     async def test_cards_that_left_the_inbox_are_not_counted(
         self, factory, db, bot
@@ -535,3 +699,166 @@ class TestSendRunAlerts:
         assert f"Alerts for user {broken} failed" in caplog.text
         assert bot.token not in caplog.text
         assert await handled_at(db, fine_ids) == [NOW]
+
+
+class TestFirstScanAlerts:
+    async def test_one_message_per_source(self, factory, db, bot) -> None:
+        user_id = await make_user(db)
+        relocats = await make_source(db, user_id, "IT Relocation", handle="relocats")
+        acme = await make_source(db, user_id, "Acme", kind="greenhouse", handle="acme")
+        ids = [
+            await make_card(db, user_id, initial=True, source_id=relocats, title="A"),
+            await make_card(db, user_id, initial=True, source_id=relocats, title="B"),
+            await make_card(db, user_id, initial=True, source_id=acme, title="C"),
+        ]
+
+        assert await run(factory, bot, {user_id: ids}) == 2
+
+        assert [text.splitlines()[0] for text in bot.texts] == [
+            "🔎 New channel IT Relocation: 2 matching vacancies",
+            "🔎 New source Acme: 1 matching vacancy",
+        ]
+        assert bot.texts[0].splitlines()[-1] == (
+            f"🔗 Open Inbox: {INBOX}?source=telegram%3Arelocats"
+        )
+        assert bot.texts[1].splitlines()[-1] == (
+            f"🔗 Open Inbox: {INBOX}?source=greenhouse%3Aacme"
+        )
+        assert await handled_at(db, ids) == [NOW] * 3
+        assert bot.violations == 0
+
+    async def test_more_than_three_sources_one_combined_message(
+        self, factory, db, bot
+    ) -> None:
+        user_id = await make_user(db)
+        ids = []
+        for n in range(4):
+            source_id = await make_source(db, user_id, f"Channel {n}")
+            ids.append(await make_card(db, user_id, initial=True, source_id=source_id))
+
+        assert await run(factory, bot, {user_id: ids}) == 1
+
+        [text] = bot.texts
+        assert text.splitlines()[0] == (
+            "🔎 New sources: 4 matching vacancies from 4 sources"
+        )
+        assert text.splitlines()[-1] == f"🔗 Open Inbox: {INBOX}"
+        assert await handled_at(db, ids) == [NOW] * 4
+
+    async def test_line_cap_of_one_source(self, factory, db, bot) -> None:
+        user_id = await make_user(db)
+        source_id = await make_source(db, user_id, "IT Relocation")
+        ids = [
+            await make_card(db, user_id, initial=True, source_id=source_id)
+            for _ in range(12)
+        ]
+
+        await run(factory, bot, {user_id: ids})
+
+        [text] = bot.texts
+        assert len([line for line in text.splitlines() if " · " in line]) == 10
+        assert "+2 more in Inbox" in text.splitlines()
+
+    async def test_hourly_and_first_scan_cards_two_messages(
+        self, factory, db, bot
+    ) -> None:
+        user_id = await make_user(db)
+        source_id = await make_source(db, user_id, "IT Relocation")
+        hourly = await make_card(db, user_id, title="Hourly")
+        first = await make_card(
+            db, user_id, initial=True, source_id=source_id, title="First"
+        )
+
+        assert await run(factory, bot, {user_id: [first, hourly]}) == 2
+
+        hourly_text, first_text = bot.texts
+        assert hourly_text == format_alert([card("medium", "Hourly")], INBOX)
+        assert first_text.splitlines()[0] == (
+            "🔎 New channel IT Relocation: 1 matching vacancy"
+        )
+        assert "First" in first_text
+        assert "First" not in hourly_text
+        assert await handled_at(db, [hourly, first]) == [NOW, NOW]
+
+    @pytest.mark.parametrize(
+        "source_id",
+        [None, "deleted-source-id"],
+        ids=["source-id-cleared", "source-row-gone"],
+    )
+    async def test_removed_source_card_is_handled_without_message(
+        self, factory, db, bot, source_id: str | None
+    ) -> None:
+        user_id = await make_user(db)
+        # SQLite does not enforce the FK: a dangling id is a removed source.
+        ids = [await make_card(db, user_id, initial=True, source_id=source_id)]
+
+        assert await run(factory, bot, {user_id: ids}) == 0
+
+        assert bot.sent == []
+        assert await handled_at(db, ids) == [NOW]
+
+    async def test_other_users_source_is_not_used(self, factory, db, bot) -> None:
+        user_id = await make_user(db, chat_id=1)
+        other = await make_user(db, chat_id=2)
+        other_source = await make_source(db, other, "Not yours")
+        ids = [await make_card(db, user_id, initial=True, source_id=other_source)]
+
+        await run(factory, bot, {user_id: ids})
+
+        assert bot.sent == []
+        assert await handled_at(db, ids) == [NOW]
+
+    async def test_no_telegram_link_handled_silently(self, factory, db, bot) -> None:
+        user_id = await make_user(db, chat_id=None)
+        source_id = await make_source(db, user_id, "IT Relocation")
+        ids = [await make_card(db, user_id, initial=True, source_id=source_id)]
+
+        assert await run(factory, bot, {user_id: ids}) == 0
+
+        assert bot.sent == []
+        assert await handled_at(db, ids) == [NOW]
+
+    async def test_send_failure_still_handled(self, factory, db, bot) -> None:
+        user_id = await make_user(db)
+        first = await make_source(db, user_id, "First", handle="first")
+        second = await make_source(db, user_id, "Second", handle="second")
+        ids = [
+            await make_card(db, user_id, initial=True, source_id=first),
+            await make_card(db, user_id, initial=True, source_id=first),
+            await make_card(db, user_id, initial=True, source_id=second),
+        ]
+        bot.errors.append(NetworkError("connection reset"))
+
+        assert await run(factory, bot, {user_id: ids}) == 1
+
+        assert [text.splitlines()[0] for text in bot.texts] == [
+            "🔎 New channel Second: 1 matching vacancy"
+        ]
+        assert await handled_at(db, ids) == [NOW] * 3
+
+    async def test_rerun_sends_nothing(self, factory, db, bot) -> None:
+        user_id = await make_user(db)
+        source_id = await make_source(db, user_id, "IT Relocation")
+        ids = [await make_card(db, user_id, initial=True, source_id=source_id)]
+
+        await run(factory, bot, {user_id: ids})
+        await run(factory, bot, {user_id: ids})
+
+        assert len(bot.sent) == 1
+
+    async def test_first_scan_rows_handled_before_deploy_are_not_sent(
+        self, factory, db, bot
+    ) -> None:
+        user_id = await make_user(db)
+        source_id = await make_source(db, user_id, "IT Relocation")
+        earlier = NOW - timedelta(days=2)
+        ids = [
+            await make_card(
+                db, user_id, initial=True, source_id=source_id, handled=earlier
+            )
+        ]
+
+        assert await run(factory, bot, {user_id: ids}) == 0
+
+        assert bot.sent == []
+        assert await handled_at(db, ids) == [earlier]
