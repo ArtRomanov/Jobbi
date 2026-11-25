@@ -498,6 +498,33 @@ describe("ChatPage change cards", () => {
     expect(getCalls()).toBe(1);
   });
 
+  it("puts the text of a failed send back into the input and drops its bubble", async () => {
+    mockStream([errorFrame("Rate limit reached.")], []);
+    const { container } = renderChatPage("app-1");
+    await send("Shorten my summary");
+
+    expect(await screen.findByText("Rate limit reached.")).toBeInTheDocument();
+    const input = screen.getByRole("textbox", { name: "Chat message" });
+    await waitFor(() => expect(input).toHaveValue("Shorten my summary"));
+    expect(input).not.toBeDisabled();
+    expect(container.querySelector('[data-message-role="user"]')).toBeNull();
+    expect(screen.getByText(/No messages yet/)).toBeInTheDocument();
+  });
+
+  it("gives the text back after a stream that failed mid-reply", async () => {
+    const getCalls = mockStream(
+      [tokenFrame("Here is "), errorFrame("Something went wrong.")],
+      [],
+    );
+    const { container } = renderChatPage("app-1");
+    await send("Help");
+
+    expect(await screen.findByText("Something went wrong.")).toBeInTheDocument();
+    await waitFor(() => expect(getCalls()).toBe(2));
+    expect(screen.getByRole("textbox", { name: "Chat message" })).toHaveValue("Help");
+    expect(container.querySelector('[data-message-role]')).toBeNull();
+  });
+
   it("ignores an empty cards event", async () => {
     const getCalls = mockStream(
       [tokenFrame("No edits needed."), cardsFrame([]), DONE],

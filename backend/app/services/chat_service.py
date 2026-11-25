@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 import structlog
 from sqlalchemy import delete, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -351,9 +352,45 @@ async def stream_chat_response(
     empty) once the assistant message and its cards are saved. The model gets the
     `propose_cv_edit` tool only when the application has a CV linked (and
     owned by the same user).
-    """
-    await save_message(db, application.id, "user", user_content)
 
+    If anything fails before the reply is stored, the user message is deleted
+    again and the error re-raised: a failed send leaves no trace in the
+    history (the client puts the text back into its input box).
+    """
+    user_message = await save_message(db, application.id, "user", user_content)
+    user_message_id = user_message.id
+    reply_stored = False
+    try:
+        async for item in _stream_reply(db, application, user_content):
+            # `CardsReady` comes only after the reply's commit.
+            reply_stored = reply_stored or isinstance(item, CardsReady)
+            yield item
+    except Exception:
+        if not reply_stored:
+            await _discard_user_message(db, user_message_id)
+        raise
+
+
+async def _discard_user_message(db: AsyncSession, message_id: str) -> None:
+    """Delete the user message of a failed send; never raises over the cause."""
+    try:
+        await db.rollback()
+        await db.execute(delete(ChatMessage).where(ChatMessage.id == message_id))
+        await db.commit()
+    except SQLAlchemyError as e:
+        logger.error("chat_user_message_discard_failed", error_type=type(e).__name__)
+
+
+async def _stream_reply(
+    db: AsyncSession,
+    application: Application,
+    user_content: str,
+) -> AsyncIterator[str | ReplyText | CardsReady]:
+    """The part of `stream_chat_response` after the user message is saved.
+
+    Any exception it raises comes before the assistant reply is committed: the
+    commit is its last step before the final `CardsReady`.
+    """
     system_prompt, _, cv = await get_application_context(db, application)
     language = reply_language(user_content)
     budget = get_settings().CHAT_INPUT_TOKEN_BUDGET

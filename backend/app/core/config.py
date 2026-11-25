@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -14,7 +15,15 @@ class Settings(BaseSettings):
     SENTRY_DSN: str = ""
     LOG_LEVEL: str = "INFO"
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "qwen/qwen3.8-27b"
+    # Chat model (CV tailoring, tool edits). gpt-oss since 2026-11-25 (was
+    # qwen/qwen3.8-27b): the same model as discovery's primary.
+    GROQ_MODEL: str = "openai/gpt-oss-20b"
+    # Cap on one chat reply (Groq max_tokens). gpt-oss counts its reasoning in
+    # these tokens, so a low cap can leave the visible reply empty or cut.
+    CHAT_MAX_TOKENS: int = Field(default=6000, ge=256)
+    # How hard a gpt-oss chat model reasons before replying; other models get
+    # no reasoning_effort at all (see app.core.llm_options).
+    CHAT_REASONING_EFFORT: Literal["low", "medium", "high"] = "medium"
     # Max estimated input tokens of one chat request (system prompt with CV and
     # vacancy, history, tools schema; the reply's max_tokens is not counted).
     # Model-agnostic: keep it under GROQ_MODEL's per-request input limit (Groq
