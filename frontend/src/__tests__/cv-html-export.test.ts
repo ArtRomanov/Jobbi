@@ -84,6 +84,22 @@ describe("renderCvHtml", () => {
     expect(render("")).toMatch(/\.cv-hidden-text\{position:absolute;[^}]*clip:rect\(0 0 0 0\)/);
   });
 
+  it("keeps the ATS reading order: dates under the title, bullet dots not positioned", () => {
+    const css = render("");
+    const rule = (selector: string): string =>
+      css.match(new RegExp(`(?:^|[\\n}])${selector.replace(/[.>]/g, "\\$&")}\\{([^}]*)\\}`))?.[1] ?? "";
+    // Right-aligned dates get detached from their title by PDF text extractors
+    expect(rule(".cv-entry-head")).toContain("display:block");
+    expect(rule(".cv-entry-head")).not.toMatch(/justify-content:space-between|display:flex/);
+    expect(rule(".cv-entry-dates")).toContain("display:block");
+    expect(rule(".cv-entry-dates")).not.toContain("text-align:right");
+    // A positioned <li> or dot makes Chrome paint every bullet last in the PDF
+    expect(rule(".cv-list>li")).toContain("padding-left:15pt");
+    expect(rule(".cv-list>li")).not.toContain("position:");
+    expect(rule(".cv-list>li::before")).toContain("float:left");
+    expect(rule(".cv-list>li::before")).not.toContain("position:");
+  });
+
   it("keeps every word of the CV in order", () => {
     const doc = parse(render(CV));
     expect(words(textNodes(doc.body))).toEqual(

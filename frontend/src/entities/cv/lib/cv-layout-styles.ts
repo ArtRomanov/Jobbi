@@ -41,6 +41,10 @@ export const CV_LAYOUT_CLASSES = {
   subheading: "cv-subheading",
 } as const;
 
+// ATS reading order: dates sit on their own line under the title (right-aligned
+// dates get detached from their title by PDF text extractors), and the bullet dot
+// is a float, not position:absolute (Chrome paints positioned dots last, so some
+// extractors read every bullet after the rest of the page).
 export const CV_LAYOUT_CSS = `
 .cv-doc{font-family:${BODY_FONT};font-size:9pt;line-height:1.4;color:${body};overflow-wrap:anywhere;-webkit-print-color-adjust:exact;print-color-adjust:exact;text-align:left}
 .cv-doc *{box-sizing:border-box}
@@ -60,9 +64,9 @@ export const CV_LAYOUT_CSS = `
 .cv-entry{margin-top:7pt}
 .cv-entry:first-child{margin-top:0}
 .cv-entry-lead{break-inside:avoid;page-break-inside:avoid}
-.cv-entry-head{display:flex;justify-content:space-between;align-items:baseline;gap:8pt;margin:0 0 2pt;break-after:avoid;page-break-after:avoid}
-.cv-entry-title{flex:1 1 auto;min-width:0;font-family:${BODY_FONT};font-size:9.5pt;font-weight:700;color:${ink}}
-.cv-entry-dates{flex:0 0 auto;max-width:45%;font-size:8pt;color:${muted};text-align:right}
+.cv-entry-head{display:block;margin:0 0 2pt;break-after:avoid;page-break-after:avoid}
+.cv-entry-title{font-family:${BODY_FONT};font-size:9.5pt;font-weight:700;color:${ink}}
+.cv-entry-dates{display:block;font-size:8pt;color:${muted}}
 .cv-hidden-text{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);white-space:pre}
 .cv-p{margin:0 0 5.5pt;orphans:2;widows:2}
 .cv-context{color:${muted}}
@@ -70,8 +74,8 @@ export const CV_LAYOUT_CSS = `
 .cv-raw{margin:0 0 5.5pt;white-space:pre-wrap}
 .cv-subheading{font-size:9.5pt;font-weight:700;color:${ink};margin:0 0 2pt}
 .cv-list{list-style:none;margin:0 0 5.5pt;padding:0}
-.cv-list>li{position:relative;padding-left:15pt;margin:0 0 2pt;orphans:2;widows:2}
-.cv-list>li::before{content:"";position:absolute;left:2.3pt;top:calc(.7em - 1.5pt);width:0;height:0;border:1.5pt solid ${accent};border-radius:50%}
+.cv-list>li{padding-left:15pt;margin:0 0 2pt;orphans:2;widows:2}
+.cv-list>li::before{content:"";float:left;margin-left:-12.7pt;margin-top:calc(.7em - 1.5pt);width:0;height:0;border:1.5pt solid ${accent};border-radius:50%}
 .cv-list .cv-list{margin:2pt 0 0}
 .cv-list .cv-p,.cv-list .cv-raw{margin:0}
 .cv-list-ordered{list-style:decimal;padding-left:15pt}
