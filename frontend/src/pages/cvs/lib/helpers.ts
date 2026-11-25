@@ -7,7 +7,7 @@ export function formatCvDate(iso: string): string {
   });
 }
 
-export type CvRowAction = "edit" | "duplicate" | "pdf" | "delete";
+export type CvRowAction = "edit" | "duplicate" | "pdf" | "html" | "delete";
 
 /**
  * Unique accessible name of a row action, visible label first (WCAG 2.5.3),
@@ -21,6 +21,8 @@ export function getCvActionLabel(action: CvRowAction, cvName: string): string {
       return `Duplicate ${cvName}`;
     case "pdf":
       return `Export PDF: ${cvName}`;
+    case "html":
+      return `Download HTML: ${cvName}`;
     case "delete":
       return `Delete ${cvName}`;
   }

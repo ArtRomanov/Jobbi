@@ -4,6 +4,7 @@ import type { Cv } from "@/entities/cv";
 export interface CvRowActions {
   onDuplicate: (cv: Cv) => void;
   onDownload: (cv: Cv) => void;
+  onDownloadHtml: (cv: Cv) => void;
   onDelete: (cv: Cv) => void;
   onMadeBase: (cv: Cv) => void;
 }

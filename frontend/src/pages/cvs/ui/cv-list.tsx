@@ -6,11 +6,19 @@ interface CvListProps extends CvRowActions {
   cvs: readonly Cv[];
   duplicatingId: string | null;
   downloadingId: string | null;
+  downloadingHtmlId: string | null;
   deletingId: string | null;
 }
 
 /** The rows of one CVs-page section. */
-export function CvList({ cvs, duplicatingId, downloadingId, deletingId, ...actions }: CvListProps) {
+export function CvList({
+  cvs,
+  duplicatingId,
+  downloadingId,
+  downloadingHtmlId,
+  deletingId,
+  ...actions
+}: CvListProps) {
   return (
     <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
       {cvs.map((cv) => (
@@ -19,6 +27,7 @@ export function CvList({ cvs, duplicatingId, downloadingId, deletingId, ...actio
           cv={cv}
           isDuplicating={duplicatingId === cv.id}
           isDownloading={downloadingId === cv.id}
+          isDownloadingHtml={downloadingHtmlId === cv.id}
           isDeleting={deletingId === cv.id}
           {...actions}
         />

@@ -4,3 +4,5 @@ export { appendUniqueTerms } from "./append-unique-terms";
 export { getFocusableElements, getFirstField } from "./get-focusable-elements";
 export { isSafeExternalUrl } from "./is-safe-external-url";
 export { isSafeCvLinkUrl } from "./is-safe-cv-link-url";
+export { triggerFileDownload } from "./trigger-file-download";
+export { toSafeFileName } from "./to-safe-file-name";

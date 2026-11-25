@@ -180,3 +180,13 @@ New npm packages: `marked`, `diff`, and Noto font files committed under `fronten
 - Upload no longer creates a CV: the endpoint only extracts and returns `{name, content, truncated}`; the frontend opens an unsaved draft and the CV is created by the normal `POST /cvs` on Save.
 - The base CV is set only explicitly: an `is_base` field on `POST /cvs` / `PATCH /cvs/{id}` (applied in the same transaction as the save; `false` clears the base only when this CV is the current base) and the existing `POST /cvs/{id}/make-base`. No automatic assignment anywhere (`became_base` removed).
 - Every save/remove action shows a confirming toast (functional spec 2.5).
+
+## Addendum (2026-11-25, backlog #11: Download HTML)
+
+Functional spec §2.9. Frontend only, no API change.
+
+- **Layout pass:** `buildCvLayout(markdown)` (`entities/cv/lib/cv-layout.ts`) on top of `parseCvMarkdown`: header (first `#` + the first paragraph: title line, contacts split on " · ", " | ", " • " or line breaks), sections (`##`; a later `#` too), entries (`###` + a date-range line moved to the title row, EN/RU months, "Present"/"по н.в."; paragraphs before the first list = muted context). It only regroups parser output; a property test checks every word survives in order.
+- **One view, one stylesheet:** `CvLayoutView` (React elements only) + `CV_LAYOUT_CSS` (scoped `.cv-doc`). The editor preview renders it inline (`CvLayoutPreview`, fonts by asset URL). Chosen over an `<iframe srcDoc>`: an iframe would reload ~190 KB of embedded fonts and lose its scroll position on every keystroke, and a sandboxed iframe's scroll cannot be restored from outside.
+- **Export:** `features/cv-html-export`: `renderToStaticMarkup(CvLayoutView)` (React escapes all text and attributes) inside a hand-written shell with our constant CSS, the escaped `<title>`, a CSP `<meta>` (`default-src 'none'`), `@page A4` and a screen-only A4 sheet. Links: `isSafeCvLinkUrl` (http, https, mailto). `react-dom/server` and the base64 fonts are lazy chunks (~72 KB and ~186 KB); a typical CV file is ~195 KB.
+- **Fonts:** Roboto Condensed 400/500/700 + Roboto Mono 400/700, Latin + Cyrillic static woff2 from @fontsource 5.3.0 (SIL OFL 1.1, licences in `shared/assets/fonts`), embedded as `data:` URLs (Vite `?inline`).
+- **Not changed:** react-pdf "Export PDF", its parity test (it still compares against `CvTextPreview`, which stays exported but is no longer used by the editor).

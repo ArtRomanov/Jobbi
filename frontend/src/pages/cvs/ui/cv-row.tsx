@@ -10,6 +10,7 @@ interface CvRowProps extends CvRowActions {
   cv: Cv;
   isDuplicating: boolean;
   isDownloading: boolean;
+  isDownloadingHtml: boolean;
   isDeleting: boolean;
 }
 
@@ -21,9 +22,11 @@ export const CvRow = memo(function CvRow({
   cv,
   isDuplicating,
   isDownloading,
+  isDownloadingHtml,
   isDeleting,
   onDuplicate,
   onDownload,
+  onDownloadHtml,
   onDelete,
   onMadeBase,
 }: CvRowProps) {
@@ -98,6 +101,15 @@ export const CvRow = memo(function CvRow({
           onClick={() => onDownload(cv)}
         >
           PDF
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          aria-label={getCvActionLabel("html", cv.name)}
+          loading={isDownloadingHtml}
+          onClick={() => onDownloadHtml(cv)}
+        >
+          HTML
         </Button>
         <Button
           type="button"

@@ -2,8 +2,8 @@
 // the object URL right away can cancel the download.
 const REVOKE_DELAY_MS = 1000;
 
-/** Saves a PDF blob in the browser under `fileName`. */
-export function triggerPdfDownload(blob: Blob, fileName: string): void {
+/** Saves a blob in the browser under `fileName` (CV PDF and HTML exports). */
+export function triggerFileDownload(blob: Blob, fileName: string): void {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;

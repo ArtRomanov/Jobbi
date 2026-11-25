@@ -1,11 +1,11 @@
 # CV Text Editor Feature
 
-The CV editor (functional spec 011 §2.1): name field + one textarea for the whole CV, formatting hint, live preview (`CvTextPreview` from `@/entities/cv`, via `useDeferredValue`). Wide screens: editor and preview side by side; phone width (`PHONE_MEDIA_QUERY`): `SegmentedControl` tabs "Edit" / "Preview", "Edit" first. `pages/cv-editor` owns loading, saving, the toast and the `version` sent with PATCH.
+The CV editor (functional spec 011 §2.1): name field + one textarea for the whole CV, formatting hint, live preview (`CvLayoutPreview` from `@/entities/cv` — the designed layout, same as "Download HTML" — via `useDeferredValue`). Wide screens: editor and preview side by side; phone width (`PHONE_MEDIA_QUERY`): `SegmentedControl` tabs "Edit" / "Preview", "Edit" first. `pages/cv-editor` owns loading, saving, the toast and the `version` sent with PATCH.
 
 - The textarea and the preview share `CV_PANE_BOX_STYLE` (config): fixed `CV_PANE_HEIGHT`, same border/padding/background, each scrolls inside itself (`overflowY: auto`), no textarea resize. The preview is `role="region"` "CV preview" with `tabIndex={0}` so keyboard users can scroll it.
 - `initialValues` are read once (on mount); the draft is never re-seeded from `savedValues` (the page leaves the editor after every successful save, so nothing is shown "after" a save).
 - Text limit 20 000 (UTF-16 units, the same unit `maxLength` counts). Typing stops via `maxLength`; a paste is intercepted only when it would pass the limit, then cut to fit by `insertTextWithinLimit` (never splits a surrogate pair), caret placed after the pasted part. A paste that fits stays native so browser undo keeps working.
-- `onExport` (optional) adds "Export PDF", which exports the current draft (name trimmed), not the saved version.
+- `onExport` (optional) adds "Export PDF" and `onExportHtml` (optional) adds "Download HTML"; both export the current draft (name trimmed), not the saved version.
 - Name: `maxLength` 255, trimmed before save; blank → "Required" and `onSave` is not called.
 - Counter "N / 20 000" (space-grouped) shows above `CV_CONTENT_COUNTER_THRESHOLD` (18 000) and joins the textarea's `aria-describedby`.
 - "Base CV" switch (`ui/base-cv-switch.tsx`): native checkbox with `role="switch"`, label `BASE_CV_SWITCH_LABEL` ("Set as base CV for every application"), described by the helper `BASE_CV_SWITCH_HELP`. `isBase` is part of `CvTextEditorValues` and of the draft; the page decides what to send. `onExport` gets only `{name, content}` (`CvTextExportValues`).

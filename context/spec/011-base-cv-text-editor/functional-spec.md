@@ -147,6 +147,16 @@ The user already has a CV — usually a PDF or Word file — and wants Jobbi to 
     - [x] Russian (Cyrillic) text appears correctly in the PDF, in the preview and in the editor.
     - [x] The PDF of a CV with empty text has only the CV name as its title.
 
+### 2.9 Download HTML (follow-up, backlog #11)
+
+- **As a** user, **I want** a designed version of my CV that I can print to PDF from my browser, **so that** what I send to employers looks professional.
+  - **Acceptance Criteria:**
+    - [ ] Next to "PDF" on the CVs page ("HTML") and next to "Export PDF" in the editor of a saved CV ("Download HTML") there is a download of the CV as one self-contained HTML file named "<CV name>.html" (same file-name rules as the PDF; the editor uses the current draft). Opened in a browser it shows an A4 sheet; the browser's "Print → Save as PDF" gives A4 pages.
+    - [ ] Appearance only: the file contains exactly the CV text, never added to, removed or reworded. Only the layout changes: the `#` name and the line under it in large condensed capitals with a thick rule, the contact lines in one line joined with " · ", `##` sections in condensed capitals, a date-range line right after a `###` title shown at the right of the title row, the paragraph between a title and its bullet list in grey, bullets with small blue dots. Text that matches none of these patterns (for example an uploaded CV with no markup) is shown as plain paragraphs.
+    - [ ] The editor preview shows the same design as the downloaded file.
+    - [ ] Russian (Cyrillic) text appears correctly; links stay clickable (web and email only); the file runs no scripts and loads nothing from the internet.
+    - [ ] "Export PDF" (2.8) is unchanged and stays available.
+
 ---
 
 ## 3. Scope and Boundaries
@@ -161,11 +171,12 @@ The user already has a CV — usually a PDF or Word file — and wants Jobbi to 
 - "Add & tailor CV" preselecting the base CV, or nothing when there is none.
 - AI chat change cards for CV text passages, built for the first time here (spec 008's CV field edits are replaced by text edits).
 - PDF export of the whole formatted text, including Cyrillic.
+- One designed HTML download for print-to-PDF, appearance only (2.9, backlog #11).
 
 ### Out-of-Scope
 
 - AI tidying or rewording of uploaded text; OCR of scanned files; keeping the original file, its layout or images; uploading several files at once.
-- A visual (WYSIWYG) editor, PDF design themes or templates, and CV languages or translations.
+- A visual (WYSIWYG) editor, a choice of several design themes or templates (2.9 adds one fixed design), a restyled react-pdf "Export PDF", and CV languages or translations.
 - More than one base CV, or a base per role or language.
 - The AI chat creating or duplicating CVs (still manual, as in spec 008), and change cards for application fields (left to spec 008).
 - Other backlog items (batch adding sources, digest posts, AI limit notices, chat streaming display, collapsible Inbox sections, undo on source removal) and spec 010 (aggregator site parsers).
