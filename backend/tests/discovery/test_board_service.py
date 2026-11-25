@@ -117,7 +117,7 @@ class TestGreenhouseInitialScan:
         first = rows[0]
         assert first.state == "pending"
         assert first.from_initial_scan is True
-        assert first.alert_handled_at == NOW  # never alerted
+        assert first.alert_handled_at is None  # summarised once rated
         assert first.title == "Frontend Engineer"
         assert first.company == "Acme Corp"
         assert first.text == "MATCH recent"
@@ -138,7 +138,7 @@ class TestGreenhouseInitialScan:
         assert report.posts_stored == 2
         assert ai.calls == []
 
-    async def test_initial_scan_matches_are_never_alerted(
+    async def test_initial_scan_matches_are_handled_by_the_alert_step(
         self, factory, db, gh, http, ai, sleep
     ) -> None:
         user_id = await make_user(db)
@@ -283,7 +283,7 @@ class TestBoardHourlyCheck:
 # --- alerts ----------------------------------------------------------------------
 
 
-async def test_board_first_scan_is_never_alerted_but_a_later_job_is(
+async def test_board_first_scan_is_summarised_per_board_then_hourly_alert(
     factory, db, gh, lever_board, http, ai, sleep
 ) -> None:
     bot = FakeBot(open_transactions=factory.open_transactions)
@@ -301,16 +301,23 @@ async def test_board_first_scan_is_never_alerted_but_a_later_job_is(
     rows = await vacancies(db)
     assert [r.state for r in rows] == ["new", "new"]
     assert all(r.from_initial_scan and r.alert_handled_at == NOW for r in rows)
-    assert bot.sent == []
+    assert [text.splitlines()[0] for text in bot.texts] == [
+        "🔎 First scan of source Acme Corp: 1 matching vacancy",
+        "🔎 First scan of source Acme Labs: 1 matching vacancy",
+    ]
+    assert [text.splitlines()[-1].rsplit("?", 1)[1] for text in bot.texts] == [
+        "source=greenhouse%3Aacme",
+        "source=lever%3Aacme-labs",
+    ]
 
     gh.add(2, "MATCH HIGH gh hourly", LATER, title="Frontend Engineer")
     await check_all(factory, http, ai, at(LATER), config=CONFIG, sleep=sleep, bot=bot)
 
-    assert len(bot.sent) == 1
-    chat_id, text = bot.sent[0]
+    assert len(bot.sent) == 3
+    chat_id, text = bot.sent[2]
     assert chat_id == CHAT_ID
+    assert text.splitlines()[0] == "🔎 1 new vacancy"
     assert "Frontend Engineer" in text
-    assert "first scan" not in text
     assert bot.violations == 0
 
 

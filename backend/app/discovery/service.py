@@ -371,9 +371,10 @@ async def run_initial_scans(
     (so a forwarded post is rated within about a minute; the rest of their
     queue waits for the hourly check).
 
-    First-scan cards are never alerted. Posts of those users that were found
-    by an earlier hourly check and waited (daily cap, AI down) may be rated
-    here; they are alerted at the end, like in `check_all`.
+    At the end each user gets a first-scan summary per source (or one
+    combined message for many sources, see `alerts`). Posts of those users
+    that were found by an earlier hourly check and waited (daily cap, AI down)
+    may be rated here; they are alerted at the end, like in `check_all`.
     """
     config = config or DiscoveryConfig.from_settings()
     report = RunReport()
@@ -437,7 +438,9 @@ async def check_all(
     (`safe_http`): first every web listing, then the detail step of every web
     source, all within `WEB_RUN_BUDGET_S`. At the end each user gets one
     Telegram alert (when `bot` is given and the user linked Telegram) for the
-    cards that became `new` in this run, first-scan cards excluded.
+    cards that became `new` in this run; first-scan cards rated only now
+    (they waited: daily cap, per-source cap, AI down) get the first-scan
+    summary instead.
     """
     config = config or DiscoveryConfig.from_settings()
     report = RunReport()
@@ -1112,9 +1115,9 @@ async def _store_posts(
                     found_at=now,
                     state="pending",
                     needs_detail=needs_detail,
+                    # First-scan cards are alerted as a per-source summary.
                     from_initial_scan=initial,
-                    # First-scan cards are never alerted.
-                    alert_handled_at=now if initial else None,
+                    alert_handled_at=None,
                 )
             )
             session.add(

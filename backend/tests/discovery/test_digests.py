@@ -261,7 +261,7 @@ async def test_digest_becomes_one_card_per_matching_vacancy(
         links=DIGEST_LINKS,
         source_id=source_id,
         from_initial_scan=True,
-        alert_handled_at=NOW - timedelta(hours=1),
+        alert_handled_at=None,  # as stored by a first scan
     )
     ai = DigestGroq(four, factory)
 
@@ -288,7 +288,8 @@ async def test_digest_becomes_one_card_per_matching_vacancy(
         assert card.posted_at == NOW - timedelta(days=1, minutes=1)
         assert card.found_at == NOW - timedelta(hours=2) + timedelta(seconds=1)
         assert card.from_initial_scan is True
-        assert card.alert_handled_at == NOW - timedelta(hours=1)
+        # Copied: the run's alert step sends the first-scan summary.
+        assert card.alert_handled_at is None
         assert card.links is None
     # Copies of the pending row's card source; the pending row's own are gone.
     assert await card_sources(db) == {

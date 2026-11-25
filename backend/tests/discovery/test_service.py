@@ -431,7 +431,8 @@ class TestInitialScan:
         for row in rows:
             assert row.state == "pending"
             assert row.from_initial_scan is True
-            assert row.alert_handled_at == NOW  # never alerted
+            # Alerted in the first-scan summary once rated.
+            assert row.alert_handled_at is None
             assert row.found_at == NOW
             assert row.source_id == source_id
             assert (
@@ -1294,7 +1295,7 @@ class TestAlerts:
             "🔎 1 new vacancy",
         ]
 
-    async def test_initial_scan_never_alerts_even_when_rated_in_check_all(
+    async def test_first_scan_cards_rated_in_check_all_get_the_summary_then(
         self, factory, db, channel, http, ai, sleep, bot
     ) -> None:
         # No description during the first scan: its posts stay pending and are
@@ -1307,6 +1308,7 @@ class TestAlerts:
         await run_initial_scans(
             factory, http, ai, at(NOW), config=CONFIG, sleep=sleep, bot=bot
         )
+        assert bot.sent == []
         await set_description(db, user_id, DESCRIPTION)
 
         await check_all(
@@ -1320,7 +1322,45 @@ class TestAlerts:
         )
 
         assert [card.state for card in await vacancies(db)] == ["new", "new"]
-        assert bot.sent == []
+        [text] = bot.texts
+        assert text.splitlines()[0] == (
+            f"🔎 First scan of channel @{CHANNEL}: 2 matching vacancies"
+        )
+        assert {card.alert_handled_at for card in await vacancies(db)} == {
+            NOW + timedelta(hours=1)
+        }
+
+    async def test_first_scan_cards_over_the_daily_cap_are_summarised_later(
+        self, factory, db, channel, http, ai, sleep, bot
+    ) -> None:
+        user_id = await make_user(db)
+        await link_telegram(db, user_id)
+        await make_source(db, user_id)
+        channel.add(10, "MATCH HIGH", NOW - timedelta(hours=1))
+        channel.add(11, "MATCH", NOW - timedelta(hours=2))
+        config = DiscoveryConfig(model="m", daily_limit=1)
+        await run_initial_scans(
+            factory, http, ai, at(NOW), config=config, sleep=sleep, bot=bot
+        )
+        assert [text.splitlines()[0] for text in bot.texts] == [
+            f"🔎 First scan of channel @{CHANNEL}: 1 matching vacancy"
+        ]
+
+        await check_all(
+            factory,
+            http,
+            ai,
+            at(NOW + timedelta(days=1)),
+            config=config,
+            sleep=sleep,
+            bot=bot,
+        )
+
+        assert [text.splitlines()[0] for text in bot.texts] == [
+            f"🔎 First scan of channel @{CHANNEL}: 1 matching vacancy",
+            f"🔎 First scan of channel @{CHANNEL}: 1 matching vacancy",
+        ]
+        assert [card.state for card in await vacancies(db)] == ["new", "new"]
 
     @pytest.mark.parametrize(
         "post_ages",
@@ -1353,7 +1393,11 @@ class TestAlerts:
             bot=bot,
         )
 
-        assert bot.sent == []
+        # Only the posts inside the 3-day window are summarised.
+        fresh = sum(1 for age in post_ages if age <= timedelta(days=3))
+        assert [text.splitlines()[0] for text in bot.texts] == [
+            f"🔎 First scan of channel @{CHANNEL}: {fresh} matching vacancy"
+        ] * fresh
         old_keys = {
             f"tg:{CHANNEL}/{post_id}"
             for post_id, age in enumerate(post_ages, start=10)
@@ -1362,20 +1406,37 @@ class TestAlerts:
         assert old_keys <= set(await seen_keys(db))
         assert not old_keys & {card.external_key for card in await vacancies(db)}
 
-    async def test_initial_scan_with_description_never_alerts(
+    async def test_initial_scan_sends_one_summary(
         self, factory, db, channel, http, ai, sleep, bot
     ) -> None:
         user_id = await make_user(db)
         await link_telegram(db, user_id)
         await make_source(db, user_id)
         channel.add(10, "MATCH HIGH")
+        channel.add(11, "not a vacancy")
 
-        await run_initial_scans(
+        report = await run_initial_scans(
             factory, http, ai, at(NOW), config=CONFIG, sleep=sleep, bot=bot
         )
 
-        assert [card.state for card in await vacancies(db)] == ["new"]
-        assert bot.sent == []
+        inbox = f"{get_settings().JOBBI_PUBLIC_URL.rstrip('/')}/inbox"
+        assert bot.sent == [
+            (
+                CHAT_ID,
+                (
+                    f"🔎 First scan of channel @{CHANNEL}: 1 matching vacancy\n"
+                    "\n"
+                    "High · Frontend Developer — Acme\n"
+                    "\n"
+                    f"🔗 Open Inbox: {inbox}?source=telegram%3A{CHANNEL}"
+                ),
+            )
+        ]
+        assert report.alerts_sent == 1
+        assert bot.violations == 0
+        [card] = await vacancies(db)
+        assert (card.state, card.from_initial_scan) == ("new", True)
+        assert card.alert_handled_at == NOW
 
     async def test_delayed_matches_are_alerted(
         self, factory, db, http, ai, sleep, bot
@@ -1403,8 +1464,10 @@ class TestAlerts:
             factory, http, ai, at(NOW), config=CONFIG, sleep=sleep, bot=bot
         )
 
-        [text] = bot.texts
-        assert text.splitlines()[0] == "🔎 1 new vacancy"
+        assert [text.splitlines()[0] for text in bot.texts] == [
+            "🔎 1 new vacancy",
+            f"🔎 First scan of channel @{CHANNEL}: 1 matching vacancy",
+        ]
         assert len([c for c in await vacancies(db) if c.state == "new"]) == 2
 
     async def test_no_message_without_link_and_none_after_linking_late(
