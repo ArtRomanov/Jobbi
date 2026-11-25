@@ -73,6 +73,7 @@ One Alembic migration; standard SQLAlchemy types only (no SQLite-specific featur
 - **Result reply:** `_apply_evaluation` (and the "3 failed attempts" path) records, for each post that has a `forwarded_posts` row, an outcome in the run report: `matched(added, merged, total, first card)`, `none`, `not_vacancy` or `unratable`. After the run — next to the alerts, **outside any transaction** — the worker sends the functional §2.2 text with `reply_to_message_id`, then sets `reported_at`. A single forwarded vacancy merged into an existing card gets "<Role> — <Company> is already in your Inbox.". On `TelegramError` it logs and still sets `reported_at` (no retry loop). Requires the worker's bot (already used for alerts); without a token, outcomes are only logged.
 - Forwarded cards keep `alert_handled_at = now` (copied to digest cards), so they never reach the combined alert.
 - The per-minute run keeps rating forwarded posts on the first attempt only (PR #35 rule).
+- Evaluation order (backlog #19): in the hourly run forwarded posts go first and never count toward the per-source cap (`PER_SOURCE_RUN_LIMIT`).
 
 ### 2.6 Cut-post alert
 

@@ -35,7 +35,8 @@ import asyncio
 import logging
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Collection, Sequence
+from collections import Counter
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from enum import Enum, auto
@@ -43,7 +44,18 @@ from typing import Any, Self, TypeAlias
 
 import groq
 import httpx
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import (
+    ColumnElement,
+    Select,
+    and_,
+    case,
+    delete,
+    func,
+    literal,
+    or_,
+    select,
+    update,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Bot
@@ -183,6 +195,10 @@ WEB_SOURCE_DETAIL_BUDGET_S = 5 * 60.0
 WEB_RUN_BUDGET_S = 40 * 60.0
 # One listing read (up to 5 pages, each up to 15 s, 1 s apart).
 WEB_LISTING_TIMEOUT_S = 90.0
+# Evaluation (backlog #19): at most this many posts of one source are rated
+# per run (one `evaluate_pending` call); the rest wait for the next run.
+# Forwarded posts and rows without a source are never capped.
+PER_SOURCE_RUN_LIMIT = 20
 # Card-source kind of posts the user forwarded to the bot. Not a
 # `VacancySource` kind: nothing is ever fetched for it.
 FORWARDED_KIND = "tg_forward"
@@ -250,6 +266,8 @@ class RunReport:
     matches: int = 0
     rejected: int = 0
     users_capped: set[str] = field(default_factory=set)
+    # Pending posts left for a later run by PER_SOURCE_RUN_LIMIT.
+    posts_deferred: int = 0
     # Cards that became `new` in this run, per user (input for alerts).
     new_card_ids: dict[str, list[str]] = field(default_factory=dict)
     alerts_sent: int = 0
@@ -278,6 +296,9 @@ class _PendingRow:
     vacancy_id: str
     eval_attempts: int
     post: RawPost
+    # The source whose PER_SOURCE_RUN_LIMIT this row uses; None when the post
+    # is not capped (forwarded to the bot, or its source is gone).
+    capped_source_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -542,7 +563,9 @@ async def evaluate_pending(
     sleep: SleepFn = asyncio.sleep,
     report: RunReport | None = None,
 ) -> RunReport:
-    """Evaluate `pending` posts, oldest first, within each user's daily cap.
+    """Evaluate `pending` posts within each user's daily cap: forwarded posts
+    first, then round-robin over sources, freshest first (`_next_batch`), at
+    most PER_SOURCE_RUN_LIMIT posts per source.
 
     For the users in `forwarded_only` only the forwarded posts waiting for
     their first attempt are evaluated (the per-minute run), so the other
@@ -1882,10 +1905,13 @@ async def _next_batch(
     skip_ids: Collection[str],
     *,
     forwarded_only: bool = False,
+    rated_per_source: Mapping[str, int] | None = None,
 ) -> _Batch | _CapReached | None:
     """The next batch to evaluate, `_CapReached`, or None when there is nothing
-    to do (no description, nothing pending). `forwarded_only`: only posts
-    with an unreported `forwarded_posts` row and no attempt yet."""
+    to do (no description, nothing pending, or only posts of sources at
+    PER_SOURCE_RUN_LIMIT). `forwarded_only`: only posts with an unreported
+    `forwarded_posts` row and no attempt yet. `rated_per_source`: posts of
+    each source already sent to the AI in this run."""
     async with session_factory() as session:
         settings_row = await session.get(VacancySearchSettings, user_id)
         user = await session.get(User, user_id)
@@ -1909,22 +1935,15 @@ async def _next_batch(
         )
         remaining = daily_limit - (used or 0)
 
-        stmt = (
-            select(Vacancy)
-            .where(
-                Vacancy.user_id == user_id,
-                Vacancy.state == "pending",
-                Vacancy.needs_detail.is_(False),
-            )
-            .order_by(
-                Vacancy.found_at, Vacancy.posted_at, Vacancy.external_key, Vacancy.id
-            )
-            .limit(max(1, min(BATCH_SIZE, remaining)))
-        )
+        conditions = [
+            Vacancy.user_id == user_id,
+            Vacancy.state == "pending",
+            Vacancy.needs_detail.is_(False),
+        ]
         if skip_ids:
-            stmt = stmt.where(Vacancy.id.not_in(list(skip_ids)))
+            conditions.append(Vacancy.id.not_in(list(skip_ids)))
         if forwarded_only:
-            stmt = stmt.where(
+            conditions += [
                 Vacancy.eval_attempts == 0,
                 Vacancy.external_key.in_(
                     select(ForwardedPost.external_key).where(
@@ -1932,17 +1951,24 @@ async def _next_batch(
                         ForwardedPost.reported_at.is_(None),
                     )
                 ),
+            ]
+        result = await session.execute(
+            _fair_order(user_id, conditions, rated_per_source).limit(
+                max(1, min(BATCH_SIZE, remaining))
             )
-        rows = (await session.scalars(stmt)).all()
-        if not rows:
+        )
+        found = result.all()
+        if not found:
             return None
+        rows = [row for row, _ in found]
+        capped_sources = [source for _, source in found]
         if remaining <= 0:
             return _CapReached(local_date=local_date)
         # Size-based batch: the leading posts whose windowed text fits the
         # character budget (always at least one).
         posts = [_raw_post(row) for row in rows]
         take = batch_take(posts)
-        rows, posts = rows[:take], posts[:take]
+        rows, posts, capped_sources = rows[:take], posts[:take], capped_sources[:take]
         return _Batch(
             description=description,
             profile=_profile(user),
@@ -1951,10 +1977,101 @@ async def _next_batch(
                     vacancy_id=row.id,
                     eval_attempts=row.eval_attempts,
                     post=post,
+                    capped_source_id=source,
                 )
-                for row, post in zip(rows, posts, strict=True)
+                for row, post, source in zip(rows, posts, capped_sources, strict=True)
             ],
         )
+
+
+def _forwarded_keys(user_id: str) -> Select[tuple[str]]:
+    """External keys of the posts the user forwarded to the bot."""
+    return select(ForwardedPost.external_key).where(ForwardedPost.user_id == user_id)
+
+
+def _fair_order(
+    user_id: str,
+    conditions: Sequence[ColumnElement[bool]],
+    rated_per_source: Mapping[str, int] | None,
+) -> Select[tuple[Vacancy, str | None]]:
+    """Pending rows in evaluation order (backlog #19), each with the source
+    whose PER_SOURCE_RUN_LIMIT it uses (None: not capped).
+
+    Forwarded posts come first. The rest go round-robin over sources: the
+    freshest post (`posted_at`) of every source, then the second freshest of
+    every source, and so on; a source gets at most PER_SOURCE_RUN_LIMIT minus
+    `rated_per_source` posts. A forwarded post or a row without a source is
+    its own group, so it is never capped. Equal `posted_at`: first found
+    first. Standard SQL window function (`ROW_NUMBER() OVER`)."""
+    is_forwarded = Vacancy.external_key.in_(_forwarded_keys(user_id))
+    # Capped group: the source; uncapped rows get their own id as the group.
+    group = case(
+        (is_forwarded, Vacancy.id),
+        else_=func.coalesce(Vacancy.source_id, Vacancy.id),
+    )
+    freshness = (
+        Vacancy.posted_at.desc(),
+        Vacancy.found_at,
+        Vacancy.external_key,
+        Vacancy.id,
+    )
+    ranked = (
+        select(
+            Vacancy.id.label("id"),
+            case((is_forwarded, 0), else_=1).label("forwarded_last"),
+            case(
+                (or_(is_forwarded, Vacancy.source_id.is_(None)), None),
+                else_=Vacancy.source_id,
+            ).label("capped_source_id"),
+            func.row_number()
+            .over(partition_by=group, order_by=freshness)
+            .label("source_rank"),
+        )
+        .where(*conditions)
+        .subquery()
+    )
+    # Posts this source may still send in this run (rank is 1-based).
+    room: ColumnElement[int] = literal(PER_SOURCE_RUN_LIMIT)
+    used = {s: n for s, n in (rated_per_source or {}).items() if n > 0}
+    if used:
+        room = case(
+            {source: PER_SOURCE_RUN_LIMIT - n for source, n in used.items()},
+            value=ranked.c.capped_source_id,
+            else_=PER_SOURCE_RUN_LIMIT,
+        )
+    return (
+        select(Vacancy, ranked.c.capped_source_id)
+        .join(ranked, ranked.c.id == Vacancy.id)
+        .where(or_(ranked.c.capped_source_id.is_(None), ranked.c.source_rank <= room))
+        .order_by(ranked.c.forwarded_last, ranked.c.source_rank, *freshness)
+    )
+
+
+async def _count_deferred(
+    session_factory: SessionFactory,
+    user_id: str,
+    full_sources: Collection[str],
+    skip_ids: Collection[str],
+) -> int:
+    """Pending posts of `full_sources` (at PER_SOURCE_RUN_LIMIT) left for a
+    later run."""
+    if not full_sources:
+        return 0
+    stmt = (
+        select(func.count())
+        .select_from(Vacancy)
+        .where(
+            Vacancy.user_id == user_id,
+            Vacancy.state == "pending",
+            Vacancy.needs_detail.is_(False),
+            Vacancy.source_id.in_(list(full_sources)),
+            Vacancy.external_key.not_in(_forwarded_keys(user_id)),
+        )
+    )
+    if skip_ids:
+        stmt = stmt.where(Vacancy.id.not_in(list(skip_ids)))
+    async with session_factory() as session:
+        return (await session.scalar(stmt)) or 0
 
 
 def _raw_post(row: Vacancy) -> RawPost:
@@ -1996,6 +2113,8 @@ class _UserEvaluation:
         # Posts without a valid verdict wait for the next run (one attempt per
         # run), so a stubborn post cannot make this loop call the AI forever.
         self._skip_ids: set[str] = set()
+        # Posts per source sent to the AI in this run (PER_SOURCE_RUN_LIMIT).
+        self._rated_per_source: Counter[str] = Counter()
 
     async def run(self) -> _Outcome:
         while True:
@@ -2006,18 +2125,38 @@ class _UserEvaluation:
                 self._config.daily_limit,
                 self._skip_ids,
                 forwarded_only=self._forwarded_only,
+                rated_per_source=self._rated_per_source,
             )
             if batch is None:
+                await self._count_deferred()
                 return _Outcome.DONE
             if isinstance(batch, _CapReached):
                 await _set_limit_reached(
                     self._session_factory, self._user_id, batch.local_date
                 )
                 self._report.users_capped.add(self._user_id)
+                await self._count_deferred()
                 return _Outcome.DONE
             outcome = await self._evaluate(batch, batch.rows)
             if outcome is not None:
+                # The batch was not rated (AI stopped): it does not use the
+                # sources' room, and the run's deferred posts still count.
+                await self._count_deferred()
                 return outcome
+            self._rated_per_source.update(
+                row.capped_source_id for row in batch.rows if row.capped_source_id
+            )
+
+    async def _count_deferred(self) -> None:
+        """Add the posts held back by PER_SOURCE_RUN_LIMIT to the report."""
+        full = [
+            source
+            for source, n in self._rated_per_source.items()
+            if n >= PER_SOURCE_RUN_LIMIT
+        ]
+        self._report.posts_deferred += await _count_deferred(
+            self._session_factory, self._user_id, full, self._skip_ids
+        )
 
     async def _evaluate(
         self, batch: _Batch, rows: Sequence[_PendingRow]
@@ -2573,7 +2712,8 @@ def _log_report(name: str, report: RunReport) -> None:
     logger.info(
         "Discovery %s: sources read=%d failed=%d, posts stored=%d "
         "filtered=%d merged=%d, AI calls=%d evaluated=%d cut=%d matches=%d rejected=%d, "
-        "users at daily cap=%d, alerts sent=%d, forward replies sent=%d",
+        "users at daily cap=%d, deferred=%d, alerts sent=%d, "
+        "forward replies sent=%d",
         name,
         report.sources_read,
         report.sources_failed,
@@ -2586,6 +2726,7 @@ def _log_report(name: str, report: RunReport) -> None:
         report.matches,
         report.rejected,
         len(report.users_capped),
+        report.posts_deferred,
         report.alerts_sent,
         report.forward_replies_sent,
     )
