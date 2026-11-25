@@ -1085,3 +1085,96 @@ async def test_error_frame_hides_the_exception_text(
     events = await _send_failing(client, setup, fake)
 
     assert events[-1] == ("error", {"detail": GENERIC_ERROR})
+
+
+# ---------------------------------------------------------------------------
+# Outdated cards: only the newest reply's cards can be decided
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("action", ["accept", "reject"])
+async def test_older_reply_card_is_outdated_after_a_new_reply_with_cards(
+    client: httpx.AsyncClient,
+    setup: dict[str, str],
+    db_session: AsyncSession,
+    action: str,
+) -> None:
+    (old,) = await _propose(client, setup, {"op": "remove", "before": "- jQuery"})
+    (new,) = await _propose(client, setup, {"op": "remove", "before": "- Python"})
+
+    resp = await _decide(client, setup, old["id"], action)
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "CARD_OUTDATED"
+    assert await _card_state(db_session, old["id"]) == "pending"
+    assert (await _cv_content(client, setup))["content"] == CV_TEXT
+    # The newest reply's card still works.
+    assert (await _decide(client, setup, new["id"], action)).status_code == 200
+
+
+async def test_card_is_outdated_when_the_newest_reply_has_no_cards(
+    client: httpx.AsyncClient, setup: dict[str, str]
+) -> None:
+    (old,) = await _propose(client, setup, {"op": "remove", "before": "- jQuery"})
+    await _send(client, setup, _chunk("Just text."))
+
+    resp = await _decide(client, setup, old["id"])
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "CARD_OUTDATED"
+
+
+async def test_card_is_outdated_once_the_user_sends_a_new_message(
+    client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
+) -> None:
+    """A user message without a saved reply yet (streaming, or a failed reply)."""
+    (old,) = await _propose(client, setup, {"op": "remove", "before": "- jQuery"})
+    db_session.add(
+        ChatMessage(application_id=setup["app_id"], role="user", content="More?")
+    )
+    await db_session.commit()
+
+    for action in ("accept", "reject"):
+        resp = await _decide(client, setup, old["id"], action)
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == "CARD_OUTDATED"
+
+
+async def test_outdated_stale_card_cannot_be_rejected(
+    client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
+) -> None:
+    (old,) = await _propose(client, setup, {"op": "remove", "before": "- Rust"})
+    assert (await _decide(client, setup, old["id"])).json()["detail"] == "CARD_STALE"
+    await _send(client, setup, _chunk("Just text."))
+
+    resp = await _decide(client, setup, old["id"], "reject")
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "CARD_OUTDATED"
+    assert await _card_state(db_session, old["id"]) == "stale"
+
+
+async def test_decided_outdated_card_still_reports_card_decided(
+    client: httpx.AsyncClient, setup: dict[str, str]
+) -> None:
+    """Another tab learns the real state, not just "outdated"."""
+    (old,) = await _propose(client, setup, {"op": "remove", "before": "- jQuery"})
+    assert (await _decide(client, setup, old["id"], "reject")).status_code == 200
+    await _send(client, setup, _chunk("Just text."))
+
+    resp = await _decide(client, setup, old["id"])
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "CARD_DECIDED"
+
+
+async def test_messages_get_sub_second_timestamps(
+    client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
+) -> None:
+    """The server default has 1-second resolution on SQLite; order needs more."""
+    await _send(client, setup, _chunk("Hello."))
+
+    stamps = (await db_session.execute(select(ChatMessage.created_at))).scalars().all()
+
+    assert len(stamps) == 2
+    assert any(stamp.microsecond for stamp in stamps)

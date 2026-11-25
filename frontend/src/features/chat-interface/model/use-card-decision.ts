@@ -78,6 +78,11 @@ export function useCardDecision(
           case "TOO_LONG":
             setError(CARD_ERROR_MESSAGES.TOO_LONG);
             break;
+          case "CARD_OUTDATED":
+            // A newer message exists (e.g. sent from another tab): the card
+            // stays as it is on the server, so a toast rather than an inline error
+            showToast(CARD_ERROR_MESSAGES.CARD_OUTDATED, "error");
+            break;
           case "CV_BUSY":
             // The CV kept changing during the Accept; the card stays pending
             setError(CARD_ERROR_MESSAGES.ACCEPT_FAILED);

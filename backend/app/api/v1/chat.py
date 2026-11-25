@@ -166,7 +166,11 @@ async def _decide_card(
     response_model=ChangeCardRead,
     responses={
         404: {"description": "No such application or card for this user"},
-        409: {"description": "CARD_DECIDED, CARD_STALE, PASSAGE_NOT_UNIQUE or CV_BUSY"},
+        409: {
+            "description": (
+                "CARD_DECIDED, CARD_STALE, CARD_OUTDATED, PASSAGE_NOT_UNIQUE or CV_BUSY"
+            )
+        },
         422: {"description": "TOO_LONG: the CV would exceed 20 000 characters"},
     },
 )
@@ -182,7 +186,8 @@ async def accept_change_card(
     is already stale, or the passage / CV is gone and the change cannot be
     re-aimed at the current text, and the card becomes stale);
     PASSAGE_NOT_UNIQUE (card stays pending); CV_BUSY (the CV kept changing
-    during the Accept, card stays pending, try again).
+    during the Accept, card stays pending, try again); CARD_OUTDATED (a newer
+    chat message exists: only the newest reply's cards can be decided).
     """
     application = await _get_user_application(application_id, current_user, db)
     return await _decide_card(application, card_id, db, accept=True)
@@ -193,7 +198,7 @@ async def accept_change_card(
     response_model=ChangeCardRead,
     responses={
         404: {"description": "No such application or card for this user"},
-        409: {"description": "CARD_DECIDED"},
+        409: {"description": "CARD_DECIDED or CARD_OUTDATED"},
     },
 )
 async def reject_change_card(
@@ -202,6 +207,9 @@ async def reject_change_card(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ChangeCardRead:
-    """Reject a pending (or stale) CV change card; the CV is not touched."""
+    """Reject a pending (or stale) CV change card; the CV is not touched.
+
+    409 codes: CARD_DECIDED; CARD_OUTDATED (a newer chat message exists).
+    """
     application = await _get_user_application(application_id, current_user, db)
     return await _decide_card(application, card_id, db, accept=False)

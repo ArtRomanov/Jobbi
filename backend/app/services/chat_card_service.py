@@ -10,12 +10,13 @@ from datetime import UTC, datetime
 from typing import ClassVar, NoReturn
 
 from fastapi import status
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, exists, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.prompt_fence import fence
 from app.models.application import Application
 from app.models.chat_change_card import ChatChangeCard
+from app.models.chat_message import ChatMessage
 from app.models.cv import Cv
 from app.schemas.cv import CV_CONTENT_MAX_CHARS
 from app.services import cv_service
@@ -75,6 +76,13 @@ class PassageNotUniqueError(CardError):
 class CardTooLongError(CardError):
     code = "TOO_LONG"
     status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
+class CardOutdatedError(CardError):
+    """The card's reply is no longer the newest message of the chat."""
+
+    code = "CARD_OUTDATED"
+    status_code = status.HTTP_409_CONFLICT
 
 
 class CvBusyError(CardError):
@@ -353,6 +361,30 @@ async def _get_card(
     return card
 
 
+async def _ensure_latest(db: AsyncSession, card: ChatChangeCard) -> None:
+    """Raise CardOutdatedError if any chat message is newer than the card's.
+
+    Only the cards of the newest message (the latest reply, before the user
+    writes again) can be decided. Computed, not stored: as soon as the user
+    sends a new message, every earlier card is outdated.
+    """
+    card_message_at = (
+        select(ChatMessage.created_at)
+        .where(ChatMessage.id == card.message_id)
+        .scalar_subquery()
+    )
+    newer = await db.scalar(
+        select(
+            exists().where(
+                ChatMessage.application_id == card.application_id,
+                ChatMessage.created_at > card_message_at,
+            )
+        )
+    )
+    if newer:
+        raise CardOutdatedError
+
+
 async def _move_card(
     db: AsyncSession, card_id: str, to: str, *, from_states: tuple[str, ...]
 ) -> bool:
@@ -425,12 +457,14 @@ async def accept_card(
             pending; trying again may work).
         PassageNotUniqueError: the passage appears more than once (stays pending).
         CardTooLongError: the result is over the CV limit (stays pending).
+        CardOutdatedError: a newer chat message exists (stays pending).
     """
     card = await _get_card(db, application, card_id)
     if card.state == "stale":
         raise CardStaleError
     if card.state != "pending":
         raise CardDecidedError
+    await _ensure_latest(db, card)
 
     for _ in range(_ACCEPT_ATTEMPTS):
         linked_cv_id = await db.scalar(
@@ -494,11 +528,13 @@ async def reject_card(
 ) -> ChatChangeCard:
     """Mark a pending or stale card rejected; the CV is not touched.
 
-    Raises CardNotFoundError, or CardDecidedError if already accepted/rejected.
+    Raises CardNotFoundError, CardDecidedError if already accepted/rejected,
+    or CardOutdatedError if a newer chat message exists.
     """
     card = await _get_card(db, application, card_id)
     if card.state not in ("pending", "stale"):
         raise CardDecidedError
+    await _ensure_latest(db, card)
     if not await _move_card(db, card_id, "rejected", from_states=("pending", "stale")):
         await _raise_lost_race(db, card_id)
     return await _finish(db, card)

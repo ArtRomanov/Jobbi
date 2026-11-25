@@ -66,8 +66,8 @@ The `chat_change_cards` columns are written as a list in the table above because
 | `POST /api/v1/vacancies/{id}/add-to-tracker` | changed | `base_cv_id` copies `content` and sets `kind=tailored` and `tailored_for_application_id`. The name comes from the chosen CV (functional spec 2.6) |
 | `GET /api/v1/applications/{id}/chat` | changed | Each assistant message carries `cards: ChangeCardRead[]` |
 | `POST /api/v1/applications/{id}/chat` | changed | The SSE stream keeps `token` / `done` / `error`, and adds `event: cards` (data `ChangeCardRead[]`) sent just before `done` |
-| `POST /api/v1/applications/{id}/chat/cards/{card_id}/accept` | new | → `ChangeCardRead`. Card not pending → 409 `CARD_DECIDED`. Passage missing or CV deleted → 409 `CARD_STALE` (the card becomes stale). Passage appears more than once → 409 `PASSAGE_NOT_UNIQUE`. Result too long → 422 `TOO_LONG`. On success the CV's `version` is bumped |
-| `POST /api/v1/applications/{id}/chat/cards/{card_id}/reject` | new | → `ChangeCardRead` |
+| `POST /api/v1/applications/{id}/chat/cards/{card_id}/accept` | new | → `ChangeCardRead`. Card not pending → 409 `CARD_DECIDED`. Passage missing or CV deleted → 409 `CARD_STALE` (the card becomes stale). Passage appears more than once → 409 `PASSAGE_NOT_UNIQUE`. Result too long → 422 `TOO_LONG`. A newer chat message exists → 409 `CARD_OUTDATED` (computed, not stored: the card's message is not the newest; messages get microsecond `created_at` so the order is exact). On success the CV's `version` is bumped |
+| `POST /api/v1/applications/{id}/chat/cards/{card_id}/reject` | new | → `ChangeCardRead`. Already decided → 409 `CARD_DECIDED`; newer chat message exists → 409 `CARD_OUTDATED` |
 
 **Shapes:**
 - `CvRead = {id, name, content, kind, is_base, version, tailored_for: {application_id, company_name, role_title} | null, tailored_application_deleted: bool, linked_applications_count, created_at, updated_at}`.

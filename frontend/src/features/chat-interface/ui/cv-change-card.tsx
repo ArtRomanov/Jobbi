@@ -1,7 +1,11 @@
 import { memo, useCallback, useId, useRef } from "react";
 import type { ChangeCard } from "@/entities/chat";
 import { Button, colors, fonts } from "@/shared/ui";
-import { getCardActionLabel, getCardTitle } from "../lib/card-labels";
+import {
+  CARD_OUTDATED_LABEL,
+  getCardActionLabel,
+  getCardTitle,
+} from "../lib/card-labels";
 import { CARD_BORDER, CARD_BUTTON_STYLE } from "../lib/card-styles";
 import { useCardDecision, type CardDecision } from "../model/use-card-decision";
 import { CardBody } from "./card-body";
@@ -12,18 +16,25 @@ interface CvChangeCardProps {
   card: ChangeCard;
   /** 1-based position of the card within its message ("change 2"). */
   number: number;
+  /**
+   * The card's reply is no longer the newest message: no Accept/Reject, and a
+   * pending card says so. Accepted/Rejected/Stale keep their badges.
+   */
+  outdated?: boolean;
   onCardUpdated: (card: ChangeCard) => void;
 }
 
 /**
  * A proposed CV text edit in the chat (spec 011 §2.7): before/after with a
  * line diff, Accept/Reject while Pending (Reject only while Stale), and an
- * inline error under the card when a decision fails.
+ * inline error under the card when a decision fails. Cards of an older reply
+ * (`outdated`) have no buttons.
  */
 export const CvChangeCard = memo(function CvChangeCard({
   applicationId,
   card,
   number,
+  outdated = false,
   onCardUpdated,
 }: CvChangeCardProps) {
   const titleId = useId();
@@ -33,7 +44,8 @@ export const CvChangeCard = memo(function CvChangeCard({
     card,
     onCardUpdated,
   );
-  const isOpen = card.state === "pending" || card.state === "stale";
+  const isOpen =
+    !outdated && (card.state === "pending" || card.state === "stale");
   const isRejected = card.state === "rejected";
 
   // The pressed button is disabled or removed once the decision lands, so
@@ -119,6 +131,12 @@ export const CvChangeCard = memo(function CvChangeCard({
             Reject
           </Button>
         </div>
+      )}
+
+      {outdated && card.state === "pending" && (
+        <p style={{ margin: 0, color: colors.textMuted, fontSize: "0.8125rem" }}>
+          {CARD_OUTDATED_LABEL}
+        </p>
       )}
 
       {error && (

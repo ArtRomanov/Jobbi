@@ -4,11 +4,18 @@ import { CvChangeCard } from "./cv-change-card";
 interface CardListProps {
   applicationId: string;
   cards: ChangeCard[] | undefined;
+  /** The message is not the newest one: its cards cannot be decided. */
+  outdated: boolean;
   onCardUpdated: (card: ChangeCard) => void;
 }
 
 /** The change cards of one assistant message, in order, under its bubble. */
-export function CardList({ applicationId, cards, onCardUpdated }: CardListProps) {
+export function CardList({
+  applicationId,
+  cards,
+  outdated,
+  onCardUpdated,
+}: CardListProps) {
   if (!cards || cards.length === 0) return null;
   return (
     <div
@@ -26,6 +33,7 @@ export function CardList({ applicationId, cards, onCardUpdated }: CardListProps)
           applicationId={applicationId}
           card={card}
           number={index + 1}
+          outdated={outdated}
           onCardUpdated={onCardUpdated}
         />
       ))}
