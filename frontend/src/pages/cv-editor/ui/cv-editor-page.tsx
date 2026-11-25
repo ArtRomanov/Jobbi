@@ -7,6 +7,7 @@ import {
   type CvTextEditorValues,
   type CvTextExportValues,
 } from "@/features/cv-text-editor";
+import { CV_HTML_DOWNLOAD_ERROR_MESSAGE, downloadCvHtml } from "@/features/cv-html-export";
 import { downloadCvTextPdf } from "@/features/cv-pdf";
 import { UploadNotice, useUploadDraft, type UploadDraft } from "@/features/cv-upload";
 import { Badge, PageCard, PageHeader, colors, useToast } from "@/shared/ui";
@@ -191,6 +192,17 @@ export function CvEditorPage() {
     [showToast],
   );
 
+  const handleExportHtml = useCallback(
+    async (values: CvTextExportValues): Promise<void> => {
+      try {
+        await downloadCvHtml(values);
+      } catch {
+        showToast(CV_HTML_DOWNLOAD_ERROR_MESSAGE, "error");
+      }
+    },
+    [showToast],
+  );
+
   return (
     <PageCard maxWidth="1120px">
       <Link
@@ -256,6 +268,7 @@ export function CvEditorPage() {
           isSaving={isSaving}
           saveError={saveError}
           onExport={isEditMode && cv ? handleExport : undefined}
+          onExportHtml={isEditMode && cv ? handleExportHtml : undefined}
         />
       )}
     </PageCard>

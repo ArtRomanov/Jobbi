@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { delay, http, HttpResponse } from "msw";
 import { CvEditorPage } from "@/pages/cv-editor";
 import { downloadCvTextPdf } from "@/features/cv-pdf";
+import { downloadCvHtml } from "@/features/cv-html-export";
 import { CV_CONTENT_MAX_LENGTH } from "@/features/cv-text-editor";
 import { insertTextWithinLimit } from "@/features/cv-text-editor/lib/insert-text-within-limit";
 import { CvsPage } from "@/pages/cvs";
@@ -12,6 +13,10 @@ import { server } from "./setup";
 import { renderWithProviders, type RenderWithProvidersResult } from "./utils";
 
 vi.mock("@/features/cv-pdf", () => ({ downloadCvTextPdf: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("@/features/cv-html-export", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/cv-html-export")>()),
+  downloadCvHtml: vi.fn().mockResolvedValue(undefined),
+}));
 
 const CVS_URL = "*/api/v1/cvs";
 const CV_URL = "*/api/v1/cvs/:id";
@@ -75,6 +80,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.mocked(downloadCvTextPdf).mockClear();
+  vi.mocked(downloadCvHtml).mockClear();
 });
 
 describe("CvEditorPage — create", () => {
@@ -221,6 +227,57 @@ describe("CvEditorPage — edit", () => {
       name: "Draft name",
       content: `${mockCvs[0]!.content}\nNot saved yet`,
     });
+  });
+
+  it("downloads the current draft as designed HTML", async () => {
+    const user = userEvent.setup();
+    renderEditor("/cvs/cv-1/edit");
+    await screen.findByDisplayValue("Software Engineer CV");
+
+    await user.type(textArea(), "\nNot saved yet");
+    await user.click(screen.getByRole("button", { name: "Download HTML" }));
+
+    expect(downloadCvHtml).toHaveBeenCalledWith({
+      name: "Software Engineer CV",
+      content: `${mockCvs[0]!.content}\nNot saved yet`,
+    });
+    expect(downloadCvTextPdf).not.toHaveBeenCalled();
+  });
+
+  it('says "Couldn\'t create the file." when the HTML download fails', async () => {
+    const user = userEvent.setup();
+    vi.mocked(downloadCvHtml).mockRejectedValueOnce(new Error("Disk full"));
+    renderEditor("/cvs/cv-1/edit");
+    await screen.findByDisplayValue("Software Engineer CV");
+
+    await user.click(screen.getByRole("button", { name: "Download HTML" }));
+
+    expect(await screen.findByText("Couldn't create the file.")).toBeInTheDocument();
+    expect(screen.queryByText("Network error. Check your connection.")).not.toBeInTheDocument();
+  });
+
+  it("shows the preview in the designed layout: dates on the title row", async () => {
+    const user = userEvent.setup();
+    renderEditor("/cvs/new");
+
+    await user.type(textArea(), "# Jane{enter}Engineer{enter}jane@example.com{enter}## Experience{enter}### Lead{enter}2020 – 2022{enter}- Did");
+
+    const preview = screen.getByRole("region", { name: "CV preview" });
+    await waitFor(() => {
+      expect(within(preview).getByRole("heading", { level: 4, name: "Lead" })).toBeInTheDocument();
+    });
+    // The page owns the h1: the CV name is an h2 here
+    expect(within(preview).getByRole("heading", { level: 2, name: "Jane" })).toBeInTheDocument();
+    const titleRow = within(preview).getByRole("heading", { level: 4, name: "Lead" }).parentElement!;
+    expect(titleRow).toHaveClass("cv-entry-head");
+    // A boundary stays between title and dates in the text (not "Lead2020")
+    expect(titleRow).toHaveTextContent("Lead 2020 – 2022");
+    expect(within(preview).getByRole("link", { name: /jane@example.com/ })).toHaveAttribute("target", "_blank");
+  });
+
+  it("shows no Download HTML button on a new CV", () => {
+    renderEditor("/cvs/new");
+    expect(screen.queryByRole("button", { name: "Download HTML" })).not.toBeInTheDocument();
   });
 
   it("shows no Export PDF button while the CV is loading", async () => {

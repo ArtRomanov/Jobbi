@@ -2,12 +2,17 @@ import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CvsPage } from "@/pages/cvs/ui/cvs-page";
 import { downloadCvTextPdf } from "@/features/cv-pdf";
+import { downloadCvHtml } from "@/features/cv-html-export";
 import { http, HttpResponse } from "msw";
 import { mockCvs } from "./mocks/handlers";
 import { server } from "./setup";
 import { renderWithProviders } from "./utils";
 
 vi.mock("@/features/cv-pdf", () => ({ downloadCvTextPdf: vi.fn().mockResolvedValue(undefined) }));
+vi.mock("@/features/cv-html-export", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/cv-html-export")>()),
+  downloadCvHtml: vi.fn().mockResolvedValue(undefined),
+}));
 
 beforeEach(() => {
   localStorage.setItem("jobbi_token", "test-token");
@@ -82,6 +87,47 @@ describe("CvsPage", () => {
       name: "Software Engineer CV",
       content: mockCvs[0]!.content,
     });
+  });
+
+  it("downloads a CV as designed HTML from its name and text (PDF button kept)", async () => {
+    const user = userEvent.setup();
+    vi.mocked(downloadCvTextPdf).mockClear();
+    renderWithProviders(<CvsPage />);
+    await screen.findByText("Software Engineer CV");
+
+    const button = screen.getByRole("button", { name: "Download HTML: Software Engineer CV" });
+    expect(button).toHaveTextContent(/^HTML$/);
+    expect(screen.getByRole("button", { name: "Export PDF: Software Engineer CV" })).toBeInTheDocument();
+    await user.click(button);
+
+    expect(downloadCvHtml).toHaveBeenCalledWith({
+      name: "Software Engineer CV",
+      content: mockCvs[0]!.content,
+    });
+    expect(downloadCvTextPdf).not.toHaveBeenCalled();
+  });
+
+  it('says "Couldn\'t create the file." when the HTML download fails (no network is involved)', async () => {
+    const user = userEvent.setup();
+    vi.mocked(downloadCvHtml).mockRejectedValueOnce(new Error("Disk full"));
+    renderWithProviders(<CvsPage />);
+    await screen.findByText("Software Engineer CV");
+
+    await user.click(screen.getByRole("button", { name: "Download HTML: Software Engineer CV" }));
+
+    expect(await screen.findByText("Couldn't create the file.")).toBeInTheDocument();
+    expect(screen.queryByText("Network error. Check your connection.")).not.toBeInTheDocument();
+  });
+
+  it("keeps the PDF download error toast as it was", async () => {
+    const user = userEvent.setup();
+    vi.mocked(downloadCvTextPdf).mockRejectedValueOnce(new Error("Disk full"));
+    renderWithProviders(<CvsPage />);
+    await screen.findByText("Software Engineer CV");
+
+    await user.click(screen.getByRole("button", { name: "Export PDF: Software Engineer CV" }));
+
+    expect(await screen.findByText("Network error. Check your connection.")).toBeInTheDocument();
   });
 
   it('confirms a delete with the toast "CV deleted"', async () => {

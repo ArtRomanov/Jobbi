@@ -30,4 +30,20 @@ export {
 export type { GroupedCvs, CvSelectChoices, CvSelectGroup, CvSelectOption } from "./lib/group-cvs";
 export { formatTailoredFor, APPLICATION_DELETED_TEXT } from "./lib/tailored-for";
 export { CvTextPreview } from "./ui/cv-text-preview";
+export { buildCvLayout, buildCvLayoutFromBlocks } from "./lib/cv-layout";
+export type {
+  CvLayout,
+  CvLayoutHeader,
+  CvLayoutSection,
+  CvLayoutBlock,
+  CvLayoutEntry,
+  CvLayoutItem,
+} from "./lib/cv-layout";
+export { isDateRangeLine } from "./lib/cv-date-range";
+export { CV_LAYOUT_CSS, CV_LAYOUT_COLORS } from "./lib/cv-layout-styles";
+export { buildCvFontFaceCss, CV_FONT_FILES } from "./lib/cv-layout-fonts";
+export type { CvFontSources, CvFontFileKey } from "./lib/cv-layout-fonts";
+export { CvLayoutView } from "./ui/cv-layout-view";
+export type { CvLayoutViewProps } from "./ui/cv-layout-view";
+export { CvLayoutPreview } from "./ui/cv-layout-preview";
 export { CvTailoredFor } from "./ui/cv-tailored-for";

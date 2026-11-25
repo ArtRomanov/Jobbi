@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import type { CvTextDocumentProps } from "../ui/cv-text-document";
 import { getCvPdfFileName } from "./get-cv-pdf-file-name";
-import { triggerPdfDownload } from "./trigger-pdf-download";
+import { triggerFileDownload } from "@/shared/lib";
 
 export type CvPdfSource = CvTextDocumentProps;
 
@@ -21,5 +21,5 @@ export async function downloadCvTextPdf({ name, content }: CvPdfSource): Promise
   const element = createElement(CvTextDocument, { name, content });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- react-pdf types don't match React 18 exactly
   const blob = await pdf(element as any).toBlob();
-  triggerPdfDownload(blob, getCvPdfFileName(name));
+  triggerFileDownload(blob, getCvPdfFileName(name));
 }

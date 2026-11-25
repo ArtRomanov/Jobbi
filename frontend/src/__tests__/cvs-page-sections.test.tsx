@@ -116,7 +116,12 @@ describe("CVs page — My CVs and Tailored for applications", () => {
     const cvName = mockCvs[2]!.name;
     const row = rowOf(cvName);
     expect(within(row).getByRole("link", { name: `Edit ${cvName}` })).toHaveAttribute("href", "/cvs/cv-3/edit");
-    for (const name of [`Duplicate ${cvName}`, `Export PDF: ${cvName}`, `Delete ${cvName}`]) {
+    for (const name of [
+      `Duplicate ${cvName}`,
+      `Export PDF: ${cvName}`,
+      `Download HTML: ${cvName}`,
+      `Delete ${cvName}`,
+    ]) {
       expect(within(row).getByRole("button", { name })).toBeInTheDocument();
     }
   });
@@ -136,7 +141,7 @@ describe("CVs page — My CVs and Tailored for applications", () => {
     renderWithProviders(<CvsPage />);
 
     await screen.findByRole("region", { name: "My CVs" });
-    for (const label of ["Edit", "Duplicate", "Export PDF:", "Delete"]) {
+    for (const label of ["Edit", "Duplicate", "Export PDF:", "Download HTML:", "Delete"]) {
       const role = label === "Edit" ? "link" : "button";
       const names = screen
         .getAllByRole(role, { name: new RegExp(`^${label} `) })

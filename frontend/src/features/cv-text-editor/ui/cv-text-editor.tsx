@@ -44,6 +44,8 @@ interface CvTextEditorProps {
    * changes included; the name trimmed, possibly empty).
    */
   onExport?: (values: CvTextExportValues) => void | Promise<void>;
+  /** When given, a "Download HTML" button downloads the designed HTML of the current draft. */
+  onExportHtml?: (values: CvTextExportValues) => void | Promise<void>;
 }
 
 /**
@@ -58,6 +60,7 @@ export function CvTextEditor({
   isSaving,
   saveError,
   onExport,
+  onExportHtml,
 }: CvTextEditorProps) {
   const draft = useCvTextDraft(initialValues, savedValues);
   const guard = useUnsavedChangesGuard(draft.isDirty);
@@ -133,6 +136,15 @@ export function CvTextEditor({
             onClick={() => void onExport({ name: draft.name.trim(), content: draft.content })}
           >
             Export PDF
+          </Button>
+        ) : null}
+        {onExportHtml ? (
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => void onExportHtml({ name: draft.name.trim(), content: draft.content })}
+          >
+            Download HTML
           </Button>
         ) : null}
       </div>

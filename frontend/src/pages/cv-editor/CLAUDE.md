@@ -1,6 +1,6 @@
 # CV Editor Page
 
-Route page for `/cvs/new` and `/cvs/:id/edit`; composes `CvTextEditor` (`@/features/cv-text-editor`), loads/saves the CV and, in edit mode, passes `onExport` so the editor's current draft goes to `downloadCvTextPdf`.
+Route page for `/cvs/new` and `/cvs/:id/edit`; composes `CvTextEditor` (`@/features/cv-text-editor`), loads/saves the CV and, in edit mode, passes `onExport` / `onExportHtml` so the editor's current draft goes to `downloadCvTextPdf` / `downloadCvHtml`.
 
 - Every successful save (create, upload draft, edit) shows the save toast and navigates to `ROUTES.cvs` with `replace`. Replace because the unsaved-changes guard never blocks `REPLACE` (the editor's draft is still "dirty" vs. `savedValues` at that moment; the page never feeds the saved CV back in), and Back from the list does not reopen a saved form. `ToastProvider` sits in the app's root route, above all pages, so the toast survives the move; the CVs page refetches its list on mount.
 - A failed save (any error, incl. 409 `CV_CHANGED`) stays on the editor: `saveError` from `getCvSaveErrorMessage` is shown next to Save, the draft is untouched, the guard stays on.

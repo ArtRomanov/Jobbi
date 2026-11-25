@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { listCvs, deleteCv, duplicateCv, groupCvs, type Cv } from "@/entities/cv";
+import { CV_HTML_DOWNLOAD_ERROR_MESSAGE, downloadCvHtml } from "@/features/cv-html-export";
 import { downloadCvTextPdf } from "@/features/cv-pdf";
 import { UploadCvButton } from "@/features/cv-upload";
 import { PageCard, PageHeader, Button, colors, useToast } from "@/shared/ui";
@@ -24,7 +25,7 @@ const MUTED_TEXT_STYLE = { color: colors.textMuted, fontSize: "0.875rem" } as co
 /**
  * CVs page (spec 011 §2.4–2.5): "My CVs" (base first, with a "Base" label)
  * and "Tailored for applications" (hidden when empty), each CV with Make base
- * (non-base only), Edit, Duplicate, PDF and Delete. Lives in `pages/` because
+ * (non-base only), Edit, Duplicate, PDF, HTML and Delete. Lives in `pages/` because
  * it is a route; it composes the upload and make-base features.
  */
 export function CvsPage() {
@@ -33,6 +34,7 @@ export function CvsPage() {
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [downloadingHtmlId, setDownloadingHtmlId] = useState<string | null>(null);
   const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
   const { showToast } = useToast();
 
@@ -121,6 +123,20 @@ export function CvsPage() {
     [showToast],
   );
 
+  const handleDownloadHtml = useCallback(
+    async (cv: Cv) => {
+      setDownloadingHtmlId(cv.id);
+      try {
+        await downloadCvHtml({ name: cv.name, content: cv.content });
+      } catch {
+        showToast(CV_HTML_DOWNLOAD_ERROR_MESSAGE, "error");
+      } finally {
+        setDownloadingHtmlId(null);
+      }
+    },
+    [showToast],
+  );
+
   // The previous base and the copy's section change server-side: refetch
   const handleMadeBase = useCallback(() => {
     void fetchCvs();
@@ -128,6 +144,10 @@ export function CvsPage() {
 
   const onDuplicate = useCallback((cv: Cv) => void handleDuplicate(cv), [handleDuplicate]);
   const onDownload = useCallback((cv: Cv) => void handleDownload(cv), [handleDownload]);
+  const onDownloadHtml = useCallback(
+    (cv: Cv) => void handleDownloadHtml(cv),
+    [handleDownloadHtml],
+  );
   const onDelete = useCallback((cv: Cv) => void handleDelete(cv), [handleDelete]);
 
   const { base, own, tailored } = useMemo(() => groupCvs(cvs), [cvs]);
@@ -136,9 +156,11 @@ export function CvsPage() {
   const listProps = {
     duplicatingId,
     downloadingId,
+    downloadingHtmlId,
     deletingId,
     onDuplicate,
     onDownload,
+    onDownloadHtml,
     onDelete,
     onMadeBase: handleMadeBase,
   };
