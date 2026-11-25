@@ -281,6 +281,40 @@ describe("ChatPage change cards", () => {
     expect(screen.getAllByRole("article", { name: CARD_TITLE })).toHaveLength(1);
   });
 
+  it("replaces the streamed text with the `reply` event before the cards", async () => {
+    let posted = false;
+    server.use(
+      http.get(`${BASE_URL}/api/v1/applications/:id/chat`, async () => {
+        if (!posted) return HttpResponse.json([]);
+        // The reload never lands: what shows comes from the stream alone
+        await new Promise<never>(() => undefined);
+        return HttpResponse.json([]);
+      }),
+      http.post(`${BASE_URL}/api/v1/applications/:id/chat`, () => {
+        posted = true;
+        return new HttpResponse(
+          sseBody([
+            tokenFrame("1. Add REST API"),
+            `event: reply\ndata: ${JSON.stringify({
+              text: "1. Add REST API (not proposed — see below)\n\nLeft out one change.",
+            })}\n\n`,
+            cardsFrame([mockChangeCards.insert]),
+            DONE,
+          ]),
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      }),
+    );
+    renderChatPage("app-1");
+    await send("Tailor my CV");
+
+    expect(
+      await screen.findByText(/1\. Add REST API \(not proposed — see below\)/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Left out one change\./)).toBeInTheDocument();
+    expect(screen.getByRole("article", { name: CARD_TITLE })).toBeInTheDocument();
+  });
+
   it("keeps a card decided while the history reload was in flight", async () => {
     let releaseReload: () => void = () => undefined;
     const reloadGate = new Promise<void>((resolve) => {

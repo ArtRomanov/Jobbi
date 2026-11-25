@@ -141,6 +141,11 @@ export function ChatPage() {
           streamedTextRef.current += token;
           setStreamingContent((prev) => (prev ?? "") + token);
         },
+        onReply: (text) => {
+          // The server changed text it already streamed: show what it saved
+          streamedTextRef.current = text;
+          setStreamingContent(text);
+        },
         onCards: (cards) => {
           // The backend always sends `cards` before `done`, often as []
           const messageId = cards[0]?.message_id;

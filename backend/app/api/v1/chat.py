@@ -22,6 +22,7 @@ from app.services.chat_card_service import (
 )
 from app.services.chat_service import (
     CardsReady,
+    ReplyText,
     clear_chat_history,
     get_chat_history,
     stream_chat_response,
@@ -103,6 +104,11 @@ async def send_message(
                     # on the stream must end with `done`, never `error`.
                     yield f"event: cards\ndata: {json.dumps(_cards_json(item))}\n\n"
                     continue
+                if isinstance(item, ReplyText):
+                    # The whole reply as saved: replaces the text streamed so far.
+                    data = json.dumps({"text": item.text})
+                    yield f"event: reply\ndata: {data}\n\n"
+                    continue
                 data = json.dumps({"text": item})
                 yield f"event: token\ndata: {data}\n\n"
 
@@ -173,7 +179,8 @@ async def accept_change_card(
     """Apply a pending CV change card to the linked CV (bumps the CV version).
 
     409 codes: CARD_DECIDED (already accepted or rejected); CARD_STALE (the card
-    is already stale, or the passage / CV is gone, and the card becomes stale);
+    is already stale, or the passage / CV is gone and the change cannot be
+    re-aimed at the current text, and the card becomes stale);
     PASSAGE_NOT_UNIQUE (card stays pending); CV_BUSY (the CV kept changing
     during the Accept, card stays pending, try again).
     """

@@ -20,6 +20,7 @@ from app.models.cv import Cv
 from app.schemas.cv import CV_CONTENT_MAX_CHARS
 from app.services import cv_service
 from app.services.chat_tools import CvEdit
+from app.services.cv_rebase import rebase_anchor, rebase_replace
 
 HISTORY_QUOTE_CHARS = 60
 # The latest reply's accepted replace/remove cards quote the text they took out
@@ -168,6 +169,51 @@ def apply_card_edit(
                         f"{content[: line_end + 1]}{block}\n{content[line_end + 1 :]}"
                     )
     raise ValueError(f"unknown card edit: op={op!r} position={position!r}")
+
+
+def apply_card_edit_rebased(
+    content: str,
+    *,
+    op: str,
+    before_text: str,
+    after_text: str,
+    position: str | None,
+    anchor_text: str | None,
+) -> str:
+    """Like `apply_card_edit`, but a passage that changed is looked for again.
+
+    When the quoted passage (replace) or anchor (insert) is no longer in the
+    CV, `cv_rebase` tries to place the card's change on the current text; a
+    remove card, and any change that cannot be placed cleanly, still raise
+    _PassageMissing. A passage found more than once still raises
+    _PassageNotUnique, without a rebase.
+    """
+    edit = {
+        "op": op,
+        "before_text": before_text,
+        "after_text": after_text,
+        "position": position,
+        "anchor_text": anchor_text,
+    }
+    try:
+        return apply_card_edit(content, **edit)
+    except _PassageMissing:
+        content = normalize_newlines(content)
+        if op == "replace":
+            rebased = rebase_replace(
+                content, normalize_newlines(before_text), normalize_newlines(after_text)
+            )
+            if rebased is None:
+                raise
+            edit["before_text"], edit["after_text"] = rebased
+        elif op == "insert" and anchor_text is not None:
+            anchor = rebase_anchor(content, normalize_newlines(anchor_text))
+            if anchor is None:
+                raise
+            edit["anchor_text"] = anchor
+        else:
+            raise
+    return apply_card_edit(content, **edit)
 
 
 # ---------------------------------------------------------------------------
@@ -373,7 +419,8 @@ async def accept_card(
         CardDecidedError: the card was already accepted or rejected.
         CardStaleError: the card is already stale, or the CV is gone, is no
             longer linked to the application, or no longer contains the
-            passage (the card becomes stale).
+            passage and the change cannot be re-aimed at the current text
+            (`apply_card_edit_rebased`; the card becomes stale).
         CvBusyError: the CV changed under us on every attempt (the card stays
             pending; trying again may work).
         PassageNotUniqueError: the passage appears more than once (stays pending).
@@ -401,7 +448,7 @@ async def accept_card(
         content, version = row
 
         try:
-            new_content = apply_card_edit(
+            new_content = apply_card_edit_rebased(
                 content,
                 op=card.op,
                 before_text=card.before_text,

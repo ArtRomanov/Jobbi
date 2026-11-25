@@ -16,6 +16,11 @@ from app.services.chat_card_service import (
     cards_by_message,
     delete_application_cards,
 )
+from app.services.chat_guard_notes import (
+    mark_left_out_items,
+    reply_language,
+    unsupported_names_note,
+)
 from app.services.chat_tools import (
     MALFORMED_CALL_NOTE,
     MAX_CARDS_PER_REPLY,
@@ -36,6 +41,16 @@ class CardsReady:
     """Sent once after the reply's text: the cards stored for this reply."""
 
     cards: list[ChatChangeCard]
+
+
+@dataclass(frozen=True, slots=True)
+class ReplyText:
+    """Sent before `CardsReady` when the text already streamed was changed.
+
+    `text` is the whole reply as saved; it replaces everything streamed so far.
+    """
+
+    text: str
 
 
 async def get_chat_history(db: AsyncSession, application_id: str) -> list[ChatMessage]:
@@ -136,32 +151,28 @@ FOLLOW_UP_NUDGE = (
     "a change cannot be made, say so in one sentence instead. Do not repeat "
     "your earlier text."
 )
-UNSUPPORTED_NAMES_NOTE = (
-    "Left out one suggested change: it adds {names}, which your CV does not "
-    "mention. If you have this experience, tell me and I will add it."
-)
 
 
 def drop_unsupported_edits(
     edits: list[CvEdit], *, cv: str, user_texts: list[str], job_post: str
-) -> tuple[list[CvEdit], list[str]]:
+) -> tuple[list[CvEdit], list[list[str]]]:
     """Leave out edits that add names the candidate never claimed.
 
-    Returns the edits to keep and one note per edit left out. A name is
-    supported when the CV or one of the user's messages mentions it (see
-    `cv_fact_guard`).
+    Returns the edits to keep and, per edit left out, its unsupported names.
+    A name is supported when the CV or one of the user's messages mentions it
+    (see `cv_fact_guard`).
     """
     kept: list[CvEdit] = []
-    notes: list[str] = []
+    left_out: list[list[str]] = []
     for edit in edits:
         names = unsupported_names(
             edit.after_text, cv=cv, user_texts=user_texts, job_post=job_post
         )
         if names:
-            notes.append(UNSUPPORTED_NAMES_NOTE.format(names=", ".join(names)))
+            left_out.append(names)
         else:
             kept.append(edit)
-    return kept, notes
+    return kept, left_out
 
 
 def needs_follow_up(reply: str, calls: list[LlmToolCall]) -> bool:
@@ -198,11 +209,12 @@ async def stream_chat_response(
     db: AsyncSession,
     application: Application,
     user_content: str,
-) -> AsyncIterator[str | CardsReady]:
+) -> AsyncIterator[str | ReplyText | CardsReady]:
     """Save the user message, stream the reply, then store its CV cards.
 
-    Yields text chunks, then exactly one `CardsReady` (possibly empty) once the
-    assistant message and its cards are saved. The model gets the
+    Yields text chunks, at most one `ReplyText` (the fact guard marked an item
+    of the text already streamed), then exactly one `CardsReady` (possibly
+    empty) once the assistant message and its cards are saved. The model gets the
     `propose_cv_edit` tool only when the application has a CV linked (and
     owned by the same user).
     """
@@ -245,23 +257,31 @@ async def stream_chat_response(
             yield chunk
 
     edits, failed = _validate_calls(calls) if cv is not None else ([], len(calls))
-    skipped: list[str] = []
+    left_out: list[list[str]] = []
     if cv is not None and edits:
-        edits, skipped = drop_unsupported_edits(
+        edits, left_out = drop_unsupported_edits(
             edits,
             cv=cv.content,
             user_texts=[m.content for m in history if m.role == "user"],
             job_post=application.notes or "",
         )
-    notes = [MALFORMED_CALL_NOTE] * failed + skipped
+    language = reply_language(user_content)
+    notes = [MALFORMED_CALL_NOTE] * failed + [
+        unsupported_names_note(names, language) for names in left_out
+    ]
+    streamed = "".join(full_response)
+    marked = mark_left_out_items(streamed, left_out, language)
+    note = ""
     if notes:
-        # Each failed or left-out call becomes one inline line in the reply.
-        separator = "\n\n" if full_response else ""
-        note = separator + "\n".join(notes)
-        full_response.append(note)
+        # Each failed or left-out call becomes one line under the reply.
+        note = ("\n\n" if streamed else "") + "\n".join(notes)
+    if marked != streamed:
+        # The text on screen announced a left-out edit: replace it as a whole.
+        yield ReplyText(text=marked + note)
+    elif note:
         yield note
 
-    assistant_content = "".join(full_response)
+    assistant_content = marked + note
     cards: list[ChatChangeCard] = []
     if assistant_content or edits:
         message = ChatMessage(

@@ -8,9 +8,9 @@ import httpx
 import pytest
 
 from app.services.chat_card_service import REMOVED_TEXT_LABEL
+from app.services.chat_guard_notes import UNSUPPORTED_NAMES_NOTE
 from app.services.chat_service import (
     FOLLOW_UP_NUDGE,
-    UNSUPPORTED_NAMES_NOTE,
     drop_unsupported_edits,
     needs_follow_up,
 )
@@ -328,7 +328,9 @@ async def test_edit_adding_a_job_post_name_the_cv_lacks_is_left_out(
     cards = next(data for name, data in events if name == "cards")
     assert [c["op"] for c in cards] == ["remove"]
     tokens = "".join(data["text"] for name, data in events if name == "token")
-    assert tokens == "Two edits.\n\n" + UNSUPPORTED_NAMES_NOTE.format(names="Argo CD")
+    assert tokens == "Two edits.\n\n" + UNSUPPORTED_NAMES_NOTE["en"].format(
+        names="Argo CD"
+    )
 
 
 async def test_edit_adding_a_name_the_user_gave_is_kept(
@@ -347,7 +349,7 @@ async def test_edit_adding_a_name_the_user_gave_is_kept(
     assert [c["after_text"] for c in cards] == ["- Kubernetes, Argo CD"]
 
 
-def test_drop_unsupported_edits_keeps_order_and_notes_each_left_out_edit() -> None:
+def test_drop_unsupported_edits_keeps_order_and_names_each_left_out_edit() -> None:
     def _edit(after: str) -> CvEdit:
         return CvEdit(
             op="insert",
@@ -359,9 +361,9 @@ def test_drop_unsupported_edits_keeps_order_and_notes_each_left_out_edit() -> No
 
     edits = [_edit("- Python"), _edit("- TanStack Query"), _edit("- Docker")]
 
-    kept, notes = drop_unsupported_edits(
+    kept, left_out = drop_unsupported_edits(
         edits, cv=CV_TEXT, user_texts=["add Docker"], job_post=""
     )
 
     assert [e.after_text for e in kept] == ["- Python", "- Docker"]
-    assert notes == [UNSUPPORTED_NAMES_NOTE.format(names="TanStack")]
+    assert left_out == [["TanStack"]]
