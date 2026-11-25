@@ -537,7 +537,9 @@ async def test_source_limit(
     resp = await client.post(URL, json={"input": "@durov_jobs"}, headers=_auth(token))
 
     assert resp.status_code == 400
-    assert resp.json() == {"detail": f"You can watch up to {MAX_SOURCES} sources"}
+    # Pin the number itself: the loops above follow the constant.
+    assert MAX_SOURCES == 50
+    assert resp.json() == {"detail": "You can watch up to 50 sources"}
     assert not respx_mock.calls  # limit checked before the network
     assert await _count_sources(db_session) == MAX_SOURCES
 
