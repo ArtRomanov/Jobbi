@@ -67,6 +67,9 @@ const MAX_TITLE_LENGTH = 80;
 const MAX_PLAIN_CONTACT_LENGTH = 60;
 const EMAIL_SIGN = /\S@\S/u;
 const PHONE_SIGN = /\+?\d[\d\s().-]{6,}\d/u;
+// "2016 - 2024", "03.2016-12.2024": digits a phone would also match, but a date.
+// Removed before the phone check so a summary line with years is not a contact.
+const YEAR_RANGE = /(?<![\d.])(?:\d{1,2}[./])?(?:19|20)\d{2}\s*[-–—]\s*(?:\d{1,2}[./])?(?:19|20)\d{2}(?![\d.])/gu;
 // `(?<![\w-])`: start only at the beginning of a word, so a long run of
 // letters is scanned once, not once per letter (quadratic on a 20 000-char line)
 const WEB_SIGN = /(?:https?:\/\/|www\.)\S|(?<![\w-])[\w-]+\.(?:com|io|dev|me|org|net|ru)\/\S/iu;
@@ -74,7 +77,12 @@ const WEB_SIGN = /(?:https?:\/\/|www\.)\S|(?<![\w-])[\w-]+\.(?:com|io|dev|me|org
 /** An email, phone number or link/URL: what makes header lines "contacts". */
 function hasContactSign(line: readonly CvInline[]): boolean {
   const text = inlineText(line);
-  return hasLink(line) || EMAIL_SIGN.test(text) || PHONE_SIGN.test(text) || WEB_SIGN.test(text);
+  return (
+    hasLink(line) ||
+    EMAIL_SIGN.test(text) ||
+    PHONE_SIGN.test(text.replace(YEAR_RANGE, " ")) ||
+    WEB_SIGN.test(text)
+  );
 }
 
 function isContactLike(line: readonly CvInline[]): boolean {

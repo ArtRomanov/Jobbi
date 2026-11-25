@@ -264,6 +264,26 @@ describe("buildCvLayout", () => {
     expectSameText(cv);
   });
 
+  it.each([
+    "Worked at Acme 2016 - 2024",
+    "Acme 2016-2024",
+    "Acme, 03.2016 - 12.2024",
+    "Acme 2016 – 2024",
+  ])("does not count a year range as a phone: %s", (line) => {
+    const cv = `# Jane\nFrontend engineer, 8 years\n${line}`;
+    expect(buildCvLayout(cv).header).toEqual({ name: [text("Jane")], title: null, contacts: [] });
+    expectSameText(cv);
+  });
+
+  it.each(["+49 30 1234567", "555-1234", "(030) 123 4567", "+7 (999) 123-45-67", "2016 - 2024 · +49 30 1234567"])(
+    "still counts a phone number as a contact: %s",
+    (phone) => {
+      const layout = buildCvLayout(`# Jane\nEngineer\n${phone}`);
+      expect(layout.header?.title).toEqual([text("Engineer")]);
+      expect(layout.header?.contacts.length).toBeGreaterThan(0);
+    },
+  );
+
   it("takes title and contacts when a later contact paragraph holds a real contact", () => {
     const layout = buildCvLayout("# Jane\nEngineer\nBerlin\n\n[GitHub](https://github.com/jane)");
     expect(layout.header?.title).toEqual([text("Engineer")]);
