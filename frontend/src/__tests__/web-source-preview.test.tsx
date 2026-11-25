@@ -190,7 +190,7 @@ describe("Web page source: add with preview", () => {
     [400, "Could not open this page"],
     [400, NO_VACANCIES],
     [409, "Already in your sources"],
-    [400, "You can watch up to 30 sources"],
+    [400, "You can watch up to 50 sources"],
   ])("shows the %i preview error %s inline under the input", async (status, detail) => {
     server.use(http.post(PREVIEW_URL, () => HttpResponse.json({ detail }, { status })));
     const user = userEvent.setup();
