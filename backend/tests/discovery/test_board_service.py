@@ -302,8 +302,8 @@ async def test_board_first_scan_is_summarised_per_board_then_hourly_alert(
     assert [r.state for r in rows] == ["new", "new"]
     assert all(r.from_initial_scan and r.alert_handled_at == NOW for r in rows)
     assert [text.splitlines()[0] for text in bot.texts] == [
-        "🔎 New source Acme Corp: 1 matching vacancy",
-        "🔎 New source Acme Labs: 1 matching vacancy",
+        "🔎 First scan of source Acme Corp: 1 matching vacancy",
+        "🔎 First scan of source Acme Labs: 1 matching vacancy",
     ]
     assert [text.splitlines()[-1].rsplit("?", 1)[1] for text in bot.texts] == [
         "source=greenhouse%3Aacme",

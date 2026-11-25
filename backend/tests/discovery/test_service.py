@@ -1324,7 +1324,7 @@ class TestAlerts:
         assert [card.state for card in await vacancies(db)] == ["new", "new"]
         [text] = bot.texts
         assert text.splitlines()[0] == (
-            f"🔎 New channel @{CHANNEL}: 2 matching vacancies"
+            f"🔎 First scan of channel @{CHANNEL}: 2 matching vacancies"
         )
         assert {card.alert_handled_at for card in await vacancies(db)} == {
             NOW + timedelta(hours=1)
@@ -1343,7 +1343,7 @@ class TestAlerts:
             factory, http, ai, at(NOW), config=config, sleep=sleep, bot=bot
         )
         assert [text.splitlines()[0] for text in bot.texts] == [
-            f"🔎 New channel @{CHANNEL}: 1 matching vacancy"
+            f"🔎 First scan of channel @{CHANNEL}: 1 matching vacancy"
         ]
 
         await check_all(
@@ -1357,8 +1357,8 @@ class TestAlerts:
         )
 
         assert [text.splitlines()[0] for text in bot.texts] == [
-            f"🔎 New channel @{CHANNEL}: 1 matching vacancy",
-            f"🔎 New channel @{CHANNEL}: 1 matching vacancy",
+            f"🔎 First scan of channel @{CHANNEL}: 1 matching vacancy",
+            f"🔎 First scan of channel @{CHANNEL}: 1 matching vacancy",
         ]
         assert [card.state for card in await vacancies(db)] == ["new", "new"]
 
@@ -1396,7 +1396,7 @@ class TestAlerts:
         # Only the posts inside the 3-day window are summarised.
         fresh = sum(1 for age in post_ages if age <= timedelta(days=3))
         assert [text.splitlines()[0] for text in bot.texts] == [
-            f"🔎 New channel @{CHANNEL}: {fresh} matching vacancy"
+            f"🔎 First scan of channel @{CHANNEL}: {fresh} matching vacancy"
         ] * fresh
         old_keys = {
             f"tg:{CHANNEL}/{post_id}"
@@ -1424,7 +1424,7 @@ class TestAlerts:
             (
                 CHAT_ID,
                 (
-                    f"🔎 New channel @{CHANNEL}: 1 matching vacancy\n"
+                    f"🔎 First scan of channel @{CHANNEL}: 1 matching vacancy\n"
                     "\n"
                     "High · Frontend Developer — Acme\n"
                     "\n"
@@ -1466,7 +1466,7 @@ class TestAlerts:
 
         assert [text.splitlines()[0] for text in bot.texts] == [
             "🔎 1 new vacancy",
-            f"🔎 New channel @{CHANNEL}: 1 matching vacancy",
+            f"🔎 First scan of channel @{CHANNEL}: 1 matching vacancy",
         ]
         assert len([c for c in await vacancies(db) if c.state == "new"]) == 2
 

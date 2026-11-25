@@ -219,7 +219,7 @@ class TestFirstScanFormat:
         )
 
         assert text == (
-            "🔎 New channel IT Relocation: 1 matching vacancy\n"
+            "🔎 First scan of channel IT Relocation: 1 matching vacancy\n"
             "\n"
             "High · Passage — Passage Co\n"
             "\n"
@@ -232,7 +232,7 @@ class TestFirstScanFormat:
         )
 
         lines = text.splitlines()
-        assert lines[0] == "🔎 New source Acme: 2 matching vacancies"
+        assert lines[0] == "🔎 First scan of source Acme: 2 matching vacancies"
         assert lines[-1] == f"🔗 Open Inbox: {INBOX}?source=greenhouse%3Aacme"
 
     def test_source_key_is_url_encoded(self) -> None:
@@ -248,7 +248,7 @@ class TestFirstScanFormat:
         text = format_source_alert(group("IT\u202eRelo\ncation", [card()]), INBOX)
 
         assert text.splitlines()[0] == (
-            "🔎 New channel ITRelo cation: 1 matching vacancy"
+            "🔎 First scan of channel ITRelo cation: 1 matching vacancy"
         )
 
     def test_one_source_caps_at_ten_lines(self) -> None:
@@ -256,7 +256,9 @@ class TestFirstScanFormat:
 
         lines = format_source_alert(group("IT Relocation", cards), INBOX).splitlines()
 
-        assert lines[0] == "🔎 New channel IT Relocation: 12 matching vacancies"
+        assert (
+            lines[0] == "🔎 First scan of channel IT Relocation: 12 matching vacancies"
+        )
         assert lines[2:12] == [f"Low · Low {n} — Acme" for n in range(1, 11)]
         assert lines[12] == "+2 more in Inbox"
         assert lines[-1].startswith(f"🔗 Open Inbox: {INBOX}?source=")
@@ -272,7 +274,7 @@ class TestFirstScanFormat:
         text = format_sources_summary(sources, INBOX)
 
         assert text == (
-            "🔎 New sources: 5 matching vacancies from 4 sources\n"
+            "🔎 First scans: 5 matching vacancies from 4 sources\n"
             "\n"
             "IT Relocation (2)\n"
             "High · B — Acme\n"
@@ -298,7 +300,7 @@ class TestFirstScanFormat:
 
         lines = format_sources_summary(sources, INBOX).splitlines()
 
-        assert lines[0] == "🔎 New sources: 16 matching vacancies from 4 sources"
+        assert lines[0] == "🔎 First scans: 16 matching vacancies from 4 sources"
         assert [line for line in lines if line.startswith("Medium · ")] == [
             f"Medium · R{n}.{i} — Acme" for n in (1, 2) for i in range(4)
         ] + ["Medium · R3.0 — Acme", "Medium · R3.1 — Acme"]
@@ -338,9 +340,9 @@ class TestFirstScanFormat:
         texts = first_scan_messages(sources, INBOX)
 
         assert [text.splitlines()[0] for text in texts] == [
-            "🔎 New channel Big: 3 matching vacancies",
-            "🔎 New channel Mid: 2 matching vacancies",
-            "🔎 New channel Small: 1 matching vacancy",
+            "🔎 First scan of channel Big: 3 matching vacancies",
+            "🔎 First scan of channel Mid: 2 matching vacancies",
+            "🔎 First scan of channel Small: 1 matching vacancy",
         ]
 
     def test_more_than_three_sources_one_combined_message(self) -> None:
@@ -349,7 +351,7 @@ class TestFirstScanFormat:
         [text] = first_scan_messages(sources, INBOX)
 
         assert text.splitlines()[0] == (
-            "🔎 New sources: 4 matching vacancies from 4 sources"
+            "🔎 First scans: 4 matching vacancies from 4 sources"
         )
 
     def test_no_sources_no_messages(self) -> None:
@@ -715,8 +717,8 @@ class TestFirstScanAlerts:
         assert await run(factory, bot, {user_id: ids}) == 2
 
         assert [text.splitlines()[0] for text in bot.texts] == [
-            "🔎 New channel IT Relocation: 2 matching vacancies",
-            "🔎 New source Acme: 1 matching vacancy",
+            "🔎 First scan of channel IT Relocation: 2 matching vacancies",
+            "🔎 First scan of source Acme: 1 matching vacancy",
         ]
         assert bot.texts[0].splitlines()[-1] == (
             f"🔗 Open Inbox: {INBOX}?source=telegram%3Arelocats"
@@ -740,7 +742,7 @@ class TestFirstScanAlerts:
 
         [text] = bot.texts
         assert text.splitlines()[0] == (
-            "🔎 New sources: 4 matching vacancies from 4 sources"
+            "🔎 First scans: 4 matching vacancies from 4 sources"
         )
         assert text.splitlines()[-1] == f"🔗 Open Inbox: {INBOX}"
         assert await handled_at(db, ids) == [NOW] * 4
@@ -774,7 +776,7 @@ class TestFirstScanAlerts:
         hourly_text, first_text = bot.texts
         assert hourly_text == format_alert([card("medium", "Hourly")], INBOX)
         assert first_text.splitlines()[0] == (
-            "🔎 New channel IT Relocation: 1 matching vacancy"
+            "🔎 First scan of channel IT Relocation: 1 matching vacancy"
         )
         assert "First" in first_text
         assert "First" not in hourly_text
@@ -832,9 +834,41 @@ class TestFirstScanAlerts:
         assert await run(factory, bot, {user_id: ids}) == 1
 
         assert [text.splitlines()[0] for text in bot.texts] == [
-            "🔎 New channel Second: 1 matching vacancy"
+            "🔎 First scan of channel Second: 1 matching vacancy"
         ]
         assert await handled_at(db, ids) == [NOW] * 3
+
+    async def test_pause_between_messages_to_one_user_not_before_the_first(
+        self, factory, db, bot
+    ) -> None:
+        user_id = await make_user(db)
+        first = await make_source(db, user_id, "First", handle="first")
+        second = await make_source(db, user_id, "Second", handle="second")
+        ids = [
+            await make_card(db, user_id, title="Hourly"),
+            await make_card(db, user_id, initial=True, source_id=first),
+            await make_card(db, user_id, initial=True, source_id=second),
+        ]
+        # (seconds, messages already sent) per pause
+        pauses: list[tuple[float, int]] = []
+
+        async def sleep(seconds: float) -> None:
+            pauses.append((seconds, len(bot.sent)))
+
+        assert await run(factory, bot, {user_id: ids}, sleep=sleep) == 3
+
+        # hourly, pause, first, pause, second
+        assert pauses == [(1.0, 1), (1.0, 2)]
+
+    async def test_one_message_has_no_pause(self, factory, db, bot) -> None:
+        user_id = await make_user(db)
+        source_id = await make_source(db, user_id, "IT Relocation")
+        ids = [await make_card(db, user_id, initial=True, source_id=source_id)]
+        sleep = Sleeper()
+
+        assert await run(factory, bot, {user_id: ids}, sleep=sleep) == 1
+
+        assert sleep.calls == []
 
     async def test_rerun_sends_nothing(self, factory, db, bot) -> None:
         user_id = await make_user(db)

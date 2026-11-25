@@ -42,6 +42,7 @@ __all__ = [
     "MAX_FIELD_CHARS",
     "MAX_MESSAGE_CHARS",
     "MAX_SEPARATE_SOURCES",
+    "MESSAGE_GAP_S",
     "AlertCard",
     "SourceCards",
     "clip_field",
@@ -68,6 +69,8 @@ _FIT_LABELS = {"high": "High", "medium": "Medium", "low": "Low"}
 _FIT_RANK = {"high": 0, "medium": 1, "low": 2}
 # First-scan matches from more sources than this go into one combined message.
 MAX_SEPARATE_SOURCES = 3
+# Pause between consecutive messages to the same user.
+MESSAGE_GAP_S = 1.0
 _TELEGRAM_KIND = "telegram"
 
 SessionFactory: TypeAlias = Callable[[], AsyncSession]
@@ -202,9 +205,14 @@ def format_alert(
 def format_source_alert(
     source: SourceCards, inbox_url: str, *, max_chars: int = MAX_MESSAGE_CHARS
 ) -> str:
-    """First-scan summary of one source; its Inbox link filters by the source."""
+    """First-scan summary of one source; its Inbox link filters by the source.
+
+    The header says "first scan", not "new": a big first scan is rated over
+    several runs (per-source and daily caps) and each run sends its part.
+    """
     noun = "channel" if source.kind == _TELEGRAM_KIND else "source"
-    header = f"🔎 New {noun} {_source_name(source)}: {_matching(len(source.cards))}"
+    name = _source_name(source)
+    header = f"🔎 First scan of {noun} {name}: {_matching(len(source.cards))}"
     link = f"{inbox_url}?{urlencode({'source': source.key})}"
     return format_alert(source.cards, link, header=header, max_chars=max_chars)
 
@@ -219,7 +227,7 @@ def format_sources_summary(
     "<name> (N)" line and its card lines, at most `MAX_ALERT_LINES` card lines
     in all (in `sources` order); the rest is counted in "+M more in Inbox"."""
     total = sum(len(source.cards) for source in sources)
-    header = f"🔎 New sources: {_matching(total)} from {len(sources)} sources"
+    header = f"🔎 First scans: {_matching(total)} from {len(sources)} sources"
     sections: list[tuple[str, list[str]]] = []
     budget = MAX_ALERT_LINES
     for source in sources:
@@ -305,7 +313,11 @@ async def _alert_user(
         texts = first_scan_messages(loaded.first_scan, inbox_url)
         if loaded.hourly:
             texts.insert(0, format_alert(loaded.hourly, inbox_url))
-        for text in texts:
+        for index, text in enumerate(texts):
+            if index:
+                # Several messages to one chat: a short gap, so a burst does
+                # not hit Telegram's flood limit (a second RetryAfter loses it).
+                await sleep(MESSAGE_GAP_S)
             if await send_text(bot, loaded.chat_id, text, sleep=sleep):
                 sent += 1
             else:
