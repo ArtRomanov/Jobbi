@@ -100,6 +100,44 @@ describe("renderCvHtml", () => {
     expect(rule(".cv-list>li::before")).not.toContain("position:");
   });
 
+  it("renders #### projects inside their ### employer, in reading order", () => {
+    const markdown = [
+      "## Experience",
+      "### Lead — Acme",
+      "2019 – Present",
+      "#### Checkout",
+      "Jan 2021 – Dec 2022",
+      "- Cut drop-off",
+      "#### Design system · 2019 – 2020",
+      "- Built components",
+    ].join("\n");
+    const doc = parse(render(markdown));
+    const entry = doc.querySelector(".cv-entry");
+    const projects = [...(entry?.querySelectorAll(":scope > .cv-project") ?? [])];
+    expect(projects).toHaveLength(2);
+    const [checkout, design] = projects;
+    expect(checkout?.querySelector("h4.cv-entry-title.cv-project-title")?.textContent).toBe("Checkout");
+    // Dates sit on their own line under the project title, with a hidden separator
+    expect(checkout?.querySelector(".cv-entry-head")?.textContent).toBe("Checkout Jan 2021 – Dec 2022");
+    expect(checkout?.querySelector(".cv-entry-dates")?.lastChild?.textContent).toBe("Jan 2021 – Dec 2022");
+    expect(checkout?.querySelector("ul.cv-list > li")?.textContent).toBe("Cut drop-off");
+    expect(design?.querySelector(".cv-entry-head")?.textContent).toBe("Design system · 2019 – 2020");
+    expect(words(textNodes(doc.body))).toEqual(
+      words("Experience Lead Acme 2019 Present Checkout Jan 2021 Dec 2022 Cut drop-off Design system 2019 2020 Built components"),
+    );
+    // A #### with no ### above it is a project of its own
+    expect(parse(render("#### Solo")).querySelector("h4.cv-project-title")?.textContent).toBe("Solo");
+  });
+
+  it("keeps projects in flow: no positioned or floated project blocks", () => {
+    const css = render("");
+    for (const selector of [".cv-project", ".cv-project-title"]) {
+      const body = css.match(new RegExp(`(?:^|[\\n}])${selector.replace(/[.>]/g, "\\$&")}\\{([^}]*)\\}`))?.[1];
+      expect(body).toBeDefined();
+      expect(body).not.toMatch(/position:|float:|display:flex|text-align:right/);
+    }
+  });
+
   it("keeps every word of the CV in order", () => {
     const doc = parse(render(CV));
     expect(words(textNodes(doc.body))).toEqual(

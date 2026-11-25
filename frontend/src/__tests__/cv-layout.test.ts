@@ -7,6 +7,7 @@ import {
   type CvInline,
   type CvLayout,
   type CvLayoutItem,
+  type CvLayoutTitled,
 } from "@/entities/cv";
 // Lazy-only module (see features/cv-html-export/CLAUDE.md): read directly
 import { renderCvHtml } from "@/features/cv-html-export/lib/render-cv-html";
@@ -44,12 +45,23 @@ function blocksText(blocks: readonly CvBlock[]): string {
     .join("\n");
 }
 
-function itemText(item: CvLayoutItem): string {
-  if (item.kind === "paragraph") return inlineText(item.children);
-  if (item.kind !== "entry") return blocksText([item]);
+function titledText(item: CvLayoutTitled): string {
   return [inlineText(item.title), item.dates ? inlineText(item.dates) : "", ...item.blocks.map(itemText)].join(
     "\n",
   );
+}
+
+function itemText(item: CvLayoutItem): string {
+  switch (item.kind) {
+    case "paragraph":
+      return inlineText(item.children);
+    case "entry":
+      return [titledText(item), ...item.projects.map(titledText)].join("\n");
+    case "project":
+      return titledText(item);
+    default:
+      return blocksText([item]);
+  }
 }
 
 /** All text of a layout, in reading order. */
@@ -348,6 +360,7 @@ describe("buildCvLayout", () => {
           { kind: "paragraph", children: [text("A job tracker.")], isContext: false },
           { kind: "paragraph", children: [text("More text.")], isContext: false },
         ],
+        projects: [],
       },
     ]);
   });
@@ -400,8 +413,66 @@ describe("buildCvLayout", () => {
   it("keeps raw blocks, ordered lists and nested lists", () => {
     const layout = buildCvLayout("## A\n| a | b |\n|---|---|\n| 1 | 2 |\n\n3. three\n4. four\n- x\n  - y\n\n#### deep");
     const kinds = layout.sections[0]?.items.map((item) => item.kind);
-    expect(kinds).toEqual(["raw", "list", "list", "raw"]);
+    expect(kinds).toEqual(["raw", "list", "list", "project"]);
     expect(layout.sections[0]?.items[1]).toMatchObject({ ordered: true, start: 3 });
+  });
+
+  it("nests #### projects under a ### employer, each with its own dates and bullets", () => {
+    const cv = [
+      "## Experience",
+      "### Frontend Lead — Acme",
+      "Jan 2019 – Present",
+      "Fintech platform.",
+      "#### Checkout redesign",
+      "Jan 2021 – Dec 2022",
+      "- Cut drop-off by 20%",
+      "- Led 3 devs",
+      "#### Design system · 2019 – 2020",
+      "- Built 40 components",
+      "#### Internal tools",
+      "Small team.",
+      "### Engineer — Beta",
+      "2016 – 2018",
+      "- Built things",
+    ].join("\n");
+    const items = buildCvLayout(cv).sections[0]?.items ?? [];
+    expect(items.map((item) => item.kind)).toEqual(["entry", "entry"]);
+    const [acme, beta] = items;
+    expect(acme).toMatchObject({
+      kind: "entry",
+      title: [text("Frontend Lead — Acme")],
+      dates: [text("Jan 2019 – Present")],
+      blocks: [{ kind: "paragraph", children: [text("Fintech platform.")] }],
+    });
+    const projects = acme?.kind === "entry" ? acme.projects : [];
+    expect(projects.map((p) => [inlineText(p.title), p.dates && inlineText(p.dates), p.datesSeparator])).toEqual([
+      ["Checkout redesign", "Jan 2021 – Dec 2022", " "],
+      ["Design system", "2019 – 2020", " · "],
+      ["Internal tools", null, null],
+    ]);
+    expect(projects[0]?.blocks).toEqual([
+      {
+        kind: "list",
+        ordered: false,
+        start: 1,
+        items: [
+          { blocks: [{ kind: "paragraph", children: [text("Cut drop-off by 20%")] }] },
+          { blocks: [{ kind: "paragraph", children: [text("Led 3 devs")] }] },
+        ],
+      },
+    ]);
+    expect(projects[2]?.blocks).toEqual([{ kind: "paragraph", children: [text("Small team.")], isContext: false }]);
+    // The next ### ends the employer: Beta has no projects
+    expect(beta).toMatchObject({ kind: "entry", dates: [text("2016 – 2018")], projects: [] });
+    expectSameText(cv);
+    expectSameRenderedText(cv);
+  });
+
+  it("keeps a #### with no ### above it as a project of its own", () => {
+    const layout = buildCvLayout("## Projects\nIntro.\n#### Jobbi\n2024 – 2025\n- A job tracker\n### Acme");
+    const items = layout.sections[0]?.items ?? [];
+    expect(items.map((item) => item.kind)).toEqual(["paragraph", "project", "entry"]);
+    expect(items[1]).toMatchObject({ kind: "project", title: [text("Jobbi")], dates: [text("2024 – 2025")] });
   });
 
   it("keeps a date range followed by prose as the entry's first line", () => {
@@ -451,6 +522,8 @@ const FRAGMENTS = [
   "*italic* text",
   "Сделал **систему** быстрее",
   "#### Deep heading",
+  "#### Checkout · 2021 – 2022",
+  "##### Deeper heading",
   "| a | b |",
   "<b>html</b>",
   "> quote",
@@ -488,7 +561,7 @@ describe("buildCvLayout keeps every word (property)", () => {
   });
 });
 
-const BLOCK_TAGS = new Set(["P", "H1", "H2", "H3", "H4", "UL", "OL", "LI", "DIV", "HEADER", "SECTION", "MAIN", "BODY"]);
+const BLOCK_TAGS = new Set(["P", "H1", "H2", "H3", "H4", "H5", "UL", "OL", "LI", "DIV", "HEADER", "SECTION", "MAIN", "BODY"]);
 
 /**
  * Text of the rendered HTML as a reader gets it: block elements end a line,
