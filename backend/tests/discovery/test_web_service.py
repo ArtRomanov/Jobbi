@@ -413,9 +413,13 @@ async def test_detail_step_reads_at_most_30_rows_oldest_first(
     assert site.job_requests == expected
     assert sleep.calls.count(1.0) == 29  # (the AI pause is 30 s)
     rows = by_job(await vacancies(db))
-    assert sorted(rows) == sorted(ids[:5])  # the rest were rated and rejected
-    assert all(row.needs_detail for row in rows.values())
-    assert ai.posts_sent and all("Text r" in text for text in ai.posts_sent)
+    waiting = {job for job, row in rows.items() if row.needs_detail}
+    assert waiting == set(ids[:5])
+    # Of the 30 read rows, PER_SOURCE_RUN_LIMIT were rated (and rejected) in
+    # this run; the rest wait for the next run (backlog #19).
+    assert len(rows) - len(waiting) == 30 - service.PER_SOURCE_RUN_LIMIT
+    assert len(ai.posts_sent) == service.PER_SOURCE_RUN_LIMIT
+    assert all("Text r" in text for text in ai.posts_sent)
 
 
 async def test_job_page_retried_and_rated_by_title_after_three_failures(

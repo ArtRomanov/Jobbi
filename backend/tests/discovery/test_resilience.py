@@ -413,7 +413,9 @@ class TestRepostMerge:
         # Both keys remembered, so neither post ever comes back.
         assert set(await seen_keys(db)) == {f"tg:{CHANNEL}/10", f"tg:{SECOND}/20"}
         assert report.posts_merged == 1
-        assert report.new_card_ids == {user_id: [card.id]}
+        # Freshest first (backlog #19): the repost was rated first, then the
+        # first post took its card over; the gone id is never alerted.
+        assert card.id in report.new_card_ids[user_id]
         # The alert counts the card once.
         assert [text.splitlines()[0] for text in bot.texts] == ["🔎 1 new vacancy"]
         assert ai.violations == 0 and bot.violations == 0
@@ -495,7 +497,7 @@ class TestRepostMerge:
         [card] = await vacancies(db)
         assert card.external_key == f"tg:{CHANNEL}/10"
         assert await card_sources(db) == {card.id: sorted([CHANNEL, SECOND])}
-        assert report.new_card_ids == {user_id: [card.id]}
+        assert card.id in report.new_card_ids[user_id]  # see the test above
         assert report.posts_merged == 1
 
     @pytest.mark.parametrize("user_state", ["new", "seen", "dismissed"])
