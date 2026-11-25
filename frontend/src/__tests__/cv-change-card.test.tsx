@@ -416,6 +416,43 @@ describe("CvChangeCard accessibility", () => {
   });
 });
 
+describe("CvChangeCard warning (backlog #27)", () => {
+  const WARNING = mockChangeCards.warned.warning;
+
+  it("shows no warning when the card has none", () => {
+    renderCards(card());
+    expect(screen.queryByText(/Check before accepting/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: ACCEPT })).not.toHaveAttribute("aria-describedby");
+  });
+
+  it("shows the warning, describes Accept with it and keeps Accept enabled", () => {
+    renderCards(mockChangeCards.warned);
+    const article = screen.getByRole("article", { name: CARD_TITLE });
+    expect(within(article).getByText(WARNING, { exact: false })).toHaveTextContent(
+      `Check before accepting: ${WARNING}`,
+    );
+    const accept = screen.getByRole("button", { name: ACCEPT });
+    expect(accept).toBeEnabled();
+    expect(accept).toHaveAccessibleDescription(`Check before accepting: ${WARNING}`);
+  });
+
+  it("accepts a warned card: the warning stays, the card becomes Accepted", async () => {
+    const user = userEvent.setup();
+    renderCards(mockChangeCards.warned);
+
+    await user.click(screen.getByRole("button", { name: ACCEPT }));
+
+    expect(await screen.findByText("Accepted")).toBeInTheDocument();
+    expect(screen.getByText(WARNING, { exact: false })).toBeInTheDocument();
+  });
+
+  it("parseCardsEvent keeps the warning and reads a missing one as null", () => {
+    const { warning: _missing, ...withoutWarning } = mockChangeCards.replace;
+    const data = JSON.stringify([mockChangeCards.warned, withoutWarning, { ...withoutWarning, id: "x", warning: 5 }]);
+    expect(parseCardsEvent(data)).toEqual([mockChangeCards.warned, mockChangeCards.replace]);
+  });
+});
+
 describe("card helpers", () => {
   it("mergeCardStates keeps a local decision over a pending server copy", () => {
     const message = {

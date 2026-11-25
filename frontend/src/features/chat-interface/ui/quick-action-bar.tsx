@@ -5,6 +5,8 @@ import { QUICK_ACTIONS } from "../lib/constants";
 interface QuickActionBarProps {
   onAction: (prompt: string) => void;
   hasCv: boolean;
+  /** A message is being sent or streamed: every action waits for it. */
+  disabled?: boolean;
   companyName: string;
   roleTitle: string;
 }
@@ -22,6 +24,7 @@ function fillTemplate(
 export function QuickActionBar({
   onAction,
   hasCv,
+  disabled = false,
   companyName,
   roleTitle,
 }: QuickActionBarProps) {
@@ -43,18 +46,17 @@ export function QuickActionBar({
       }}
     >
       {QUICK_ACTIONS.map((action) => {
-        const isDisabled = action.requiresCv && !hasCv;
+        if (action.hiddenWithoutCv && !hasCv) return null;
+        const isMissingCv = action.requiresCv && !hasCv;
+        const isDisabled = disabled || isMissingCv;
 
         return (
           <button
+            type="button"
             key={action.id}
             onClick={() => handleClick(action.template)}
             disabled={isDisabled}
-            title={
-              isDisabled
-                ? "Link a CV to this application first"
-                : action.label
-            }
+            title={isMissingCv ? "Link a CV to this application first" : action.label}
             style={{
               padding: "0.375rem 0.875rem",
               border: `1px solid ${colors.primary}`,
