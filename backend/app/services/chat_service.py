@@ -1,15 +1,26 @@
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
+import structlog
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.models.application import Application
 from app.models.chat_change_card import ChatChangeCard
 from app.models.chat_message import ChatMessage
 from app.models.cv import Cv
+from app.services.chat_budget import (
+    HISTORY_TRIMMED_NOTE,
+    PROMPT_TOO_LARGE_DETAIL,
+    RATE_LIMITED_DETAIL,
+    ChatUserError,
+    fixed_tokens,
+    message_tokens,
+    request_tokens,
+)
 from app.services.chat_card_service import (
     add_cards,
     card_history_note,
@@ -17,6 +28,7 @@ from app.services.chat_card_service import (
     delete_application_cards,
 )
 from app.services.chat_guard_notes import (
+    Language,
     mark_left_out_items,
     reply_language,
     unsupported_names_note,
@@ -30,10 +42,14 @@ from app.services.chat_tools import (
 )
 from app.services.cv_fact_guard import unsupported_names
 from app.services.groq_client import (
+    LlmRateLimitError,
+    LlmRequestTooLargeError,
     LlmToolCall,
     build_system_prompt,
     stream_llm_response,
 )
+
+logger = structlog.get_logger()
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +120,25 @@ async def get_application_context(
     return system_prompt, application, cv
 
 
+def _latest_with_cards(
+    history: Sequence[ChatMessage], cards: Mapping[str, list[ChatChangeCard]]
+) -> str | None:
+    return next((m.id for m in reversed(history) if cards.get(m.id)), None)
+
+
+def _message_entries(
+    message: ChatMessage, cards: Sequence[ChatChangeCard], *, quote_removed: bool
+) -> list[dict[str, str]]:
+    """One stored message as model messages: its text, then its card note."""
+    entries: list[dict[str, str]] = []
+    if message.content:
+        entries.append({"role": message.role, "content": message.content})
+    if cards:
+        note = card_history_note(cards, quote_removed=quote_removed)
+        entries.append({"role": "system", "content": note})
+    return entries
+
+
 def build_llm_messages(
     history: list[ChatMessage], cards: dict[str, list[ChatChangeCard]]
 ) -> list[dict[str, str]]:
@@ -115,17 +150,85 @@ def build_llm_messages(
     The latest reply with cards also quotes, in full, the text its accepted
     cards took out, so the model can put it back on request.
     """
-    latest_with_cards = next((m.id for m in reversed(history) if cards.get(m.id)), None)
+    latest = _latest_with_cards(history, cards)
     messages: list[dict[str, str]] = []
     for message in history:
-        if message.content:
-            messages.append({"role": message.role, "content": message.content})
-        message_cards = cards.get(message.id, [])
-        if message_cards:
-            note = card_history_note(
-                message_cards, quote_removed=message.id == latest_with_cards
-            )
-            messages.append({"role": "system", "content": note})
+        messages += _message_entries(
+            message, cards.get(message.id, []), quote_removed=message.id == latest
+        )
+    return messages
+
+
+def _kept_ids(history: Sequence[ChatMessage]) -> set[str]:
+    """The messages the budget never drops: the latest user message and the
+    last assistant reply (with its card notes)."""
+    kept: set[str] = set()
+    if history and history[-1].role == "user":
+        kept.add(history[-1].id)
+    if last_reply := next(
+        (m for m in reversed(history) if m.role == "assistant"), None
+    ):
+        kept.add(last_reply.id)
+    return kept
+
+
+def fit_llm_messages(
+    history: list[ChatMessage],
+    cards: dict[str, list[ChatChangeCard]],
+    *,
+    system_prompt: str,
+    tools: Sequence[dict[str, Any]] | None,
+    budget: int,
+    language: Language,
+) -> list[dict[str, str]]:
+    """`build_llm_messages`, trimmed so the whole request fits `budget` tokens.
+
+    Over budget, it first leaves out the oldest messages (never the latest
+    user message or the last assistant reply), then shortens the full quote of
+    the latest reply's accepted cards to the one-line form. Raises
+    `ChatUserError` if the request is still too large: the CV, the vacancy and
+    the kept messages alone do not fit.
+    """
+    latest = _latest_with_cards(history, cards)
+    entries = {
+        m.id: _message_entries(m, cards.get(m.id, []), quote_removed=m.id == latest)
+        for m in history
+    }
+    sizes = {m_id: sum(map(message_tokens, e)) for m_id, e in entries.items()}
+    total = fixed_tokens(system_prompt, tools) + sum(sizes.values())
+    kept = _kept_ids(history)
+    dropped: set[str] = set()
+    trim_note = {"role": "system", "content": HISTORY_TRIMMED_NOTE}
+    for message in history:
+        if total <= budget:
+            break
+        if message.id in kept:
+            continue
+        if not dropped:
+            total += message_tokens(trim_note)
+        dropped.add(message.id)
+        total -= sizes[message.id]
+
+    if total > budget and latest is not None and latest not in dropped:
+        reply = next(m for m in history if m.id == latest)
+        entries[latest] = _message_entries(reply, cards[latest], quote_removed=False)
+        total += sum(map(message_tokens, entries[latest])) - sizes[latest]
+
+    if total > budget:
+        raise ChatUserError(
+            PROMPT_TOO_LARGE_DETAIL[language], reason="prompt_over_budget"
+        )
+    if dropped:
+        logger.info(
+            "chat_history_trimmed",
+            dropped_messages=len(dropped),
+            estimated_tokens=total,
+            budget=budget,
+        )
+    messages = [trim_note] if dropped else []
+    for message in history:
+        if message.id not in dropped:
+            messages += entries[message.id]
     return messages
 
 
@@ -205,6 +308,37 @@ def _validate_calls(calls: list[LlmToolCall]) -> tuple[list[CvEdit], int]:
     return edits, failed
 
 
+async def _stream_follow_up(
+    system_prompt: str,
+    follow_up: list[dict[str, str]],
+    tools: list[dict[str, Any]],
+    reply: str,
+    has_text: bool,
+    calls: list[LlmToolCall],
+) -> AsyncIterator[str]:
+    """Stream the nudged second call; its tool calls are added to `calls`.
+
+    A rate limit or size error here keeps the first reply: the follow-up
+    request comes right after the first one, in the same per-minute quota.
+    """
+    separator = "\n\n" if has_text else ""
+    # The reply announced edits: this time a tool call is required. An
+    # empty reply announced nothing, so the model may still just answer.
+    tool_choice: Literal["auto", "required"] = "required" if reply else "auto"
+    try:
+        async for item in stream_llm_response(
+            system_prompt, follow_up, tools=tools, tool_choice=tool_choice
+        ):
+            if isinstance(item, LlmToolCall):
+                calls.append(item)
+                continue
+            chunk = separator + item
+            separator = ""
+            yield chunk
+    except (LlmRateLimitError, LlmRequestTooLargeError) as e:
+        logger.warning("chat_follow_up_failed", error_type=type(e).__name__)
+
+
 async def stream_chat_response(
     db: AsyncSession,
     application: Application,
@@ -221,40 +355,57 @@ async def stream_chat_response(
     await save_message(db, application.id, "user", user_content)
 
     system_prompt, _, cv = await get_application_context(db, application)
+    language = reply_language(user_content)
+    budget = get_settings().CHAT_INPUT_TOKEN_BUDGET
 
     history = await get_chat_history(db, application.id)
-    messages = build_llm_messages(history, await cards_by_message(db, application.id))
+    tools = [PROPOSE_CV_EDIT_TOOL] if cv is not None else None
+    messages = fit_llm_messages(
+        history,
+        await cards_by_message(db, application.id),
+        system_prompt=system_prompt,
+        tools=tools,
+        budget=budget,
+        language=language,
+    )
 
     full_response: list[str] = []
     calls: list[LlmToolCall] = []
-    tools = [PROPOSE_CV_EDIT_TOOL] if cv is not None else None
-    async for item in stream_llm_response(system_prompt, messages, tools=tools):
-        if isinstance(item, LlmToolCall):
-            calls.append(item)
-            continue
-        full_response.append(item)
-        yield item
+    try:
+        async for item in stream_llm_response(system_prompt, messages, tools=tools):
+            if isinstance(item, LlmToolCall):
+                calls.append(item)
+                continue
+            full_response.append(item)
+            yield item
+    except LlmRequestTooLargeError as e:
+        # The estimate let through a request Groq still found too large.
+        raise ChatUserError(
+            PROMPT_TOO_LARGE_DETAIL[language], reason="groq_request_too_large"
+        ) from e
+    except LlmRateLimitError as e:
+        raise ChatUserError(
+            RATE_LIMITED_DETAIL[language], reason="groq_rate_limit"
+        ) from e
 
     if tools and needs_follow_up("".join(full_response), calls):
         # One nudge, never more: the model announced edits but made none.
+        # It reuses the trimmed messages, and is skipped if it would not fit.
         follow_up = [*messages]
         if reply := "".join(full_response).strip():
             follow_up.append({"role": "assistant", "content": reply})
         follow_up.append({"role": "system", "content": FOLLOW_UP_NUDGE})
-        separator = "\n\n" if full_response else ""
-        # The reply announced edits: this time a tool call is required. An
-        # empty reply announced nothing, so the model may still just answer.
-        tool_choice: Literal["auto", "required"] = "required" if reply else "auto"
-        async for item in stream_llm_response(
-            system_prompt, follow_up, tools=tools, tool_choice=tool_choice
-        ):
-            if isinstance(item, LlmToolCall):
-                calls.append(item)
-                continue
-            chunk = separator + item
-            separator = ""
-            full_response.append(chunk)
-            yield chunk
+        estimate = request_tokens(system_prompt, follow_up, tools)
+        if estimate > budget:
+            logger.info(
+                "chat_follow_up_skipped", estimated_tokens=estimate, budget=budget
+            )
+        else:
+            async for chunk in _stream_follow_up(
+                system_prompt, follow_up, tools, reply, bool(full_response), calls
+            ):
+                full_response.append(chunk)
+                yield chunk
 
     edits, failed = _validate_calls(calls) if cv is not None else ([], len(calls))
     left_out: list[list[str]] = []
@@ -265,7 +416,6 @@ async def stream_chat_response(
             user_texts=[m.content for m in history if m.role == "user"],
             job_post=application.notes or "",
         )
-    language = reply_language(user_content)
     notes = [MALFORMED_CALL_NOTE] * failed + [
         unsupported_names_note(names, language) for names in left_out
     ]

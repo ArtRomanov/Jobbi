@@ -13,6 +13,7 @@ from app.models.application import Application
 from app.models.user import User
 from app.schemas.chat import ChangeCardRead, ChatMessageRead, ChatRequest
 from app.services.application_service import get_application
+from app.services.chat_budget import ChatUserError
 from app.services.chat_card_service import (
     CardError,
     CardNotFoundError,
@@ -113,6 +114,10 @@ async def send_message(
                 yield f"event: token\ndata: {data}\n\n"
 
             yield f"event: done\ndata: {json.dumps({'status': 'complete'})}\n\n"
+        except ChatUserError as e:
+            # Raised before the reply is saved: the user can act on this text.
+            logger.warning("chat_stream_refused", reason=e.reason)
+            yield f"event: error\ndata: {json.dumps({'detail': e.detail})}\n\n"
         # Broad on purpose: any failure must end the stream with a frame the
         # client understands, and its text must not reach the client.
         except Exception as e:  # noqa: BLE001 - logged by type, never sent

@@ -15,6 +15,12 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = "qwen/qwen3.8-27b"
+    # Max estimated input tokens of one chat request (system prompt with CV and
+    # vacancy, history, tools schema; the reply's max_tokens is not counted).
+    # Model-agnostic: keep it under GROQ_MODEL's per-request input limit (Groq
+    # on-demand chat models: ~7000 tokens per minute). The estimate runs ~10%
+    # high, so 6500 is about 5900 real tokens.
+    CHAT_INPUT_TOKEN_BUDGET: int = Field(default=6500, ge=1000)
     # Model for vacancy discovery (separate from the chat model above).
     GROQ_DISCOVERY_MODEL: str = "openai/gpt-oss-20b"
     # Rates discovery posts while GROQ_DISCOVERY_MODEL is out of its daily token

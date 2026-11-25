@@ -24,6 +24,14 @@ class LlmToolCall:
     arguments: str
 
 
+class LlmRateLimitError(RuntimeError):
+    """Groq 429: the model's per-minute (or per-day) token quota is used up."""
+
+
+class LlmRequestTooLargeError(RuntimeError):
+    """Groq 413: this one request is over the model's input-token limit."""
+
+
 def _get_client() -> groq.AsyncGroq:
     settings = get_settings()
     return groq.AsyncGroq(api_key=settings.GROQ_API_KEY)
@@ -213,11 +221,19 @@ async def stream_llm_response(
         ) from e
     except groq.RateLimitError as e:
         logger.error("Groq rate limit", error=str(e))
-        raise RuntimeError("Rate limit reached. Please try again in a moment.") from e
+        raise LlmRateLimitError(
+            "Rate limit reached. Please try again in a moment."
+        ) from e
     except groq.APIConnectionError as e:
         logger.error("Groq connection error", error=str(e))
         raise RuntimeError("Couldn't reach the AI service. Please try again.") from e
     except groq.APIError as e:
+        if isinstance(e, groq.APIStatusError) and e.status_code == 413:
+            # The error text names the organization: log the status only.
+            logger.error("Groq request too large", status_code=e.status_code)
+            raise LlmRequestTooLargeError(
+                "The request is over the model's input-token limit."
+            ) from e
         if not (tools and _is_tool_use_failed(e.body)):
             logger.error("Groq API error", error=str(e))
             raise
