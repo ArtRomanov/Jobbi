@@ -8,6 +8,7 @@ writes in a short one after.
 
 import hashlib
 import uuid
+from collections.abc import Collection
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import Enum
@@ -139,6 +140,33 @@ async def list_sources(db: AsyncSession, user_id: str) -> list[VacancySource]:
         .order_by(VacancySource.created_at, VacancySource.id)
     )
     return list(result.scalars().all())
+
+
+async def pending_counts(
+    db: AsyncSession, user_id: str, source_ids: Collection[str] | None = None
+) -> dict[str, int]:
+    """Pending posts per source ("Waiting for AI: N"), one grouped COUNT.
+
+    Same rule as the Inbox banner (`vacancy_service._count_waiting`): web rows
+    whose job page is not read yet (`needs_detail`) wait for the page reader,
+    not the AI, so they don't count. Forwarded posts have no source and are
+    not counted. Sources with nothing pending are absent.
+    `source_ids` narrows the query (one edited source).
+    """
+    stmt = (
+        select(Vacancy.source_id, func.count())
+        .where(
+            Vacancy.user_id == user_id,
+            Vacancy.state == "pending",
+            Vacancy.needs_detail.is_(False),
+            Vacancy.source_id.is_not(None),
+        )
+        .group_by(Vacancy.source_id)
+    )
+    if source_ids is not None:
+        stmt = stmt.where(Vacancy.source_id.in_(list(source_ids)))
+    rows = await db.execute(stmt)
+    return {source_id: count for source_id, count in rows}
 
 
 async def get_search_settings(

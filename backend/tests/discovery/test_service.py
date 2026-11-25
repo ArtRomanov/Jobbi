@@ -1150,8 +1150,9 @@ class TestEvaluation:
         user_id = await make_user(db)  # UTC
         await make_pending(db, user_id, 4)
         config = DiscoveryConfig(model="m", daily_limit=2)
-        # Each call to the clock moves 10 minutes; the run starts 23:40 UTC.
-        clock = Ticker(datetime(2026, 11, 22, 23, 40), timedelta(minutes=10))
+        # Each call to the clock moves 10 minutes; the run starts 23:30 UTC
+        # (the stale-post check reads it once), the first batch at 23:40.
+        clock = Ticker(datetime(2026, 11, 22, 23, 30), timedelta(minutes=10))
 
         await evaluate_pending(factory, ai, clock, config=config, sleep=sleep)
 

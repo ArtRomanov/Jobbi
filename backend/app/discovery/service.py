@@ -115,6 +115,7 @@ __all__ = [
     "MAX_PAGES",
     "PENDING_WITHOUT_DESCRIPTION_RETENTION",
     "READ_ERROR_MESSAGES",
+    "STALE_PENDING_AFTER",
     "TELEGRAM_FIRST_SCAN_LOOKBACK",
     "TELEGRAM_FIRST_SCAN_MAX_PAGES",
     "WEB_DETAIL_LIMIT",
@@ -141,6 +142,10 @@ LOOKBACK = timedelta(days=7)
 # send ~200 posts to the AI at once (daily token limit).
 TELEGRAM_FIRST_SCAN_LOOKBACK = timedelta(days=3)
 TELEGRAM_FIRST_SCAN_MAX_PAGES = 4  # ~80 posts
+# Pending posts older than this are dropped before the AI call (backlog #19):
+# Telegram posts by `posted_at`, every other kind by `found_at`.
+STALE_PENDING_AFTER = LOOKBACK
+_TELEGRAM_KEY_PREFIX = "tg:"
 MAX_PAGES = 10
 # One AI call per pause. gpt-oss-20b spends ~4 000-5 000 tokens per batch of 5,
 # so 30 s (two calls a minute) would exceed the 8 000 tokens/minute account limit.
@@ -257,6 +262,8 @@ class RunReport:
     posts_stored: int = 0
     # Pending posts the pre-AI keyword filter skipped (no AI call).
     posts_filtered: int = 0
+    # Stale pending posts dropped before the AI call (STALE_PENDING_AFTER).
+    posts_expired: int = 0
     # Reposts added as a source to an existing card (at store or after rating).
     posts_merged: int = 0
     ai_calls: int = 0
@@ -582,6 +589,7 @@ async def evaluate_pending(
     pacer = _Pacer(config.eval_pause_s, sleep)
     for user_id in await _users_with_pending(session_factory, user_ids):
         if user_id not in forwarded_only:
+            await _expire_stale_pending(session_factory, user_id, clock, report)
             await _apply_keyword_filter(session_factory, user_id, clock, report)
         outcome = await _UserEvaluation(
             session_factory=session_factory,
@@ -596,6 +604,67 @@ async def evaluate_pending(
         if outcome is _Outcome.STOP_RUN:
             break
     return report
+
+
+async def _expire_stale_pending(
+    session_factory: SessionFactory, user_id: str, clock: Clock, report: RunReport
+) -> None:
+    """Drop the user's pending posts that waited too long, without an AI call.
+
+    Stale = Telegram post (`tg:` key) published more than STALE_PENDING_AFTER
+    ago, or any post found more than STALE_PENDING_AFTER ago. Only Telegram's
+    `posted_at` is the post's real age: boards carry the employer's date (a
+    job just found may be dated weeks back, an undated one gets the check
+    time) and web rows get the listing time or the job page's date. Like the
+    keyword filter: the row is deleted, its seen key stays (the post never
+    comes back), forwarded posts are never dropped (the delete re-checks it,
+    so a forward recorded meanwhile wins) and `needs_detail` web rows wait
+    for the detail step (they are not waiting for the AI yet; once read, their
+    `found_at` decides). One short write transaction, no network.
+    """
+    cutoff = clock() - STALE_PENDING_AFTER
+    forwarded_keys = select(ForwardedPost.external_key).where(
+        ForwardedPost.user_id == user_id
+    )
+    async with session_factory() as session, session.begin():
+        stale_ids = (
+            await session.scalars(
+                select(Vacancy.id).where(
+                    Vacancy.user_id == user_id,
+                    Vacancy.state == "pending",
+                    Vacancy.needs_detail.is_(False),
+                    or_(
+                        Vacancy.found_at < cutoff,
+                        and_(
+                            Vacancy.external_key.startswith(_TELEGRAM_KEY_PREFIX),
+                            Vacancy.posted_at < cutoff,
+                        ),
+                    ),
+                    Vacancy.external_key.not_in(forwarded_keys),
+                )
+            )
+        ).all()
+        if not stale_ids:
+            return
+        # The delete re-checks "pending" and "not forwarded": a forward
+        # recorded after the SELECT above keeps its post.
+        deleted = await session.execute(
+            delete(Vacancy).where(
+                Vacancy.id.in_(stale_ids),
+                Vacancy.state == "pending",
+                Vacancy.external_key.not_in(forwarded_keys),
+            )
+        )
+        # Card sources of the rows actually deleted (no FK cascade on SQLite).
+        await session.execute(
+            delete(VacancyCardSource).where(
+                VacancyCardSource.vacancy_id.in_(stale_ids),
+                ~select(Vacancy.id)
+                .where(Vacancy.id == VacancyCardSource.vacancy_id)
+                .exists(),
+            )
+        )
+        report.posts_expired += deleted.rowcount
 
 
 async def _apply_keyword_filter(
@@ -2643,7 +2712,8 @@ async def cleanup(session_factory: SessionFactory, clock: Clock) -> CleanupRepor
     - `new`/`seen`/`dismissed` cards first fetched more than 30 days ago are
       deleted;
     - `pending` posts older than 7 days are deleted only for users without a
-      search description (posts waiting for the AI or the daily cap stay);
+      search description (posts waiting for the AI or the daily cap stay;
+      the worker drops stale ones in `_expire_stale_pending`);
     - `added` cards stay while they link to their application; once the
       application is deleted (`application_id` cleared) they are deleted too;
     - seen keys are never deleted, so deleted cards never come back;
@@ -2711,14 +2781,15 @@ async def cleanup(session_factory: SessionFactory, clock: Clock) -> CleanupRepor
 def _log_report(name: str, report: RunReport) -> None:
     logger.info(
         "Discovery %s: sources read=%d failed=%d, posts stored=%d "
-        "filtered=%d merged=%d, AI calls=%d evaluated=%d cut=%d matches=%d rejected=%d, "
-        "users at daily cap=%d, deferred=%d, alerts sent=%d, "
+        "filtered=%d expired=%d merged=%d, AI calls=%d evaluated=%d cut=%d matches=%d "
+        "rejected=%d, users at daily cap=%d, deferred=%d, alerts sent=%d, "
         "forward replies sent=%d",
         name,
         report.sources_read,
         report.sources_failed,
         report.posts_stored,
         report.posts_filtered,
+        report.posts_expired,
         report.posts_merged,
         report.ai_calls,
         report.posts_evaluated,

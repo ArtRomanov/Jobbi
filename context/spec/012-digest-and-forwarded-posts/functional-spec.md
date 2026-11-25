@@ -92,6 +92,11 @@ Since exclude words were removed (backlog #12), every new post of every source w
 
 Trade-off (option A): a skipped post keeps only its "seen" mark, so adding a keyword later does not bring old skipped posts back. Re-checking skipped posts after a keyword change is backlog #21; an AI-suggested keyword list is backlog #20.
 
+Follow-ups (backlog #19, 2026-11-24):
+
+- Each source row in the Sources panel shows "Waiting for AI: N" (its posts waiting for the AI; web jobs whose page is not read yet are not counted, same as the Inbox "posts are waiting" line) when N > 0; it updates with the panel's refresh.
+- Stale posts: before rating, a waiting post older than 7 days (Telegram: by its publish time; career pages and web pages: by when Jobbi found it) is dropped without an AI call and never comes back. Posts forwarded to the bot and web pages not read yet are never dropped.
+
 ### 2.3 Changes to spec 009
 
 Spec 009 stays Completed. These of its points are superseded by this spec, and 009 gets a pointer next to each:

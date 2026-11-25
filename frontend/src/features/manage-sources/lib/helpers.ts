@@ -3,6 +3,7 @@ import { formatTimeAgo } from "@/shared/lib";
 import {
   AI_UNAVAILABLE_NOTICE,
   LAST_CHECKED_PREFIX,
+  PENDING_COUNT_PREFIX,
   WATCHING_SINCE_PREFIX,
   SCAN_POLL_INTERVAL_MS,
   STATUS_POLL_INTERVAL_MS,
@@ -53,6 +54,7 @@ export function mergePolledSources(
           last_error: fresh.last_error,
           watching_since: fresh.watching_since,
           editable: fresh.editable,
+          pending_count: fresh.pending_count,
         }
       : source;
   });
@@ -103,6 +105,11 @@ export function getCheckedLabel(source: VacancySource): string | null {
     return `${WATCHING_SINCE_PREFIX} ${formatTimeAgo(watchingSince)}`;
   }
   return lastCheckedAt ? `${LAST_CHECKED_PREFIX} ${formatTimeAgo(lastCheckedAt)}` : null;
+}
+
+/** "Waiting for AI: N" for a source with posts waiting to be rated, else null. */
+export function getPendingLabel(pendingCount: number): string | null {
+  return pendingCount > 0 ? `${PENDING_COUNT_PREFIX} ${pendingCount}` : null;
 }
 
 /** Board link templates per kind (`{handle}` = the part of `key` after "kind:"). */
