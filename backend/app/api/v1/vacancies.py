@@ -266,7 +266,7 @@ async def create_vacancy_source(
         'is removed (its cards stay, shown "(removed)") and the new one is '
         "added with a normal first scan; the response is the NEW source (new "
         '`id`). Errors as when adding (400, 409 "Already in your sources"); '
-        "the edited source is not counted against the duplicate and 30-source "
+        "the edited source is not counted against the duplicate and source-limit "
         'checks. 409 "This source is being scanned — try again in a moment" '
         "while a first-scan attempt runs (`editable` false). 404 for an "
         "unknown or another user's source."

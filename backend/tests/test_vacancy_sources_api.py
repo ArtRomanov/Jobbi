@@ -17,6 +17,7 @@ from app.services.vacancy_source_parsing import (
     INVALID_INPUT_MESSAGE,
     UNSAFE_LINK_MESSAGE,
 )
+from app.services.vacancy_source_service import MAX_SOURCES
 from tests.conftest import TestSessionLocal
 
 URL = "/api/v1/vacancy-sources"
@@ -523,32 +524,32 @@ async def test_unique_constraint_maps_to_conflict(
     assert await _count_sources(db_session) == 1
 
 
-async def test_limit_of_30_sources(
+async def test_source_limit(
     client: httpx.AsyncClient,
     token: str,
     user_id: str,
     respx_mock: respx.MockRouter,
     db_session: AsyncSession,
 ) -> None:
-    for i in range(30):
+    for i in range(MAX_SOURCES):
         await _insert_source(db_session, user_id, f"channel_{i:02d}")
 
     resp = await client.post(URL, json={"input": "@durov_jobs"}, headers=_auth(token))
 
     assert resp.status_code == 400
-    assert resp.json() == {"detail": "You can watch up to 30 sources"}
+    assert resp.json() == {"detail": f"You can watch up to {MAX_SOURCES} sources"}
     assert not respx_mock.calls  # limit checked before the network
-    assert await _count_sources(db_session) == 30
+    assert await _count_sources(db_session) == MAX_SOURCES
 
 
-async def test_30th_source_allowed(
+async def test_last_source_under_limit_allowed(
     client: httpx.AsyncClient,
     token: str,
     user_id: str,
     channel_route: respx.Route,
     db_session: AsyncSession,
 ) -> None:
-    for i in range(29):
+    for i in range(MAX_SOURCES - 1):
         await _insert_source(db_session, user_id, f"channel_{i:02d}")
 
     resp = await client.post(URL, json={"input": "@durov_jobs"}, headers=_auth(token))
@@ -564,7 +565,7 @@ async def test_limit_counts_only_own_sources(
     db_session: AsyncSession,
 ) -> None:
     other_id = other_registered_user["user"]["id"]
-    for i in range(30):
+    for i in range(MAX_SOURCES):
         await _insert_source(db_session, other_id, f"channel_{i:02d}")
 
     resp = await client.post(URL, json={"input": "@durov_jobs"}, headers=_auth(token))

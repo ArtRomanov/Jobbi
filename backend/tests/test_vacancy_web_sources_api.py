@@ -28,6 +28,7 @@ from app.services.vacancy_source_parsing import (
     PRIVATE_INVITE_MESSAGE,
     UNSAFE_LINK_MESSAGE,
 )
+from app.services.vacancy_source_service import MAX_SOURCES
 from tests import conftest as root_conftest
 
 _real_session_local = root_conftest.TestSessionLocal
@@ -44,7 +45,7 @@ NO_VACANCIES = (
     "No vacancies found on this page. Check the link or set 'Job link contains'."
 )
 DUPLICATE = "Already in your sources"
-LIMIT = "You can watch up to 30 sources"
+LIMIT = f"You can watch up to {MAX_SOURCES} sources"
 
 GEEKJOB_PAGE_2 = """<html><body><main>
 <a href="/vacancy/aaa111"><h3>Page two job A</h3></a>
@@ -563,7 +564,8 @@ async def test_preview_limit_and_edit_exclusion(
     db_session: AsyncSession,
 ) -> None:
     ids = [
-        await _insert_telegram(db_session, user_id, f"chan_{i:02d}") for i in range(30)
+        await _insert_telegram(db_session, user_id, f"chan_{i:02d}")
+        for i in range(MAX_SOURCES)
     ]
 
     full = await client.post(PREVIEW_URL, json={"input": GEEKJOB}, headers=_auth(token))
@@ -884,14 +886,14 @@ async def test_save_unique_constraint_maps_to_conflict(
     assert await _count(db_session, VacancySeenKey) == 0
 
 
-async def test_save_limit_of_30_counts_web_and_other_sources(
+async def test_save_limit_counts_web_and_other_sources(
     client: httpx.AsyncClient,
     token: str,
     user_id: str,
     respx_mock: respx.MockRouter,
     db_session: AsyncSession,
 ) -> None:
-    for i in range(29):
+    for i in range(MAX_SOURCES - 1):
         await _insert_telegram(db_session, user_id, f"chan_{i:02d}")
     await _insert_web(db_session, user_id, "https://example.com/other")
 
@@ -1247,7 +1249,7 @@ async def test_edit_web_to_board_gets_a_normal_first_scan(
     assert await _count(db_session, VacancySource) == 1
 
 
-async def test_edit_and_replace_at_exactly_30_sources(
+async def test_edit_and_replace_at_exactly_the_source_limit(
     client: httpx.AsyncClient,
     token: str,
     user_id: str,
@@ -1257,7 +1259,8 @@ async def test_edit_and_replace_at_exactly_30_sources(
     _page(respx_mock, "/jobs", SMALL_LISTING)
     _page(respx_mock, "/careers", CAREERS_PAGE)
     tg_ids = [
-        await _insert_telegram(db_session, user_id, f"chan_{i:02d}") for i in range(29)
+        await _insert_telegram(db_session, user_id, f"chan_{i:02d}")
+        for i in range(MAX_SOURCES - 1)
     ]
     web_id = await _insert_web(db_session, user_id, EXAMPLE_JOBS)
 
@@ -1272,7 +1275,7 @@ async def test_edit_and_replace_at_exactly_30_sources(
     assert edited.status_code == 200, edited.text
     assert replaced.status_code == 200, replaced.text
     assert preview.status_code == 200, preview.text
-    assert await _count(db_session, VacancySource) == 30
+    assert await _count(db_session, VacancySource) == MAX_SOURCES
 
 
 async def test_edit_to_another_sources_link_is_409(
