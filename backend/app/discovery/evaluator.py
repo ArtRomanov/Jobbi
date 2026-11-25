@@ -25,6 +25,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.core.llm_options import reasoning_options
 from app.core.prompt_fence import defang
 from app.discovery.types import RawPost
 
@@ -820,9 +821,7 @@ def _model_options(model: str) -> dict[str, Any]:
     gpt-oss reasons before answering. "medium" is pinned on purpose: "low" cut
     the tokens by two thirds but broke the fit rules (smoke 10/16 vs 15/16).
     """
-    if model.startswith("openai/gpt-oss"):
-        return {"reasoning_effort": "medium"}
-    return {}
+    return reasoning_options(model, "medium")
 
 
 async def evaluate_batch(

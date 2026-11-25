@@ -6,6 +6,7 @@ import groq
 import structlog
 
 from app.core.config import get_settings
+from app.core.llm_options import reasoning_options
 from app.core.prompt_fence import fence
 from app.models.application import Application
 from app.models.cv import Cv
@@ -194,9 +195,11 @@ async def stream_llm_response(
     try:
         stream = await client.chat.completions.create(
             model=settings.GROQ_MODEL,
-            max_tokens=4096,
+            # gpt-oss spends part of this cap on reasoning (not shown).
+            max_tokens=settings.CHAT_MAX_TOKENS,
             messages=full_messages,
             stream=True,
+            **reasoning_options(settings.GROQ_MODEL, settings.CHAT_REASONING_EFFORT),
             **tool_kwargs,
         )
         async for chunk in stream:

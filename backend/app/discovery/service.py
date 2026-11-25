@@ -240,6 +240,10 @@ class DiscoveryConfig:
     def from_settings(cls, settings: Settings | None = None) -> Self:
         settings = settings or get_settings()
         fallback = settings.GROQ_DISCOVERY_FALLBACK_MODEL.strip()
+        # The primary GROQ_DISCOVERY_MODEL may be the chat model (both are
+        # gpt-oss-20b by default since 2026-11-25: a known, shared quota). The
+        # fallback exists to add a second model's daily quota, so a fallback
+        # equal to the chat model defeats it and only drains the chat.
         if fallback and fallback == settings.GROQ_MODEL:
             logger.warning(
                 "GROQ_DISCOVERY_FALLBACK_MODEL is the chat model %s: discovery "
