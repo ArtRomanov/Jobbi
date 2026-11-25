@@ -14,17 +14,23 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1 import chat as chat_api
+from app.core.config import get_settings
 from app.models.chat_change_card import ChatChangeCard
 from app.models.chat_message import ChatMessage
 from app.models.cv import Cv
-from app.services import cv_service
+from app.services import chat_service, cv_service
 from app.services.chat_card_service import (
     CARD_NOTE_HEADER,
     REMOVED_TEXT_LABEL,
     apply_card_edit,
     normalize_newlines,
 )
-from app.services.chat_tools import MALFORMED_CALL_NOTE, parse_propose_cv_edit
+from app.services.chat_tools import (
+    MALFORMED_CALL_NOTE,
+    PROPOSE_CV_EDIT_TOOL,
+    REJECTED_CALLS_NOTE,
+    parse_propose_cv_edit,
+)
 
 APPS = "/api/v1/applications"
 
@@ -200,6 +206,13 @@ async def _cv_content(client: httpx.AsyncClient, s: dict[str, str]) -> dict:
         {"op": "insert", "after": "y", "position": "start"},
         {"op": "insert", "after": "y", "position": "end"},
         {"op": "insert", "after": "y", "position": "after_line", "anchor": "x"},
+        # gpt-oss fills fields an op does not use; replace/remove ignore them.
+        {"op": "replace", "before": "x", "after": "y", "position": None},
+        {"op": "replace", "before": "x", "after": "y", "position": ""},
+        {"op": "replace", "before": "x", "after": "y", "position": "none"},
+        {"op": "replace", "before": "x", "after": "y", "anchor": None},
+        {"op": "remove", "before": "x", "after": None, "position": ""},
+        {"op": "insert", "before": None, "after": "y", "position": "end"},
     ],
 )
 def test_valid_calls_parse(args: dict) -> None:
@@ -219,12 +232,34 @@ def test_valid_calls_parse(args: dict) -> None:
         json.dumps({"op": "insert", "after": "", "position": "end"}),
         json.dumps({"op": "insert", "after": "y"}),
         json.dumps({"op": "insert", "after": "y", "position": "middle"}),
+        json.dumps({"op": "insert", "after": "y", "position": ""}),
+        json.dumps({"op": "insert", "after": "y", "position": None}),
+        json.dumps({"op": None, "before": "x"}),
         json.dumps({"op": "insert", "after": "y", "position": "after_line"}),
         json.dumps({"op": "replace", "before": "x" * 20_001, "after": "y"}),
     ],
 )
 def test_malformed_calls_do_not_parse(raw: str) -> None:
     assert parse_propose_cv_edit("propose_cv_edit", raw) is None
+
+
+def test_replace_ignores_position_and_anchor() -> None:
+    raw = json.dumps(
+        {"op": "replace", "before": "x", "after": "y", "position": "", "anchor": "z"}
+    )
+    edit = parse_propose_cv_edit("propose_cv_edit", raw)
+    assert edit is not None
+    assert (edit.position, edit.anchor_text) == (None, None)
+
+
+def test_tool_schema_has_no_enums_and_allows_null_optional_fields() -> None:
+    """Groq fails the whole reply on a schema mismatch: values are checked
+    server-side per op instead (enums and per-op rules live in pydantic)."""
+    params = PROPOSE_CV_EDIT_TOOL["function"]["parameters"]
+    assert "enum" not in json.dumps(params)
+    assert params["required"] == ["op"]
+    for field in ("before", "after", "position", "anchor"):
+        assert params["properties"][field]["type"] == ["string", "null"]
 
 
 def test_other_tool_name_does_not_parse() -> None:
@@ -997,17 +1032,166 @@ async def _send_failing(
     return _events(resp.text)
 
 
-async def test_groq_tool_use_failed_becomes_inline_error(
-    client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
+SCHEMA_ERROR = (
+    "Tool call validation failed: parameters for tool propose_cv_edit did not "
+    "match schema: errors: [`/position`: value must be one of 'start', 'end', "
+    "'after_line']"
+)
+FAILED_GENERATION = "SECRET-CV-LINE in the model's raw output"
+TOOL_USE_FAILED = {
+    "code": "tool_use_failed",
+    "message": SCHEMA_ERROR,
+    "failed_generation": FAILED_GENERATION,
+}
+
+
+class _ScriptedGroq(_FakeGroq):
+    """One scripted response per request: chunks, then an error body or None."""
+
+    def __init__(self, *script: tuple[list[Any], object | None]) -> None:
+        super().__init__([])
+        self.script = list(script)
+
+    async def _create(self, **kwargs: Any) -> AsyncIterator[Any]:
+        self.calls.append(kwargs)
+        chunks, body = self.script[len(self.calls) - 1]
+
+        async def _gen() -> AsyncIterator[Any]:
+            for chunk in chunks:
+                yield chunk
+            if body is not None:
+                raise groq.APIError(
+                    "boom", httpx.Request("POST", "http://groq.test"), body=body
+                )
+
+        return _gen()
+
+
+async def test_tool_use_failed_retries_once_with_the_schema_error(
+    client: httpx.AsyncClient,
+    setup: dict[str, str],
+    db_session: AsyncSession,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    fake = _FailingGroq([_chunk("Let me fix that.")], {"code": "tool_use_failed"})
+    fake = _ScriptedGroq(
+        ([_chunk("Let me fix that.")], TOOL_USE_FAILED),
+        (_call_chunks(0, EDIT), None),
+    )
 
     events = await _send_failing(client, setup, fake)
 
+    assert [name for name, _ in events] == ["token", "cards", "done"]
+    assert len(events[1][1]) == 1
+    assert await _card_count(db_session) == 1
+    assert len(fake.calls) == 2
+    retry = fake.calls[1]
+    assert retry["tool_choice"] == "required"
+    assert retry["messages"][-2] == {"role": "assistant", "content": "Let me fix that."}
+    nudge = retry["messages"][-1]
+    assert nudge["role"] == "system"
+    assert SCHEMA_ERROR in nudge["content"]
+    # The user message is stored once; the reply has no failure note.
+    history = await _history(client, setup)
+    assert [m["role"] for m in history] == ["user", "assistant"]
+    assert history[1]["content"] == "Let me fix that."
+    # The warning names the schema error, never the model's raw output.
+    out = capsys.readouterr().out
+    assert "`/position`: value must be one of" in out
+    assert FAILED_GENERATION not in out
+
+
+async def test_tool_use_failed_at_request_start_is_retried(
+    client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
+) -> None:
+    # Before any chunk, the error body is the whole response.
+    fake = _ScriptedGroq(
+        ([], {"error": TOOL_USE_FAILED}), (_call_chunks(0, EDIT), None)
+    )
+
+    events = await _send_failing(client, setup, fake)
+
+    assert [name for name, _ in events] == ["cards", "done"]
+    assert await _card_count(db_session) == 1
+    assert SCHEMA_ERROR in fake.calls[1]["messages"][-1]["content"]
+    # No partial reply: the retry does not add an empty assistant turn.
+    assert fake.calls[1]["messages"][-2]["role"] == "user"
+
+
+@pytest.mark.parametrize(
+    ("text", "language"), [("Edit my CV", "en"), ("Адаптируй CV", "ru")]
+)
+async def test_tool_use_failed_twice_gives_a_clear_note(
+    client: httpx.AsyncClient,
+    setup: dict[str, str],
+    db_session: AsyncSession,
+    text: str,
+    language: str,
+) -> None:
+    fake = _ScriptedGroq(
+        ([_chunk("Let me fix that.")], TOOL_USE_FAILED), ([], TOOL_USE_FAILED)
+    )
+
+    with patch("app.services.groq_client._get_client", return_value=fake):
+        resp = await client.post(
+            f"{APPS}/{setup['app_id']}/chat",
+            json={"content": text},
+            headers=_h(setup["token"]),
+        )
+    events = _events(resp.text)
+
+    assert len(fake.calls) == 2
     assert [name for name, _ in events] == ["token", "token", "cards", "done"]
-    assert events[1][1]["text"] == f"\n\n{MALFORMED_CALL_NOTE}"
-    assert events[2][1] == []
+    note = REJECTED_CALLS_NOTE[language]  # type: ignore[index]
+    assert events[1][1]["text"] == f"\n\n{note}"
+    assert MALFORMED_CALL_NOTE not in resp.text
     assert await _card_count(db_session) == 0
+    history = await _history(client, setup)
+    assert [m["role"] for m in history] == ["user", "assistant"]
+    assert history[1]["content"] == f"Let me fix that.\n\n{note}"
+
+
+async def test_tool_use_failed_retry_skipped_over_budget(
+    client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
+) -> None:
+    fake = _ScriptedGroq(([], TOOL_USE_FAILED), (_call_chunks(0, EDIT), None))
+    budget = get_settings().CHAT_INPUT_TOKEN_BUDGET
+    real = chat_service.request_tokens
+    seen: list[int] = []
+
+    def _over(*args: Any, **kwargs: Any) -> int:
+        seen.append(real(*args, **kwargs))
+        return budget + 1
+
+    with patch.object(chat_service, "request_tokens", _over):
+        events = await _send_failing(client, setup, fake)
+
+    assert seen  # the retry's size was checked against the budget
+    assert len(fake.calls) == 1
+    assert [name for name, _ in events] == ["token", "cards", "done"]
+    assert events[0][1]["text"] == REJECTED_CALLS_NOTE["en"]
+    assert await _card_count(db_session) == 0
+
+
+async def test_retry_fits_the_input_budget(
+    client: httpx.AsyncClient, setup: dict[str, str]
+) -> None:
+    fake = _ScriptedGroq(
+        ([_chunk("Let me fix that.")], TOOL_USE_FAILED), (_call_chunks(0, EDIT), None)
+    )
+    estimates: list[int] = []
+    real = chat_service.request_tokens
+
+    def _spy(*args: Any, **kwargs: Any) -> int:
+        estimates.append(value := real(*args, **kwargs))
+        return value
+
+    with patch.object(chat_service, "request_tokens", _spy):
+        await _send_failing(client, setup, fake)
+
+    retry = fake.calls[1]
+    system, *messages = retry["messages"]
+    assert estimates == [real(system["content"], messages, retry["tools"])]
+    assert estimates[0] <= get_settings().CHAT_INPUT_TOKEN_BUDGET
 
 
 async def test_other_groq_errors_still_end_the_stream_with_error(

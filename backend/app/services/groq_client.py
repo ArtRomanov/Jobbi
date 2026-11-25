@@ -18,11 +18,14 @@ logger = structlog.get_logger()
 class LlmToolCall:
     """One tool call from the model, its JSON arguments not yet validated.
 
-    `name` is "" when Groq rejected the model's tool call (`tool_use_failed`).
+    When Groq rejected the model's tool calls (`tool_use_failed`), one call
+    with `name` "" stands for them all and `rejected` holds Groq's error
+    message (the schema error, e.g. "`/position`: value must be one of ...").
     """
 
     name: str
     arguments: str
+    rejected: str | None = None
 
 
 class LlmRateLimitError(RuntimeError):
@@ -150,6 +153,11 @@ def build_system_prompt(application: Application, cv: Cv | None) -> str:
     return "\n".join(parts)
 
 
+# Groq's schema error names fields and allowed values, not the model's output
+# (that is in `failed_generation`, never read); the cap only bounds the size.
+MAX_REJECTION_CHARS = 500
+
+
 def _is_tool_use_failed(body: object) -> bool:
     """Groq rejects a malformed tool call with code `tool_use_failed`.
 
@@ -160,6 +168,17 @@ def _is_tool_use_failed(body: object) -> bool:
         return False
     error = body.get("error", body)
     return isinstance(error, Mapping) and error.get("code") == "tool_use_failed"
+
+
+def _rejection_message(body: object) -> str:
+    """Groq's `error.message` of a `tool_use_failed` body, capped.
+
+    `failed_generation` (the model's raw output, CV text included) is left out.
+    """
+    error = body.get("error", body) if isinstance(body, Mapping) else None
+    message = error.get("message") if isinstance(error, Mapping) else None
+    text = message if isinstance(message, str) and message else "tool_use_failed"
+    return text[:MAX_REJECTION_CHARS]
 
 
 async def stream_llm_response(
@@ -240,12 +259,13 @@ async def stream_llm_response(
         if not (tools and _is_tool_use_failed(e.body)):
             logger.error("Groq API error", error=str(e))
             raise
-        # The model produced a tool call Groq could not parse: keep the text
-        # streamed so far and report one failed call.
-        logger.warning("Groq tool_use_failed", error=str(e))
-        failed = max(names, default=-1) + 1
-        names[failed] = []
-        arguments[failed] = []
+        # Groq checks the model's tool calls against the tool's JSON schema
+        # and fails the whole generation on a mismatch. Keep the text streamed
+        # so far; the calls are lost, so report one rejected call instead.
+        rejection = _rejection_message(e.body)
+        logger.warning("Groq tool_use_failed", error=rejection)
+        yield LlmToolCall(name="", arguments="", rejected=rejection)
+        return
 
     for index in sorted(names):
         yield LlmToolCall(

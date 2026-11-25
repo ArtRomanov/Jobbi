@@ -38,6 +38,7 @@ from app.services.chat_tools import (
     MALFORMED_CALL_NOTE,
     MAX_CARDS_PER_REPLY,
     PROPOSE_CV_EDIT_TOOL,
+    REJECTED_CALLS_NOTE,
     CvEdit,
     parse_propose_cv_edit,
 )
@@ -257,6 +258,22 @@ FOLLOW_UP_NUDGE = (
 )
 
 
+_RETRY_NUDGE = (
+    "Your propose_cv_edit calls above were rejected, so none of them reached "
+    "the user. The error was: {error}\n"
+    "Make the same edits again, one propose_cv_edit call per edit, with valid "
+    'arguments: `op` is exactly "replace", "insert" or "remove". replace: '
+    "`before` and `after`. remove: `before`. insert: `after` and `position`, "
+    'exactly "start", "end" or "after_line" (with after_line also `anchor`). '
+    "Leave out the fields an op does not use. Do not repeat your earlier text."
+)
+
+
+def retry_nudge(rejection: str) -> str:
+    """The system message for the one retry after Groq's `tool_use_failed`."""
+    return _RETRY_NUDGE.format(error=rejection)
+
+
 def drop_unsupported_edits(
     edits: list[CvEdit], *, cv: str, user_texts: list[str], job_post: str
 ) -> tuple[list[CvEdit], list[list[str]]]:
@@ -309,26 +326,26 @@ def _validate_calls(calls: list[LlmToolCall]) -> tuple[list[CvEdit], int]:
     return edits, failed
 
 
-async def _stream_follow_up(
+async def _stream_second_call(
     system_prompt: str,
-    follow_up: list[dict[str, str]],
+    messages: list[dict[str, str]],
     tools: list[dict[str, Any]],
-    reply: str,
+    *,
     has_text: bool,
+    tool_choice: Literal["auto", "required"],
     calls: list[LlmToolCall],
+    event: str,
 ) -> AsyncIterator[str]:
-    """Stream the nudged second call; its tool calls are added to `calls`.
+    """Stream a nudged second call (follow-up or retry) into the same reply.
 
-    A rate limit or size error here keeps the first reply: the follow-up
-    request comes right after the first one, in the same per-minute quota.
+    Its tool calls are added to `calls`. A rate limit or size error here keeps
+    the first reply: the second request comes right after the first one, in
+    the same per-minute quota.
     """
     separator = "\n\n" if has_text else ""
-    # The reply announced edits: this time a tool call is required. An
-    # empty reply announced nothing, so the model may still just answer.
-    tool_choice: Literal["auto", "required"] = "required" if reply else "auto"
     try:
         async for item in stream_llm_response(
-            system_prompt, follow_up, tools=tools, tool_choice=tool_choice
+            system_prompt, messages, tools=tools, tool_choice=tool_choice
         ):
             if isinstance(item, LlmToolCall):
                 calls.append(item)
@@ -337,7 +354,22 @@ async def _stream_follow_up(
             separator = ""
             yield chunk
     except (LlmRateLimitError, LlmRequestTooLargeError) as e:
-        logger.warning("chat_follow_up_failed", error_type=type(e).__name__)
+        logger.warning(event, error_type=type(e).__name__)
+
+
+def _second_messages(
+    messages: list[dict[str, str]], reply: str, nudge: str
+) -> list[dict[str, str]]:
+    """The trimmed messages, the reply so far (if any), then the nudge."""
+    second = [*messages]
+    if reply:
+        second.append({"role": "assistant", "content": reply})
+    second.append({"role": "system", "content": nudge})
+    return second
+
+
+def _rejection(calls: list[LlmToolCall]) -> str | None:
+    return next((c.rejected for c in calls if c.rejected is not None), None)
 
 
 async def stream_chat_response(
@@ -425,25 +457,61 @@ async def _stream_reply(
             RATE_LIMITED_DETAIL[language], reason="groq_rate_limit"
         ) from e
 
-    if tools and needs_follow_up("".join(full_response), calls):
+    rejection = _rejection(calls) if tools else None
+    if tools and rejection is not None:
+        # Groq rejected the edit calls against the tool schema, failing the
+        # whole generation. One retry, never more, told the exact error; it
+        # reuses the trimmed messages and is skipped if it would not fit.
+        calls = []
+        reply = "".join(full_response).strip()
+        retry = _second_messages(messages, reply, retry_nudge(rejection))
+        estimate = request_tokens(system_prompt, retry, tools)
+        if estimate > budget:
+            logger.info("chat_retry_skipped", estimated_tokens=estimate, budget=budget)
+            calls.append(LlmToolCall(name="", arguments="", rejected=rejection))
+        else:
+            logger.info("chat_tool_use_retry", error=rejection)
+            # The model meant to propose edits: this time a call is required.
+            async for chunk in _stream_second_call(
+                system_prompt,
+                retry,
+                tools,
+                has_text=bool(full_response),
+                tool_choice="required",
+                calls=calls,
+                event="chat_retry_failed",
+            ):
+                full_response.append(chunk)
+                yield chunk
+    elif tools and needs_follow_up("".join(full_response), calls):
         # One nudge, never more: the model announced edits but made none.
         # It reuses the trimmed messages, and is skipped if it would not fit.
-        follow_up = [*messages]
-        if reply := "".join(full_response).strip():
-            follow_up.append({"role": "assistant", "content": reply})
-        follow_up.append({"role": "system", "content": FOLLOW_UP_NUDGE})
+        reply = "".join(full_response).strip()
+        follow_up = _second_messages(messages, reply, FOLLOW_UP_NUDGE)
         estimate = request_tokens(system_prompt, follow_up, tools)
         if estimate > budget:
             logger.info(
                 "chat_follow_up_skipped", estimated_tokens=estimate, budget=budget
             )
         else:
-            async for chunk in _stream_follow_up(
-                system_prompt, follow_up, tools, reply, bool(full_response), calls
+            # The reply announced edits: this time a tool call is required.
+            # An empty reply announced nothing, so the model may still answer.
+            async for chunk in _stream_second_call(
+                system_prompt,
+                follow_up,
+                tools,
+                has_text=bool(full_response),
+                tool_choice="required" if reply else "auto",
+                calls=calls,
+                event="chat_follow_up_failed",
             ):
                 full_response.append(chunk)
                 yield chunk
 
+    # A rejection left after the retry (or in a follow-up) gets one clear
+    # note for the whole reply instead of a malformed-call line.
+    rejected = any(c.rejected is not None for c in calls)
+    calls = [c for c in calls if c.rejected is None]
     edits, failed = _validate_calls(calls) if cv is not None else ([], len(calls))
     left_out: list[list[str]] = []
     if cv is not None and edits:
@@ -453,9 +521,11 @@ async def _stream_reply(
             user_texts=[m.content for m in history if m.role == "user"],
             job_post=application.notes or "",
         )
-    notes = [MALFORMED_CALL_NOTE] * failed + [
-        unsupported_names_note(names, language) for names in left_out
-    ]
+    notes = (
+        [REJECTED_CALLS_NOTE[language]] * rejected
+        + [MALFORMED_CALL_NOTE] * failed
+        + [unsupported_names_note(names, language) for names in left_out]
+    )
     streamed = "".join(full_response)
     marked = mark_left_out_items(streamed, left_out, language)
     note = ""

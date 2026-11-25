@@ -13,9 +13,19 @@ from typing import Any, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.schemas.cv import CV_CONTENT_MAX_CHARS
+from app.services.chat_guard_notes import Language
 
 PROPOSE_CV_EDIT = "propose_cv_edit"
 MALFORMED_CALL_NOTE = "Could not prepare one suggested change."
+# Groq rejected the model's edit calls twice (`tool_use_failed`): no edit of
+# that reply survives, so the note speaks for all of them.
+REJECTED_CALLS_NOTE: dict[Language, str] = {
+    "en": "The AI produced an invalid edit. Please try again or rephrase.",
+    "ru": (
+        "AI сформировал некорректную правку. Попробуйте ещё раз или "
+        "переформулируйте запрос."
+    ),
+}
 
 # Bounds one reply; extra calls are dropped with the malformed note.
 MAX_CARDS_PER_REPLY = 10
@@ -32,26 +42,31 @@ PROPOSE_CV_EDIT_TOOL: dict[str, Any] = {
             "passages exactly as they appear in the CV block, character for "
             "character."
         ),
+        # Groq checks every call against this schema and fails the whole reply
+        # (`tool_use_failed`) on a mismatch, so the schema only says what it
+        # must: field types, nulls allowed, no enums. gpt-oss fills unused
+        # fields (`"position": ""` on a replace); `_ProposeCvEditArgs` checks
+        # the values per op instead, failing only that one call.
         "parameters": {
             "type": "object",
             "properties": {
                 "op": {
                     "type": "string",
-                    "enum": ["replace", "insert", "remove"],
                     "description": (
-                        "replace: swap `before` for `after`. remove: delete "
-                        "`before`. insert: add `after` as new text at `position`."
+                        'Exactly one of "replace", "insert", "remove". replace: '
+                        "swap `before` for `after`. remove: delete `before`. "
+                        "insert: add `after` as new text at `position`."
                     ),
                 },
                 "before": {
-                    "type": "string",
+                    "type": ["string", "null"],
                     "description": (
                         "replace/remove: the exact passage from the CV, short but "
                         "appearing only once in it."
                     ),
                 },
                 "after": {
-                    "type": "string",
+                    "type": ["string", "null"],
                     "description": (
                         "replace/insert: the new text. Every fact in it (skill, "
                         "tool, employer, date, number, achievement) must already "
@@ -60,15 +75,16 @@ PROPOSE_CV_EDIT_TOOL: dict[str, Any] = {
                     ),
                 },
                 "position": {
-                    "type": "string",
-                    "enum": ["start", "end", "after_line"],
+                    "type": ["string", "null"],
                     "description": (
-                        "insert only: at the start of the CV, at the end, or on a "
-                        "new line after the line quoted in `anchor`."
+                        'insert only, exactly one of "start", "end", "after_line": '
+                        "at the start of the CV, at the end, or on a new line "
+                        "after the line quoted in `anchor`. Leave it out for "
+                        "replace and remove."
                     ),
                 },
                 "anchor": {
-                    "type": "string",
+                    "type": ["string", "null"],
                     "description": (
                         "insert with position after_line: an exact, unique quote "
                         "of the CV line the new text goes after."
@@ -78,6 +94,13 @@ PROPOSE_CV_EDIT_TOOL: dict[str, Any] = {
             "required": ["op"],
         },
     },
+}
+
+Position = Literal["start", "end", "after_line"]
+_POSITIONS: dict[str, Position] = {
+    "start": "start",
+    "end": "end",
+    "after_line": "after_line",
 }
 
 _Text = Field(default=None, max_length=CV_CONTENT_MAX_CHARS)
@@ -91,7 +114,8 @@ class _ProposeCvEditArgs(BaseModel):
     op: Literal["replace", "insert", "remove"]
     before: str | None = _Text
     after: str | None = _Text
-    position: Literal["start", "end", "after_line"] | None = None
+    # Any string: replace and remove ignore it, insert checks it below.
+    position: str | None = Field(default=None, max_length=32)
     anchor: str | None = _Text
 
     @model_validator(mode="after")
@@ -106,7 +130,7 @@ class _ProposeCvEditArgs(BaseModel):
                 if not _has_text(self.before):
                     raise ValueError("remove needs a non-empty before")
             case "insert":
-                if not _has_text(self.after) or self.position is None:
+                if not _has_text(self.after) or self.position not in _POSITIONS:
                     raise ValueError("insert needs a non-empty after and a position")
                 if self.position == "after_line" and not _has_text(self.anchor):
                     raise ValueError("insert after_line needs an anchor")
@@ -124,7 +148,7 @@ class CvEdit:
     op: Literal["replace", "insert", "remove"]
     before_text: str
     after_text: str
-    position: Literal["start", "end", "after_line"] | None
+    position: Position | None
     anchor_text: str | None
 
 
@@ -156,12 +180,13 @@ def parse_propose_cv_edit(name: str, arguments: str) -> CvEdit | None:
                 anchor_text=None,
             )
         case "insert":
-            is_after_line = args.position == "after_line"
+            position = _POSITIONS[args.position or ""]
+            is_after_line = position == "after_line"
             return CvEdit(
                 op="insert",
                 before_text="",
                 after_text=args.after or "",
-                position=args.position,
+                position=position,
                 # The anchor names a line; surrounding whitespace is not part of it.
                 anchor_text=(args.anchor or "").strip() if is_after_line else None,
             )
