@@ -92,7 +92,8 @@ class Vacancy(Base):
     eval_attempts: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=sql_text("0")
     )
-    # Cards from a source's first scan are never alerted.
+    # Cards from a source's first scan: alerted as a per-source summary, not
+    # in the hourly message (backlog #30; rows from before it are handled).
     from_initial_scan: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=false()
     )

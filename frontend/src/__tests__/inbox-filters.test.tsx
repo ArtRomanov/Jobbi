@@ -197,4 +197,46 @@ describe("Inbox filters", () => {
     ).toBeInTheDocument();
     expect(within(select).queryByRole("option", { name: "@frontend_jobs" })).not.toBeInTheDocument();
   });
+
+  it("starts filtered by the source in ?source= (link from the Telegram first-scan summary)", async () => {
+    server.use(
+      http.get(SOURCES_URL, () =>
+        HttpResponse.json({
+          ...mockVacancySourcesEmpty,
+          sources: [{ ...mockVacancySource, id: "src-r", key: "telegram:relocats", display_name: "IT Relocation" }],
+        }),
+      ),
+    );
+    const requests = recordListRequests();
+    renderWithProviders(<InboxPage />, { initialEntries: ["/inbox?source=telegram%3Arelocats"] });
+    await screen.findByRole("heading", { name: "Senior React Developer" });
+
+    expect(requests[0]?.get("source")).toBe("telegram:relocats");
+    const select = screen.getByRole("combobox", { name: "Source" });
+    expect(select).toHaveValue("telegram:relocats");
+    expect(await within(select).findByRole("option", { name: "IT Relocation" })).toBeInTheDocument();
+    expect(within(select).getAllByRole("option", { selected: true }).map((option) => option.textContent)).toEqual([
+      "IT Relocation",
+    ]);
+  });
+
+  it("keeps a ?source= key that is not in the source list selectable", async () => {
+    const requests = recordListRequests();
+    renderWithProviders(<InboxPage />, { initialEntries: ["/inbox?source=telegram:gone_channel"] });
+    await screen.findByRole("heading", { name: "Senior React Developer" });
+
+    expect(requests[0]?.get("source")).toBe("telegram:gone_channel");
+    const select = screen.getByRole("combobox", { name: "Source" });
+    expect(select).toHaveValue("telegram:gone_channel");
+    expect(within(select).getByRole("option", { name: "telegram:gone_channel (removed)" })).toBeInTheDocument();
+  });
+
+  it("ignores an empty ?source=", async () => {
+    const requests = recordListRequests();
+    renderWithProviders(<InboxPage />, { initialEntries: ["/inbox?source="] });
+    await screen.findByRole("heading", { name: "Senior React Developer" });
+
+    expect(requests[0]?.get("source")).toBeNull();
+    expect(screen.getByRole("combobox", { name: "Source" })).toHaveValue("");
+  });
 });
