@@ -3,9 +3,14 @@ import { DEFAULT_INBOX_FILTERS } from "@/features/inbox-filters";
 import type { InboxFilterValues, InboxStateFilter } from "@/features/inbox-filters";
 import { SOURCE_SEARCH_PARAM, VACANCIES_PER_PAGE } from "./constants";
 
+/** The non-blank `?source=` key (link from the Telegram first-scan summary), else null. */
+export function getSourceParam(searchParams: URLSearchParams): string | null {
+  return searchParams.get(SOURCE_SEARCH_PARAM)?.trim() || null;
+}
+
 /** Filters the Inbox opens with: the defaults, plus the `?source=` key when the URL has one. */
 export function initialFilters(searchParams: URLSearchParams): InboxFilterValues {
-  const source = searchParams.get(SOURCE_SEARCH_PARAM)?.trim();
+  const source = getSourceParam(searchParams);
   return source ? { ...DEFAULT_INBOX_FILTERS, source } : DEFAULT_INBOX_FILTERS;
 }
 

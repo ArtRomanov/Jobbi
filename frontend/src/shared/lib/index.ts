@@ -6,3 +6,6 @@ export { isSafeExternalUrl } from "./is-safe-external-url";
 export { isSafeCvLinkUrl } from "./is-safe-cv-link-url";
 export { triggerFileDownload } from "./trigger-file-download";
 export { toSafeFileName } from "./to-safe-file-name";
+export { usePersistentBoolean } from "./use-persistent-boolean";
+export { useCollapsibleSection } from "./use-collapsible-section";
+export type { CollapsibleSection } from "./use-collapsible-section";
