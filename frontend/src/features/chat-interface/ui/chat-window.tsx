@@ -26,6 +26,10 @@ export function ChatWindow({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingContent]);
 
+  // Only the newest message's cards can be decided. The optimistic user
+  // message is appended on send, so older cards go outdated at once.
+  const latestMessageId = messages[messages.length - 1]?.id;
+
   return (
     <div
       style={{
@@ -83,6 +87,7 @@ export function ChatWindow({
           <CardList
             applicationId={applicationId}
             cards={msg.cards}
+            outdated={msg.id !== latestMessageId}
             onCardUpdated={onCardUpdated}
           />
         </Fragment>

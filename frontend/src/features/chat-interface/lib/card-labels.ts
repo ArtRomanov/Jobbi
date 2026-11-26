@@ -34,6 +34,12 @@ export function getInsertLabel(
   }
 }
 
+/**
+ * Shown instead of the buttons on a pending card whose reply is no longer the
+ * newest message: only the latest reply's cards can be decided.
+ */
+export const CARD_OUTDATED_LABEL = "Outdated — newer messages below";
+
 /** The card's title, numbered within its message: "CV text — change 2". */
 export function getCardTitle(number: number): string {
   return `CV text — change ${number}`;
@@ -46,3 +52,6 @@ export function getCardActionLabel(
 ): string {
   return `${action} change ${number}`;
 }
+
+/** Visible prefix of a card's warning (readable without colour). */
+export const CARD_WARNING_PREFIX = "Check before accepting: ";

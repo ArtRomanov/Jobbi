@@ -47,9 +47,21 @@ def init_sentry() -> None:
     )
 
 
+def warn_chat_provider() -> None:
+    """Log (not crash) a chat provider that cannot work; the chat says so too."""
+    settings = get_settings()
+    if settings.CHAT_PROVIDER == "gemini" and not settings.GEMINI_API_KEY:
+        structlog.get_logger().error(
+            "chat_provider_not_configured",
+            provider=settings.CHAT_PROVIDER,
+            reason="gemini_api_key_missing",
+        )
+
+
 def create_app() -> FastAPI:
     configure_logging()
     init_sentry()
+    warn_chat_provider()
 
     settings = get_settings()
     app = FastAPI(title="Jobbi", version="0.1.0")

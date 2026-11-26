@@ -7,6 +7,8 @@ export const CARD_ERROR_MESSAGES = {
   PASSAGE_NOT_UNIQUE:
     "This text appears more than once in the CV. Ask the assistant to quote a longer part.",
   TOO_LONG: "This change would make the CV longer than 20 000 characters.",
+  CARD_OUTDATED:
+    "This change is outdated: only the latest reply's changes can be applied.",
   ACCEPT_FAILED: "Could not apply this change. Please try again.",
   REJECT_FAILED: "Could not reject this change. Please try again.",
 } as const;
@@ -16,6 +18,7 @@ export type CardErrorCode =
   | "PASSAGE_NOT_UNIQUE"
   | "TOO_LONG"
   | "CARD_DECIDED"
+  | "CARD_OUTDATED"
   | "CV_BUSY";
 
 const KNOWN_CODES: ReadonlySet<string> = new Set<CardErrorCode>([
@@ -23,6 +26,7 @@ const KNOWN_CODES: ReadonlySet<string> = new Set<CardErrorCode>([
   "PASSAGE_NOT_UNIQUE",
   "TOO_LONG",
   "CARD_DECIDED",
+  "CARD_OUTDATED",
   "CV_BUSY",
 ]);
 

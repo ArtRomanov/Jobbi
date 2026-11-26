@@ -13,6 +13,7 @@ from app.models.application import Application
 from app.models.user import User
 from app.schemas.chat import ChangeCardRead, ChatMessageRead, ChatRequest
 from app.services.application_service import get_application
+from app.services.chat_budget import ChatUserError
 from app.services.chat_card_service import (
     CardError,
     CardNotFoundError,
@@ -22,6 +23,7 @@ from app.services.chat_card_service import (
 )
 from app.services.chat_service import (
     CardsReady,
+    ReplyText,
     clear_chat_history,
     get_chat_history,
     stream_chat_response,
@@ -103,10 +105,19 @@ async def send_message(
                     # on the stream must end with `done`, never `error`.
                     yield f"event: cards\ndata: {json.dumps(_cards_json(item))}\n\n"
                     continue
+                if isinstance(item, ReplyText):
+                    # The whole reply as saved: replaces the text streamed so far.
+                    data = json.dumps({"text": item.text})
+                    yield f"event: reply\ndata: {data}\n\n"
+                    continue
                 data = json.dumps({"text": item})
                 yield f"event: token\ndata: {data}\n\n"
 
             yield f"event: done\ndata: {json.dumps({'status': 'complete'})}\n\n"
+        except ChatUserError as e:
+            # Raised before the reply is saved: the user can act on this text.
+            logger.warning("chat_stream_refused", reason=e.reason)
+            yield f"event: error\ndata: {json.dumps({'detail': e.detail})}\n\n"
         # Broad on purpose: any failure must end the stream with a frame the
         # client understands, and its text must not reach the client.
         except Exception as e:  # noqa: BLE001 - logged by type, never sent
@@ -160,7 +171,11 @@ async def _decide_card(
     response_model=ChangeCardRead,
     responses={
         404: {"description": "No such application or card for this user"},
-        409: {"description": "CARD_DECIDED, CARD_STALE, PASSAGE_NOT_UNIQUE or CV_BUSY"},
+        409: {
+            "description": (
+                "CARD_DECIDED, CARD_STALE, CARD_OUTDATED, PASSAGE_NOT_UNIQUE or CV_BUSY"
+            )
+        },
         422: {"description": "TOO_LONG: the CV would exceed 20 000 characters"},
     },
 )
@@ -173,9 +188,11 @@ async def accept_change_card(
     """Apply a pending CV change card to the linked CV (bumps the CV version).
 
     409 codes: CARD_DECIDED (already accepted or rejected); CARD_STALE (the card
-    is already stale, or the passage / CV is gone, and the card becomes stale);
+    is already stale, or the passage / CV is gone and the change cannot be
+    re-aimed at the current text, and the card becomes stale);
     PASSAGE_NOT_UNIQUE (card stays pending); CV_BUSY (the CV kept changing
-    during the Accept, card stays pending, try again).
+    during the Accept, card stays pending, try again); CARD_OUTDATED (a newer
+    chat message exists: only the newest reply's cards can be decided).
     """
     application = await _get_user_application(application_id, current_user, db)
     return await _decide_card(application, card_id, db, accept=True)
@@ -186,7 +203,7 @@ async def accept_change_card(
     response_model=ChangeCardRead,
     responses={
         404: {"description": "No such application or card for this user"},
-        409: {"description": "CARD_DECIDED"},
+        409: {"description": "CARD_DECIDED or CARD_OUTDATED"},
     },
 )
 async def reject_change_card(
@@ -195,6 +212,9 @@ async def reject_change_card(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ChangeCardRead:
-    """Reject a pending (or stale) CV change card; the CV is not touched."""
+    """Reject a pending (or stale) CV change card; the CV is not touched.
+
+    409 codes: CARD_DECIDED; CARD_OUTDATED (a newer chat message exists).
+    """
     application = await _get_user_application(application_id, current_user, db)
     return await _decide_card(application, card_id, db, accept=False)

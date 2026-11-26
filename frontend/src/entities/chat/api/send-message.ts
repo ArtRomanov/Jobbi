@@ -6,6 +6,12 @@ const baseUrl =
 
 export interface ChatStreamHandlers {
   onToken: (text: string) => void;
+  /**
+   * The whole reply as saved, replacing the text streamed so far. Sent at most
+   * once, before `cards`, when the server changed text it already streamed
+   * (the fact guard marked an item it left out).
+   */
+  onReply: (text: string) => void;
   /** CV change cards of the reply, sent after the text and before `done`. */
   onCards: (cards: ChangeCard[]) => void;
   onDone: () => void;
@@ -34,13 +40,14 @@ function readField(data: string, key: "text" | "detail"): string {
  *
  * Uses raw fetch() instead of apiClient because the response is an SSE stream,
  * not JSON. Each SSE frame has an `event:` line and a `data:` line.
- * Events: `token` (`{"text"}`), `cards` (JSON `ChangeCard[]`, always sent
- * before `done`, possibly `[]`), `done`, `error` (`{"detail"}`).
+ * Events: `token` (`{"text"}`), `reply` (`{"text"}`: the whole reply, replaces
+ * what was streamed), `cards` (JSON `ChangeCard[]`, always sent before
+ * `done`, possibly `[]`), `done`, `error` (`{"detail"}`).
  */
 export function sendChatMessage(
   applicationId: string,
   content: string,
-  { onToken, onCards, onDone, onError }: ChatStreamHandlers,
+  { onToken, onReply, onCards, onDone, onError }: ChatStreamHandlers,
 ): AbortController {
   const controller = new AbortController();
 
@@ -102,6 +109,9 @@ export function sendChatMessage(
           switch (eventType) {
             case "token":
               onToken(readField(data, "text"));
+              break;
+            case "reply":
+              onReply(readField(data, "text"));
               break;
             case "cards":
               onCards(parseCardsEvent(data));

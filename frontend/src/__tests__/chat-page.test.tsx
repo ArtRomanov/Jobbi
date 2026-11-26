@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { useLocation } from "react-router-dom";
 import { delay, http, HttpResponse } from "msw";
 import { ChatPage } from "@/pages/chat/ui/chat-page";
-import { mockChangeCards } from "./mocks/handlers";
+import { mockApplicationDetail, mockChangeCards } from "./mocks/handlers";
 import { server } from "./setup";
 import { renderWithProviders } from "./utils";
 
@@ -12,6 +12,7 @@ const BASE_URL = "http://localhost:8000";
 const CARD_TITLE = /^CV text — change \d+$/;
 const ACCEPT = /^Accept change \d+$/;
 const REJECT = /^Reject change \d+$/;
+const OUTDATED = "Outdated — newer messages below";
 
 function renderChatPage(applicationId: string) {
   return renderWithProviders(<ChatPage />, {
@@ -69,6 +70,51 @@ describe("ChatPage", () => {
         screen.getByText(/No messages yet/),
       ).toBeInTheDocument();
     });
+  });
+});
+
+describe("ChatPage 'Structure my CV' quick action", () => {
+  const STRUCTURE_PROMPT =
+    "Structure my CV: add Markdown headings, sections and bullets without changing the wording.";
+
+  function withLinkedCv(): void {
+    server.use(
+      http.get(`${BASE_URL}/api/v1/applications/:id`, () =>
+        HttpResponse.json({ ...mockApplicationDetail, cv_id: "cv-1" }),
+      ),
+    );
+  }
+
+  it("is not offered when no CV is linked", async () => {
+    renderChatPage("app-1");
+    await screen.findByText(/Acme Corp — Senior Engineer/);
+    expect(screen.queryByRole("button", { name: "Structure my CV" })).not.toBeInTheDocument();
+  });
+
+  it("sends one normal chat message and waits while it streams", async () => {
+    const posted: string[] = [];
+    withLinkedCv();
+    server.use(
+      // The reply never arrives: the stream is still running
+      http.post(`${BASE_URL}/api/v1/applications/:id/chat`, async ({ request }) => {
+        const body = (await request.json()) as { content: string };
+        posted.push(body.content);
+        await delay("infinite");
+        return new HttpResponse(null);
+      }),
+    );
+    const user = userEvent.setup();
+    renderChatPage("app-1");
+
+    const button = await screen.findByRole("button", { name: "Structure my CV" });
+    await user.click(button);
+
+    // Shown as the user's own message, like a typed one
+    expect(await screen.findByText(STRUCTURE_PROMPT)).toBeInTheDocument();
+    await waitFor(() => expect(posted).toEqual([STRUCTURE_PROMPT]));
+    expect(button).toBeDisabled();
+    await user.click(button);
+    expect(posted).toHaveLength(1);
   });
 });
 
@@ -216,6 +262,59 @@ describe("ChatPage change cards", () => {
     expect(within(cards[1]!).getByRole("button", { name: ACCEPT })).toBeEnabled();
   });
 
+  it("only the newest message's cards can be decided; older ones say outdated", async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/v1/applications/:id/chat`, () =>
+        HttpResponse.json([
+          userMessage,
+          {
+            ...assistantMessage,
+            cards: [
+              mockChangeCards.replace,
+              { ...mockChangeCards.remove, state: "accepted" },
+            ],
+          },
+          { ...userMessage, id: "msg-3", content: "And the summary?" },
+          // The newest reply has no cards: every card above is outdated
+          { ...assistantMessage, id: "msg-4", content: "Looks fine.", cards: [] },
+        ]),
+      ),
+    );
+    renderChatPage("app-1");
+
+    await screen.findByText("Looks fine.");
+    const [pending, accepted] = screen.getAllByRole("article", { name: CARD_TITLE });
+    expect(within(pending!).getByText(OUTDATED)).toBeInTheDocument();
+    expect(within(pending!).queryByRole("button")).not.toBeInTheDocument();
+    // Decided cards keep their own label, without the outdated note
+    expect(within(accepted!).getByText("Accepted")).toBeInTheDocument();
+    expect(within(accepted!).queryByText(OUTDATED)).not.toBeInTheDocument();
+  });
+
+  it("makes the cards outdated as soon as a new message is sent, while it streams", async () => {
+    server.use(
+      http.get(`${BASE_URL}/api/v1/applications/:id/chat`, () =>
+        HttpResponse.json([userMessage, assistantMessage]),
+      ),
+      // The reply never arrives: the stream is still running
+      http.post(`${BASE_URL}/api/v1/applications/:id/chat`, async () => {
+        await delay("infinite");
+        return new HttpResponse(null);
+      }),
+    );
+    const user = userEvent.setup();
+    renderChatPage("app-1");
+    await screen.findByText("Here are two edits.");
+    expect(screen.getAllByRole("button", { name: ACCEPT })).toHaveLength(2);
+
+    await user.type(screen.getByRole("textbox", { name: "Chat message" }), "More");
+    await user.keyboard("{Enter}");
+
+    expect(await screen.findAllByText(OUTDATED)).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: ACCEPT })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: REJECT })).not.toBeInTheDocument();
+  });
+
   /**
    * GET /chat answers `[]` until the message is sent, then `afterSend`;
    * POST /chat streams `frames`. Returns the number of GET calls so far.
@@ -279,6 +378,41 @@ describe("ChatPage change cards", () => {
     await userEvent.setup().click(within(card).getByRole("button", { name: REJECT }));
     expect(await screen.findByText("Rejected")).toBeInTheDocument();
     expect(screen.getAllByRole("article", { name: CARD_TITLE })).toHaveLength(1);
+  });
+
+  it("replaces the streamed text with the `reply` event before the cards", async () => {
+    let posted = false;
+    server.use(
+      http.get(`${BASE_URL}/api/v1/applications/:id/chat`, async () => {
+        if (!posted) return HttpResponse.json([]);
+        // The reload never lands: what shows comes from the stream alone
+        await new Promise<never>(() => undefined);
+        return HttpResponse.json([]);
+      }),
+      http.post(`${BASE_URL}/api/v1/applications/:id/chat`, () => {
+        posted = true;
+        return new HttpResponse(
+          sseBody([
+            tokenFrame("1. Add REST API"),
+            `event: reply\ndata: ${JSON.stringify({
+              text: "1. Add REST API (not proposed — see below)\n\nLeft out one change.",
+            })}\n\n`,
+            cardsFrame([mockChangeCards.insert]),
+            DONE,
+          ]),
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      }),
+    );
+    renderChatPage("app-1");
+    await send("Tailor my CV");
+
+    expect(
+      // "1. " is Markdown: the reply renders as a numbered list item
+      await screen.findByText(/Add REST API \(not proposed — see below\)/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Left out one change\./)).toBeInTheDocument();
+    expect(screen.getByRole("article", { name: CARD_TITLE })).toBeInTheDocument();
   });
 
   it("keeps a card decided while the history reload was in flight", async () => {
@@ -362,11 +496,12 @@ describe("ChatPage change cards", () => {
     );
     await send("Hi");
 
-    await waitFor(() =>
-      expect(
-        container.querySelector('[data-message-role="assistant"]'),
-      ).toHaveTextContent('Line one with "quotes"'),
-    );
+    // The newline renders as a Markdown line break (<br>), not a space
+    await waitFor(() => {
+      const bubble = container.querySelector('[data-message-role="assistant"]');
+      expect(bubble).toHaveTextContent('Line onewith "quotes"');
+      expect(bubble?.querySelector("br")).not.toBeNull();
+    });
     expect(screen.queryByText(/\{"text"/)).not.toBeInTheDocument();
   });
 
@@ -408,6 +543,33 @@ describe("ChatPage change cards", () => {
 
     expect(await screen.findByText("Something went wrong.")).toBeInTheDocument();
     expect(getCalls()).toBe(1);
+  });
+
+  it("puts the text of a failed send back into the input and drops its bubble", async () => {
+    mockStream([errorFrame("Rate limit reached.")], []);
+    const { container } = renderChatPage("app-1");
+    await send("Shorten my summary");
+
+    expect(await screen.findByText("Rate limit reached.")).toBeInTheDocument();
+    const input = screen.getByRole("textbox", { name: "Chat message" });
+    await waitFor(() => expect(input).toHaveValue("Shorten my summary"));
+    expect(input).not.toBeDisabled();
+    expect(container.querySelector('[data-message-role="user"]')).toBeNull();
+    expect(screen.getByText(/No messages yet/)).toBeInTheDocument();
+  });
+
+  it("gives the text back after a stream that failed mid-reply", async () => {
+    const getCalls = mockStream(
+      [tokenFrame("Here is "), errorFrame("Something went wrong.")],
+      [],
+    );
+    const { container } = renderChatPage("app-1");
+    await send("Help");
+
+    expect(await screen.findByText("Something went wrong.")).toBeInTheDocument();
+    await waitFor(() => expect(getCalls()).toBe(2));
+    expect(screen.getByRole("textbox", { name: "Chat message" })).toHaveValue("Help");
+    expect(container.querySelector('[data-message-role]')).toBeNull();
   });
 
   it("ignores an empty cards event", async () => {

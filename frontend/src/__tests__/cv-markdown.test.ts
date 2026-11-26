@@ -16,8 +16,14 @@ describe("parseCvMarkdown", () => {
     ]);
   });
 
-  it("shows heading 4+ as typed", () => {
-    expect(parseCvMarkdown("#### Deep")).toEqual([{ kind: "raw", text: "#### Deep" }]);
+  it("parses heading 4 (a project under a ### entry)", () => {
+    expect(parseCvMarkdown("#### Checkout")).toEqual([
+      { kind: "heading", level: 4, children: [text("Checkout")] },
+    ]);
+  });
+
+  it("shows heading 5+ as typed", () => {
+    expect(parseCvMarkdown("##### Deep")).toEqual([{ kind: "raw", text: "##### Deep" }]);
   });
 
   it("parses paragraphs with bold, italic and nested emphasis", () => {

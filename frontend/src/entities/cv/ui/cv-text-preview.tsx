@@ -2,21 +2,22 @@ import { memo, useMemo, type CSSProperties, type ReactNode } from "react";
 import { colors, VisuallyHidden } from "@/shared/ui";
 import { isSafeCvLinkUrl } from "@/shared/lib";
 import { NEW_TAB_SUFFIX } from "../lib/constants";
-import { parseCvMarkdown, type CvBlock, type CvInline } from "../lib/cv-markdown";
+import { parseCvMarkdown, type CvBlock, type CvHeadingLevel, type CvInline } from "../lib/cv-markdown";
 
 interface CvTextPreviewProps {
   /** The CV text (simple Markdown, see functional spec "Formatting"). */
   content: string;
 }
 
-// The preview sits inside a page that owns the <h1>, so CV headings 1–3 are
-// rendered one level lower (h2–h4) to keep the page outline valid.
-const HEADING_TAGS = { 1: "h2", 2: "h3", 3: "h4" } as const;
+// The preview sits inside a page that owns the <h1>, so CV headings 1–4 are
+// rendered one level lower (h2–h5) to keep the page outline valid.
+const HEADING_TAGS = { 1: "h2", 2: "h3", 3: "h4", 4: "h5" } as const satisfies Record<CvHeadingLevel, string>;
 
-const HEADING_STYLES: Record<1 | 2 | 3, CSSProperties> = {
+const HEADING_STYLES: Record<CvHeadingLevel, CSSProperties> = {
   1: { fontSize: "1.5rem", margin: "0 0 0.5rem" },
   2: { fontSize: "1.15rem", margin: "1rem 0 0.4rem", color: colors.primary },
   3: { fontSize: "1rem", margin: "0.75rem 0 0.25rem" },
+  4: { fontSize: "0.95rem", margin: "0.5rem 0 0.2rem" },
 };
 
 const PARAGRAPH_STYLE: CSSProperties = { margin: "0 0 0.5rem" };

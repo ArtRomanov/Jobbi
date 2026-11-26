@@ -43,6 +43,10 @@ export function ChatPage() {
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  // Text of a failed send, put back into the input (a new key remounts it)
+  const [restored, setRestored] = useState<{ text: string; key: number } | null>(
+    null,
+  );
 
   // Keep a ref to the abort controller so we can cancel on unmount
   const abortRef = useRef<AbortController | null>(null);
@@ -141,6 +145,11 @@ export function ChatPage() {
           streamedTextRef.current += token;
           setStreamingContent((prev) => (prev ?? "") + token);
         },
+        onReply: (text) => {
+          // The server changed text it already streamed: show what it saved
+          streamedTextRef.current = text;
+          setStreamingContent(text);
+        },
         onCards: (cards) => {
           // The backend always sends `cards` before `done`, often as []
           const messageId = cards[0]?.message_id;
@@ -186,8 +195,16 @@ export function ChatPage() {
           setStreamingContent(null);
           setIsSending(false);
           showToast(detail, "error");
-          // The reply may have been saved before the failure: show what the
-          // server has instead of dropping the streamed text
+          if (!replyCommittedRef.current) {
+            // The server deletes the user message of a failed send: drop it
+            // here too and give the text back, so the user can send it again
+            setMessages((prev) =>
+              prev.filter((m) => m.id !== optimisticUserMsg.id),
+            );
+            setRestored((prev) => ({ text: content, key: (prev?.key ?? 0) + 1 }));
+          }
+          // The reply may have been saved before the failure (e.g. the
+          // connection broke after the server finished): show what it has
           if (streamedTextRef.current !== "" || replyCommittedRef.current) {
             reloadHistory();
           }
@@ -362,13 +379,19 @@ export function ChatPage() {
         <QuickActionBar
           onAction={handleSend}
           hasCv={hasCv}
+          disabled={isSending}
           companyName={companyName}
           roleTitle={roleTitle}
         />
       )}
 
       {/* Input */}
-      <ChatInput onSend={handleSend} disabled={isSending} draft={draft} />
+      <ChatInput
+        key={restored?.key ?? 0}
+        onSend={handleSend}
+        disabled={isSending}
+        draft={restored?.text ?? draft}
+      />
     </div>
   );
 }

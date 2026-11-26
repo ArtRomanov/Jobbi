@@ -3,6 +3,8 @@ import os
 # Set env vars before any app imports (database.py calls get_settings() at import time)
 os.environ.setdefault("SECRET_KEY", "test-secret-key-for-unit-tests-only")
 os.environ.setdefault("GROQ_API_KEY", "test-groq-key-for-unit-tests-only")
+# A local .env may switch the chat to Gemini; tests default to Groq.
+os.environ.setdefault("CHAT_PROVIDER", "groq")
 
 from collections.abc import AsyncGenerator, Awaitable, Callable
 

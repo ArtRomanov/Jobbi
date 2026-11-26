@@ -31,6 +31,9 @@ export const CV_LAYOUT_CLASSES = {
   entryHead: "cv-entry-head",
   entryTitle: "cv-entry-title",
   entryDates: "cv-entry-dates",
+  /** `####` project under a `###` entry (or alone). Shares lead/head/dates classes with entries. */
+  project: "cv-project",
+  projectTitle: "cv-project-title",
   /** In the text (copy, screen readers) but not seen: the title/dates separator. */
   visuallyHidden: "cv-hidden-text",
   paragraph: "cv-p",
@@ -67,6 +70,9 @@ export const CV_LAYOUT_CSS = `
 .cv-entry-head{display:block;margin:0 0 2pt;break-after:avoid;page-break-after:avoid}
 .cv-entry-title{font-family:${BODY_FONT};font-size:9.5pt;font-weight:700;color:${ink}}
 .cv-entry-dates{display:block;font-size:8pt;color:${muted}}
+.cv-project{margin-top:5pt}
+.cv-section>.cv-project:first-child{margin-top:0}
+.cv-project-title{font-size:9pt;font-style:italic}
 .cv-hidden-text{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);white-space:pre}
 .cv-p{margin:0 0 5.5pt;orphans:2;widows:2}
 .cv-context{color:${muted}}

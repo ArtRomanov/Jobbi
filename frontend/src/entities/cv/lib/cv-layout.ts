@@ -43,11 +43,11 @@ export type CvLayoutBlock =
   | { kind: "list"; ordered: boolean; start: number; items: CvListItem[] }
   | { kind: "raw"; text: string };
 
-export interface CvLayoutEntry {
-  kind: "entry";
-  /** `### Title`. */
+/** What an entry and a project share: a titled block with optional dates. */
+export interface CvLayoutTitled {
+  /** `### Title` (entry) or `#### Title` (project). */
   title: CvInline[];
-  /** The date range shown at the right of the title row. */
+  /** The date range shown on its own line under the title. */
   dates: CvInline[] | null;
   /**
    * What separated title and dates in the text (" · " / " | " on the title
@@ -59,7 +59,18 @@ export interface CvLayoutEntry {
   blocks: CvLayoutBlock[];
 }
 
-export type CvLayoutItem = CvLayoutBlock | CvLayoutEntry;
+/** `#### Project` (under a `### Role — Company` entry, or alone in a section). */
+export interface CvLayoutProject extends CvLayoutTitled {
+  kind: "project";
+}
+
+/** `### Role — Company`: its own blocks, then its `####` projects (if any). */
+export interface CvLayoutEntry extends CvLayoutTitled {
+  kind: "entry";
+  projects: CvLayoutProject[];
+}
+
+export type CvLayoutItem = CvLayoutBlock | CvLayoutEntry | CvLayoutProject;
 
 /** The longest line that may be the title under the name. */
 const MAX_TITLE_LENGTH = 80;
@@ -203,10 +214,10 @@ function toLayoutBlock(block: CvBlock): CvLayoutBlock | null {
   }
 }
 
-/** An entry: `### Title`, its dates (title row or the next line), then its blocks. */
-function buildEntry(heading: CvInline[], blocks: readonly CvBlock[]): CvLayoutEntry {
+/** A titled block: the title, its dates (title line or the next line), then its blocks. */
+function buildTitled(heading: CvInline[], blocks: readonly CvBlock[]): CvLayoutTitled {
   const split = splitTitleDates(heading);
-  const entry: CvLayoutEntry = { kind: "entry", ...split, blocks: [] };
+  const entry: CvLayoutTitled = { ...split, blocks: [] };
   const body = [...blocks];
 
   const first = body[0];
@@ -236,15 +247,58 @@ function buildEntry(heading: CvInline[], blocks: readonly CvBlock[]): CvLayoutEn
   return entry;
 }
 
-/** Splits a section's blocks into plain blocks and `###` entries. */
+function isEntryHeading(block: CvBlock | undefined): boolean {
+  return block?.kind === "heading" && block.level === 3;
+}
+
+/** Index of the first heading at or after `from` (`blocks.length` when none). */
+function findHeading(blocks: readonly CvBlock[], from: number): number {
+  let index = from;
+  while (index < blocks.length && blocks[index]?.kind !== "heading") index += 1;
+  return index;
+}
+
+/** `#### Project` blocks: each runs to the next heading. All headings in `blocks` are `####`. */
+function buildProjects(blocks: readonly CvBlock[]): CvLayoutProject[] {
+  const projects: CvLayoutProject[] = [];
+  let index = 0;
+  for (let block = blocks[index]; block?.kind === "heading"; block = blocks[index]) {
+    const end = findHeading(blocks, index + 1);
+    projects.push({ kind: "project", ...buildTitled(block.children, blocks.slice(index + 1, end)) });
+    index = end;
+  }
+  return projects;
+}
+
+/**
+ * An entry: `### Title`, its dates, its own blocks, then its `####` projects.
+ * `blocks` runs up to the next `###` (any heading in it is a `####`).
+ */
+function buildEntry(heading: CvInline[], blocks: readonly CvBlock[]): CvLayoutEntry {
+  const firstProject = findHeading(blocks, 0);
+  return {
+    kind: "entry",
+    ...buildTitled(heading, blocks.slice(0, firstProject)),
+    projects: buildProjects(blocks.slice(firstProject)),
+  };
+}
+
+/** Splits a section's blocks into plain blocks, `###` entries and lone `####` projects. */
 function buildSectionItems(blocks: readonly CvBlock[]): CvLayoutItem[] {
   const items: CvLayoutItem[] = [];
   let index = 0;
   for (let block = blocks[index]; block !== undefined; block = blocks[index]) {
     if (block.kind === "heading" && block.level === 3) {
       let end = index + 1;
-      while (end < blocks.length && blocks[end]?.kind !== "heading") end += 1;
+      while (end < blocks.length && !isEntryHeading(blocks[end])) end += 1;
       items.push(buildEntry(block.children, blocks.slice(index + 1, end)));
+      index = end;
+      continue;
+    }
+    if (block.kind === "heading" && block.level === 4) {
+      // A `####` with no `###` above it in this section: a project of its own
+      const end = findHeading(blocks, index + 1);
+      items.push({ kind: "project", ...buildTitled(block.children, blocks.slice(index + 1, end)) });
       index = end;
       continue;
     }
@@ -268,7 +322,7 @@ function buildSections(blocks: readonly CvBlock[]): CvLayoutSection[] {
     }
   };
   for (const block of blocks) {
-    if (block.kind === "heading" && block.level !== 3) {
+    if (block.kind === "heading" && block.level !== 3 && block.level !== 4) {
       flush();
       current = { heading: block.children, blocks: [] };
     } else {

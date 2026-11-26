@@ -45,6 +45,9 @@ class ChatChangeCard(Base):
     position: Mapped[str | None] = mapped_column(String(10), nullable=True)
     # Insert after a line: the quoted line the new text goes after.
     anchor_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Shown on the card: the edit breaks the CV structure (a section gone or
+    # renamed, an entry heading or the header lost) and the user did not ask.
+    warning: Mapped[str | None] = mapped_column(Text, nullable=True)
     state: Mapped[str] = mapped_column(
         String(10), nullable=False, default="pending", server_default="pending"
     )

@@ -3,7 +3,7 @@ import { isSafeCvLinkUrl } from "@/shared/lib";
 import { VisuallyHidden } from "@/shared/ui";
 import { NEW_TAB_SUFFIX } from "../lib/constants";
 import type { CvBlock, CvInline } from "../lib/cv-markdown";
-import type { CvLayout, CvLayoutBlock, CvLayoutEntry, CvLayoutItem } from "../lib/cv-layout";
+import type { CvLayout, CvLayoutBlock, CvLayoutItem, CvLayoutTitled } from "../lib/cv-layout";
 import { CV_LAYOUT_CLASSES as C } from "../lib/cv-layout-styles";
 
 export interface CvLayoutViewProps {
@@ -16,16 +16,23 @@ export interface CvLayoutViewProps {
   isEmbedded: boolean;
 }
 
-type HeadingTag = "h1" | "h2" | "h3" | "h4";
+type HeadingTag = "h1" | "h2" | "h3" | "h4" | "h5";
+type LayoutHeadingLevel = 1 | 2 | 3 | 4;
 
 interface RenderContext {
   isEmbedded: boolean;
 }
 
-const STANDALONE_TAGS = { 1: "h1", 2: "h2", 3: "h3" } as const satisfies Record<1 | 2 | 3, HeadingTag>;
-const EMBEDDED_TAGS = { 1: "h2", 2: "h3", 3: "h4" } as const satisfies Record<1 | 2 | 3, HeadingTag>;
+const STANDALONE_TAGS = { 1: "h1", 2: "h2", 3: "h3", 4: "h4" } as const satisfies Record<
+  LayoutHeadingLevel,
+  HeadingTag
+>;
+const EMBEDDED_TAGS = { 1: "h2", 2: "h3", 3: "h4", 4: "h5" } as const satisfies Record<
+  LayoutHeadingLevel,
+  HeadingTag
+>;
 
-function headingTag(level: 1 | 2 | 3, ctx: RenderContext): HeadingTag {
+function headingTag(level: LayoutHeadingLevel, ctx: RenderContext): HeadingTag {
   return (ctx.isEmbedded ? EMBEDDED_TAGS : STANDALONE_TAGS)[level];
 }
 
@@ -108,14 +115,37 @@ function renderLayoutBlock(block: CvLayoutBlock, key: number, ctx: RenderContext
   }
 }
 
-function renderEntry(entry: CvLayoutEntry, key: number, ctx: RenderContext): ReactNode {
-  const TitleTag = headingTag(3, ctx);
+interface TitledStyle {
+  level: 3 | 4;
+  className: string;
+  titleClassName: string;
+}
+
+const ENTRY_STYLE: TitledStyle = { level: 3, className: C.entry, titleClassName: C.entryTitle };
+const PROJECT_STYLE: TitledStyle = {
+  level: 4,
+  className: C.project,
+  titleClassName: `${C.entryTitle} ${C.projectTitle}`,
+};
+
+/**
+ * A `###` entry or a `####` project: title, dates on their own line under it
+ * (ATS reading order), its blocks, then `children` (an entry's projects).
+ */
+function renderTitled(
+  entry: CvLayoutTitled,
+  style: TitledStyle,
+  key: number,
+  ctx: RenderContext,
+  children?: ReactNode,
+): ReactNode {
+  const TitleTag = headingTag(style.level, ctx);
   const [first, ...rest] = entry.blocks;
   // Title row + a short first paragraph stay on one page; a list may break
   const keepFirst = first?.kind === "paragraph";
   const head = (
     <div className={C.entryHead}>
-      <TitleTag className={C.entryTitle}>{renderInlines(entry.title, ctx)}</TitleTag>
+      <TitleTag className={style.titleClassName}>{renderInlines(entry.title, ctx)}</TitleTag>
       {entry.dates ? (
         <span className={C.entryDates}>
           {/* Keeps title and dates apart in the text ("Engineer · Jan", not "EngineerJan") */}
@@ -126,18 +156,32 @@ function renderEntry(entry: CvLayoutEntry, key: number, ctx: RenderContext): Rea
     </div>
   );
   return (
-    <div key={key} className={C.entry}>
+    <div key={key} className={style.className}>
       <div className={C.entryLead}>
         {head}
         {keepFirst ? renderLayoutBlock(first, 0, ctx) : null}
       </div>
       {(keepFirst ? rest : entry.blocks).map((block, i) => renderLayoutBlock(block, i + 1, ctx))}
+      {children}
     </div>
   );
 }
 
 function renderItem(item: CvLayoutItem, key: number, ctx: RenderContext): ReactNode {
-  return item.kind === "entry" ? renderEntry(item, key, ctx) : renderLayoutBlock(item, key, ctx);
+  switch (item.kind) {
+    case "entry":
+      return renderTitled(
+        item,
+        ENTRY_STYLE,
+        key,
+        ctx,
+        item.projects.map((project, i) => renderTitled(project, PROJECT_STYLE, i, ctx)),
+      );
+    case "project":
+      return renderTitled(item, PROJECT_STYLE, key, ctx);
+    default:
+      return renderLayoutBlock(item, key, ctx);
+  }
 }
 
 /**

@@ -30,7 +30,13 @@ function card(overrides: Partial<ChangeCard> = {}): ChangeCard {
 }
 
 /** Holds the cards in state like the chat page does, so decisions re-render. */
-function Harness({ initial }: { initial: ChangeCard[] }) {
+function Harness({
+  initial,
+  outdated,
+}: {
+  initial: ChangeCard[];
+  outdated?: boolean;
+}) {
   const [cards, setCards] = useState(initial);
   const onCardUpdated = (updated: ChangeCard): void =>
     setCards((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
@@ -42,10 +48,19 @@ function Harness({ initial }: { initial: ChangeCard[] }) {
           applicationId="app-1"
           card={c}
           number={index + 1}
+          outdated={outdated}
           onCardUpdated={onCardUpdated}
         />
       ))}
     </>
+  );
+}
+
+function renderOutdated(...cards: ChangeCard[]) {
+  return render(
+    <ToastProvider>
+      <Harness initial={cards} outdated />
+    </ToastProvider>,
   );
 }
 
@@ -157,6 +172,27 @@ describe("CvChangeCard rendering", () => {
   });
 });
 
+describe("CvChangeCard of an older reply (outdated)", () => {
+  const OUTDATED = "Outdated — newer messages below";
+
+  it("pending: no buttons, a muted outdated note", () => {
+    renderOutdated(card());
+    expect(screen.getByText(OUTDATED)).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["accepted", "Accepted"],
+    ["rejected", "Rejected"],
+    ["stale", "Stale"],
+  ] as const)("%s: keeps its badge, no buttons, no outdated note", (state, badge) => {
+    renderOutdated(card({ state }));
+    expect(screen.getByText(badge)).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByText(OUTDATED)).not.toBeInTheDocument();
+  });
+});
+
 describe("CvChangeCard decisions", () => {
   it("accepts: the card becomes Accepted and the buttons go", async () => {
     const user = userEvent.setup();
@@ -249,6 +285,22 @@ describe("CvChangeCard decisions", () => {
     await user.click(screen.getByRole("button", { name: ACCEPT }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(GENERIC_TEXT);
+  });
+
+  it("CARD_OUTDATED (a newer message from another tab): toasts, card stays pending", async () => {
+    const user = userEvent.setup();
+    failAccept(409, "CARD_OUTDATED");
+    renderCards(card());
+
+    await user.click(screen.getByRole("button", { name: ACCEPT }));
+
+    expect(
+      await screen.findByText(
+        "This change is outdated: only the latest reply's changes can be applied.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("article")).toHaveAttribute("data-state", "pending");
+    expect(screen.getByRole("button", { name: ACCEPT })).toBeEnabled();
   });
 
   it("CARD_DECIDED: refreshes the card from the history without an error", async () => {
@@ -361,6 +413,43 @@ describe("CvChangeCard accessibility", () => {
 
     await waitFor(() => expect(status).toHaveTextContent("Accepted"));
     expect(screen.getByRole("status")).toBe(status);
+  });
+});
+
+describe("CvChangeCard warning (backlog #27)", () => {
+  const WARNING = mockChangeCards.warned.warning;
+
+  it("shows no warning when the card has none", () => {
+    renderCards(card());
+    expect(screen.queryByText(/Check before accepting/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: ACCEPT })).not.toHaveAttribute("aria-describedby");
+  });
+
+  it("shows the warning, describes Accept with it and keeps Accept enabled", () => {
+    renderCards(mockChangeCards.warned);
+    const article = screen.getByRole("article", { name: CARD_TITLE });
+    expect(within(article).getByText(WARNING, { exact: false })).toHaveTextContent(
+      `Check before accepting: ${WARNING}`,
+    );
+    const accept = screen.getByRole("button", { name: ACCEPT });
+    expect(accept).toBeEnabled();
+    expect(accept).toHaveAccessibleDescription(`Check before accepting: ${WARNING}`);
+  });
+
+  it("accepts a warned card: the warning stays, the card becomes Accepted", async () => {
+    const user = userEvent.setup();
+    renderCards(mockChangeCards.warned);
+
+    await user.click(screen.getByRole("button", { name: ACCEPT }));
+
+    expect(await screen.findByText("Accepted")).toBeInTheDocument();
+    expect(screen.getByText(WARNING, { exact: false })).toBeInTheDocument();
+  });
+
+  it("parseCardsEvent keeps the warning and reads a missing one as null", () => {
+    const { warning: _missing, ...withoutWarning } = mockChangeCards.replace;
+    const data = JSON.stringify([mockChangeCards.warned, withoutWarning, { ...withoutWarning, id: "x", warning: 5 }]);
+    expect(parseCardsEvent(data)).toEqual([mockChangeCards.warned, mockChangeCards.replace]);
   });
 });
 

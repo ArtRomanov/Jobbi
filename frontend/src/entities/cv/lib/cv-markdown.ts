@@ -14,7 +14,8 @@ export type CvInline =
   | { kind: "link"; href: string; children: CvInline[] }
   | { kind: "break" };
 
-export type CvHeadingLevel = 1 | 2 | 3;
+/** `#`–`####`; `####` is a project under a `###` employer entry. Deeper levels stay raw. */
+export type CvHeadingLevel = 1 | 2 | 3 | 4;
 
 export type CvBlock =
   | { kind: "heading"; level: CvHeadingLevel; children: CvInline[] }
@@ -67,7 +68,7 @@ function decodeBasicEntities(text: string): string {
 }
 
 function isHeadingLevel(depth: number): depth is CvHeadingLevel {
-  return depth === 1 || depth === 2 || depth === 3;
+  return depth === 1 || depth === 2 || depth === 3 || depth === 4;
 }
 
 /** Joins neighbouring text nodes so renderers get fewer, larger runs. */

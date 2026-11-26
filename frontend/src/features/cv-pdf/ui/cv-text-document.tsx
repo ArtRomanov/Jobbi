@@ -28,6 +28,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   heading3: { fontSize: 11, fontWeight: 700, marginTop: 8, marginBottom: 2 },
+  heading4: { fontSize: 10, fontWeight: 700, marginTop: 6, marginBottom: 2 },
   paragraph: { marginBottom: 5 },
   list: { marginBottom: 5 },
   listItem: { flexDirection: "row" },
@@ -43,6 +44,7 @@ const HEADING_STYLES = {
   1: styles.heading1,
   2: styles.heading2,
   3: styles.heading3,
+  4: styles.heading4,
 } as const;
 
 // Keep a heading together with the start of the text that follows it instead

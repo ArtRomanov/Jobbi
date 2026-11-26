@@ -225,3 +225,7 @@ A simple side-by-side block layout is used instead of a real diff library (e.g.,
 ### Out of Scope for Tests
 
 - Quality of model output (text rationale and proposed values). The user is the arbiter via Accept/Reject; we do not assert on model-generated content.
+
+## Note (2026-11-25)
+
+CV text cards are implemented by spec 011 (`chat_change_cards`). Since 2026-11-25 a CV card whose passage changed after it was proposed (e.g. an earlier card of the same reply edited the same paragraph) is re-aimed at the current CV on Accept when that is unambiguous, and goes Stale only otherwise; a fact-guard note follows the chat language and marks the left-out item in the reply. Details: 011 technical considerations, addendum "card fixes after the #29 live test".

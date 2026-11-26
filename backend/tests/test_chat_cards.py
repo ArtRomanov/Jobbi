@@ -14,16 +14,24 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1 import chat as chat_api
+from app.core.config import get_settings
 from app.models.chat_change_card import ChatChangeCard
 from app.models.chat_message import ChatMessage
 from app.models.cv import Cv
-from app.services import cv_service
+from app.services import chat_service, cv_service
+from app.services.chat_budget import input_budget
 from app.services.chat_card_service import (
     CARD_NOTE_HEADER,
+    REMOVED_TEXT_LABEL,
     apply_card_edit,
     normalize_newlines,
 )
-from app.services.chat_tools import MALFORMED_CALL_NOTE, parse_propose_cv_edit
+from app.services.chat_tools import (
+    MALFORMED_CALL_NOTE,
+    PROPOSE_CV_EDIT_TOOL,
+    REJECTED_CALLS_NOTE,
+    parse_propose_cv_edit,
+)
 
 APPS = "/api/v1/applications"
 
@@ -199,6 +207,13 @@ async def _cv_content(client: httpx.AsyncClient, s: dict[str, str]) -> dict:
         {"op": "insert", "after": "y", "position": "start"},
         {"op": "insert", "after": "y", "position": "end"},
         {"op": "insert", "after": "y", "position": "after_line", "anchor": "x"},
+        # gpt-oss fills fields an op does not use; replace/remove ignore them.
+        {"op": "replace", "before": "x", "after": "y", "position": None},
+        {"op": "replace", "before": "x", "after": "y", "position": ""},
+        {"op": "replace", "before": "x", "after": "y", "position": "none"},
+        {"op": "replace", "before": "x", "after": "y", "anchor": None},
+        {"op": "remove", "before": "x", "after": None, "position": ""},
+        {"op": "insert", "before": None, "after": "y", "position": "end"},
     ],
 )
 def test_valid_calls_parse(args: dict) -> None:
@@ -210,7 +225,7 @@ def test_valid_calls_parse(args: dict) -> None:
     [
         "{not json",
         "[]",
-        json.dumps({"op": "rewrite", "before": "x", "after": "y"}),
+        json.dumps({"op": "rename", "before": "x", "after": "y"}),
         json.dumps({"op": "replace", "before": "", "after": "y"}),
         json.dumps({"op": "replace", "before": "x"}),
         json.dumps({"op": "replace", "before": "x", "after": "x"}),
@@ -218,12 +233,34 @@ def test_valid_calls_parse(args: dict) -> None:
         json.dumps({"op": "insert", "after": "", "position": "end"}),
         json.dumps({"op": "insert", "after": "y"}),
         json.dumps({"op": "insert", "after": "y", "position": "middle"}),
+        json.dumps({"op": "insert", "after": "y", "position": ""}),
+        json.dumps({"op": "insert", "after": "y", "position": None}),
+        json.dumps({"op": None, "before": "x"}),
         json.dumps({"op": "insert", "after": "y", "position": "after_line"}),
         json.dumps({"op": "replace", "before": "x" * 20_001, "after": "y"}),
     ],
 )
 def test_malformed_calls_do_not_parse(raw: str) -> None:
     assert parse_propose_cv_edit("propose_cv_edit", raw) is None
+
+
+def test_replace_ignores_position_and_anchor() -> None:
+    raw = json.dumps(
+        {"op": "replace", "before": "x", "after": "y", "position": "", "anchor": "z"}
+    )
+    edit = parse_propose_cv_edit("propose_cv_edit", raw)
+    assert edit is not None
+    assert (edit.position, edit.anchor_text) == (None, None)
+
+
+def test_tool_schema_has_no_enums_and_allows_null_optional_fields() -> None:
+    """Groq fails the whole reply on a schema mismatch: values are checked
+    server-side per op instead (enums and per-op rules live in pydantic)."""
+    params = PROPOSE_CV_EDIT_TOOL["function"]["parameters"]
+    assert "enum" not in json.dumps(params)
+    assert params["required"] == ["op"]
+    for field in ("before", "after", "position", "anchor"):
+        assert params["properties"][field]["type"] == ["string", "null"]
 
 
 def test_other_tool_name_does_not_parse() -> None:
@@ -393,6 +430,9 @@ async def test_history_puts_card_lines_in_a_system_note_after_the_reply(
         CARD_NOTE_HEADER,
         "<<<DATA CARD EDITS>>>",
         f"- accepted: replace '{long_before}'",
+        # The latest reply quotes what its accepted cards took out, in full.
+        f"  {REMOVED_TEXT_LABEL}",
+        f"    {long_before}",
         "- rejected: remove '- jQuery'",
         "- pending: insert '- Docker'",
         "<<<END CARD EDITS>>>",
@@ -600,6 +640,26 @@ async def test_two_cards_from_one_reply_accept_one_after_another(
 # ---------------------------------------------------------------------------
 
 
+async def _stored_card(
+    client: httpx.AsyncClient,
+    s: dict[str, str],
+    db: AsyncSession,
+    edit: dict,
+    **stored: str,
+) -> dict:
+    """A card whose stored quote is not in the CV (made before the creation check).
+
+    The chat no longer stores such a card, so a valid one is proposed and its
+    `stored` fields are then overwritten in the database.
+    """
+    (card,) = await _propose(client, s, edit)
+    await db.execute(
+        update(ChatChangeCard).where(ChatChangeCard.id == card["id"]).values(**stored)
+    )
+    await db.commit()
+    return card
+
+
 async def _card_state(db: AsyncSession, card_id: str) -> str:
     return (
         await db.execute(
@@ -611,7 +671,13 @@ async def _card_state(db: AsyncSession, card_id: str) -> str:
 async def test_accept_missing_passage_marks_stale(
     client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
 ) -> None:
-    (card,) = await _propose(client, setup, {"op": "remove", "before": "- Rust"})
+    card = await _stored_card(
+        client,
+        setup,
+        db_session,
+        {"op": "remove", "before": "- jQuery"},
+        before_text="- Rust",
+    )
 
     resp = await _decide(client, setup, card["id"])
 
@@ -645,12 +711,14 @@ async def test_accept_after_user_edited_the_passage_is_stale(
 
 
 async def test_accept_missing_anchor_marks_stale(
-    client: httpx.AsyncClient, setup: dict[str, str]
+    client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
 ) -> None:
-    (card,) = await _propose(
+    card = await _stored_card(
         client,
         setup,
-        {"op": "insert", "after": "x", "position": "after_line", "anchor": "- Go"},
+        db_session,
+        {"op": "insert", "after": "x", "position": "after_line", "anchor": "- Python"},
+        anchor_text="- Go",
     )
 
     resp = await _decide(client, setup, card["id"])
@@ -993,17 +1061,206 @@ async def _send_failing(
     return _events(resp.text)
 
 
-async def test_groq_tool_use_failed_becomes_inline_error(
-    client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
+SCHEMA_ERROR = (
+    "Tool call validation failed: parameters for tool propose_cv_edit did not "
+    "match schema: errors: [`/position`: value must be one of 'start', 'end', "
+    "'after_line']"
+)
+FAILED_GENERATION = "SECRET-CV-LINE in the model's raw output"
+TOOL_USE_FAILED = {
+    "code": "tool_use_failed",
+    "message": SCHEMA_ERROR,
+    "failed_generation": FAILED_GENERATION,
+}
+
+
+class _ScriptedGroq(_FakeGroq):
+    """One scripted response per request: chunks, then an error body or None."""
+
+    def __init__(self, *script: tuple[list[Any], object | None]) -> None:
+        super().__init__([])
+        self.script = list(script)
+
+    async def _create(self, **kwargs: Any) -> AsyncIterator[Any]:
+        self.calls.append(kwargs)
+        chunks, body = self.script[len(self.calls) - 1]
+
+        async def _gen() -> AsyncIterator[Any]:
+            for chunk in chunks:
+                yield chunk
+            if body is not None:
+                raise groq.APIError(
+                    "boom", httpx.Request("POST", "http://groq.test"), body=body
+                )
+
+        return _gen()
+
+
+async def test_tool_use_failed_retries_once_with_the_schema_error(
+    client: httpx.AsyncClient,
+    setup: dict[str, str],
+    db_session: AsyncSession,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    fake = _FailingGroq([_chunk("Let me fix that.")], {"code": "tool_use_failed"})
+    fake = _ScriptedGroq(
+        ([_chunk("Let me fix that.")], TOOL_USE_FAILED),
+        (_call_chunks(0, EDIT), None),
+    )
 
     events = await _send_failing(client, setup, fake)
 
+    assert [name for name, _ in events] == ["token", "cards", "done"]
+    assert len(events[1][1]) == 1
+    assert await _card_count(db_session) == 1
+    assert len(fake.calls) == 2
+    retry = fake.calls[1]
+    assert retry["tool_choice"] == "required"
+    assert retry["messages"][-2] == {"role": "assistant", "content": "Let me fix that."}
+    nudge = retry["messages"][-1]
+    assert nudge["role"] == "system"
+    assert SCHEMA_ERROR in nudge["content"]
+    # The user message is stored once; the reply has no failure note.
+    history = await _history(client, setup)
+    assert [m["role"] for m in history] == ["user", "assistant"]
+    assert history[1]["content"] == "Let me fix that."
+    # The warning names the schema error, never the model's raw output.
+    out = capsys.readouterr().out
+    assert "`/position`: value must be one of" in out
+    assert FAILED_GENERATION not in out
+
+
+async def test_tool_use_failed_at_request_start_is_retried(
+    client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
+) -> None:
+    # Before any chunk, the error body is the whole response.
+    fake = _ScriptedGroq(
+        ([], {"error": TOOL_USE_FAILED}), (_call_chunks(0, EDIT), None)
+    )
+
+    events = await _send_failing(client, setup, fake)
+
+    assert [name for name, _ in events] == ["cards", "done"]
+    assert await _card_count(db_session) == 1
+    assert SCHEMA_ERROR in fake.calls[1]["messages"][-1]["content"]
+    # No partial reply: the retry does not add an empty assistant turn.
+    assert fake.calls[1]["messages"][-2]["role"] == "user"
+
+
+@pytest.mark.parametrize(
+    ("text", "language"), [("Edit my CV", "en"), ("Адаптируй CV", "ru")]
+)
+async def test_tool_use_failed_twice_gives_a_clear_note(
+    client: httpx.AsyncClient,
+    setup: dict[str, str],
+    db_session: AsyncSession,
+    text: str,
+    language: str,
+) -> None:
+    fake = _ScriptedGroq(
+        ([_chunk("Let me fix that.")], TOOL_USE_FAILED), ([], TOOL_USE_FAILED)
+    )
+
+    with patch("app.services.groq_client._get_client", return_value=fake):
+        resp = await client.post(
+            f"{APPS}/{setup['app_id']}/chat",
+            json={"content": text},
+            headers=_h(setup["token"]),
+        )
+    events = _events(resp.text)
+
+    assert len(fake.calls) == 2
     assert [name for name, _ in events] == ["token", "token", "cards", "done"]
-    assert events[1][1]["text"] == f"\n\n{MALFORMED_CALL_NOTE}"
-    assert events[2][1] == []
+    note = REJECTED_CALLS_NOTE[language]  # type: ignore[index]
+    assert events[1][1]["text"] == f"\n\n{note}"
+    assert MALFORMED_CALL_NOTE not in resp.text
     assert await _card_count(db_session) == 0
+    history = await _history(client, setup)
+    assert [m["role"] for m in history] == ["user", "assistant"]
+    assert history[1]["content"] == f"Let me fix that.\n\n{note}"
+
+
+class _RetryRateLimitedGroq(_ScriptedGroq):
+    """The first request is scripted; the retry gets Groq's 429."""
+
+    async def _create(self, **kwargs: Any) -> AsyncIterator[Any]:
+        if self.calls:
+            self.calls.append(kwargs)
+            request = httpx.Request("POST", "http://groq.test")
+            raise groq.RateLimitError(
+                "Rate limit reached",
+                response=httpx.Response(429, request=request),
+                body={"error": {"message": "Rate limit reached"}},
+            )
+        return await super()._create(**kwargs)
+
+
+async def test_tool_use_failed_retry_rate_limited_keeps_the_note(
+    client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
+) -> None:
+    # The retry comes right after the first call, in the same per-minute quota.
+    fake = _RetryRateLimitedGroq(([_chunk("Let me fix that.")], TOOL_USE_FAILED))
+
+    events = await _send_failing(client, setup, fake)
+
+    assert len(fake.calls) == 2
+    note = REJECTED_CALLS_NOTE["en"]
+    assert [name for name, _ in events] == ["token", "token", "cards", "done"]
+    assert events[1][1]["text"] == f"\n\n{note}"
+    assert await _card_count(db_session) == 0
+    history = await _history(client, setup)
+    assert history[-1]["content"] == f"Let me fix that.\n\n{note}"
+
+
+async def test_tool_use_failed_retry_skipped_over_budget(
+    client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
+) -> None:
+    fake = _ScriptedGroq(([], TOOL_USE_FAILED), (_call_chunks(0, EDIT), None))
+    budget = get_settings().CHAT_INPUT_TOKEN_BUDGET
+    real = chat_service.request_tokens
+    seen: list[int] = []
+
+    def _over(*args: Any, **kwargs: Any) -> int:
+        seen.append(real(*args, **kwargs))
+        return budget + 1
+
+    with patch.object(chat_service, "request_tokens", _over):
+        events = await _send_failing(client, setup, fake)
+
+    assert seen  # the retry's size was checked against the budget
+    assert len(fake.calls) == 1
+    assert [name for name, _ in events] == ["token", "cards", "done"]
+    assert events[0][1]["text"] == REJECTED_CALLS_NOTE["en"]
+    assert await _card_count(db_session) == 0
+
+
+async def test_retry_fits_the_input_budget(
+    client: httpx.AsyncClient, setup: dict[str, str]
+) -> None:
+    fake = _ScriptedGroq(
+        ([_chunk("Let me fix that.")], TOOL_USE_FAILED), (_call_chunks(0, EDIT), None)
+    )
+    estimates: list[int] = []
+    real = chat_service.request_tokens
+
+    def _spy(*args: Any, **kwargs: Any) -> int:
+        estimates.append(value := real(*args, **kwargs))
+        return value
+
+    with patch.object(chat_service, "request_tokens", _spy):
+        await _send_failing(client, setup, fake)
+
+    # Each request is estimated (that also sizes its max_tokens); the retry's
+    # estimate is the one checked against the budget.
+    retry = fake.calls[1]
+    system, *messages = retry["messages"]
+    assert estimates[-1] == real(system["content"], messages, retry["tools"])
+    settings = get_settings()
+    budget = input_budget(
+        settings.CHAT_REQUEST_TOKEN_LIMIT,
+        min_reply=settings.CHAT_MIN_REPLY_TOKENS,
+        cap=settings.CHAT_INPUT_TOKEN_BUDGET,
+    )
+    assert estimates[-1] <= budget
 
 
 async def test_other_groq_errors_still_end_the_stream_with_error(
@@ -1081,3 +1338,102 @@ async def test_error_frame_hides_the_exception_text(
     events = await _send_failing(client, setup, fake)
 
     assert events[-1] == ("error", {"detail": GENERIC_ERROR})
+
+
+# ---------------------------------------------------------------------------
+# Outdated cards: only the newest reply's cards can be decided
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("action", ["accept", "reject"])
+async def test_older_reply_card_is_outdated_after_a_new_reply_with_cards(
+    client: httpx.AsyncClient,
+    setup: dict[str, str],
+    db_session: AsyncSession,
+    action: str,
+) -> None:
+    (old,) = await _propose(client, setup, {"op": "remove", "before": "- jQuery"})
+    (new,) = await _propose(client, setup, {"op": "remove", "before": "- Python"})
+
+    resp = await _decide(client, setup, old["id"], action)
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "CARD_OUTDATED"
+    assert await _card_state(db_session, old["id"]) == "pending"
+    assert (await _cv_content(client, setup))["content"] == CV_TEXT
+    # The newest reply's card still works.
+    assert (await _decide(client, setup, new["id"], action)).status_code == 200
+
+
+async def test_card_is_outdated_when_the_newest_reply_has_no_cards(
+    client: httpx.AsyncClient, setup: dict[str, str]
+) -> None:
+    (old,) = await _propose(client, setup, {"op": "remove", "before": "- jQuery"})
+    await _send(client, setup, _chunk("Just text."))
+
+    resp = await _decide(client, setup, old["id"])
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "CARD_OUTDATED"
+
+
+async def test_card_is_outdated_once_the_user_sends_a_new_message(
+    client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
+) -> None:
+    """A user message without a saved reply yet (streaming, or a failed reply)."""
+    (old,) = await _propose(client, setup, {"op": "remove", "before": "- jQuery"})
+    db_session.add(
+        ChatMessage(application_id=setup["app_id"], role="user", content="More?")
+    )
+    await db_session.commit()
+
+    for action in ("accept", "reject"):
+        resp = await _decide(client, setup, old["id"], action)
+        assert resp.status_code == 409
+        assert resp.json()["detail"] == "CARD_OUTDATED"
+
+
+async def test_outdated_stale_card_cannot_be_rejected(
+    client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
+) -> None:
+    old = await _stored_card(
+        client,
+        setup,
+        db_session,
+        {"op": "remove", "before": "- jQuery"},
+        before_text="- Rust",
+    )
+    assert (await _decide(client, setup, old["id"])).json()["detail"] == "CARD_STALE"
+    await _send(client, setup, _chunk("Just text."))
+
+    resp = await _decide(client, setup, old["id"], "reject")
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "CARD_OUTDATED"
+    assert await _card_state(db_session, old["id"]) == "stale"
+
+
+async def test_decided_outdated_card_still_reports_card_decided(
+    client: httpx.AsyncClient, setup: dict[str, str]
+) -> None:
+    """Another tab learns the real state, not just "outdated"."""
+    (old,) = await _propose(client, setup, {"op": "remove", "before": "- jQuery"})
+    assert (await _decide(client, setup, old["id"], "reject")).status_code == 200
+    await _send(client, setup, _chunk("Just text."))
+
+    resp = await _decide(client, setup, old["id"])
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "CARD_DECIDED"
+
+
+async def test_messages_get_sub_second_timestamps(
+    client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
+) -> None:
+    """The server default has 1-second resolution on SQLite; order needs more."""
+    await _send(client, setup, _chunk("Hello."))
+
+    stamps = (await db_session.execute(select(ChatMessage.created_at))).scalars().all()
+
+    assert len(stamps) == 2
+    assert any(stamp.microsecond for stamp in stamps)
