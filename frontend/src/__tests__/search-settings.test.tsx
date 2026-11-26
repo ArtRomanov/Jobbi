@@ -185,6 +185,30 @@ describe("Search settings in the Sources panel", () => {
     expect(screen.getByText(HINT)).toBeInTheDocument();
   });
 
+  it.each([
+    // Python keeps U+FEFF: a real description, not a cleared one
+    { typed: "\ufeff", sent: "\ufeff" },
+    // Python strips U+0085 (JS trim does not): blank → null
+    { typed: "\u0085 ", sent: null },
+  ])("decides 'blank' like the server's Python strip ($typed.length chars → $sent)", async ({ typed, sent }) => {
+    serveSettings("Senior React");
+    const bodies: unknown[] = [];
+    server.events.on("request:start", async ({ request }) => {
+      if (request.method === "PATCH") bodies.push(await request.clone().json());
+    });
+    const user = userEvent.setup();
+    await renderLoaded();
+
+    await user.clear(getDescription());
+    await user.click(getDescription());
+    await user.paste(typed);
+    await user.click(getSave());
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    server.events.removeAllListeners();
+
+    expect(bodies).toEqual([{ description: sent, keywords: [], keyword_filter: true }]);
+  });
+
   it("shows a 400 error inline and keeps the drafts", async () => {
     server.use(
       http.patch(SETTINGS_URL, () =>

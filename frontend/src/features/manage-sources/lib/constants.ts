@@ -75,3 +75,5 @@ export const KEYWORD_FILTER_LABEL = "Only send posts with these words to the AI"
 export const KEYWORD_FILTER_HELP =
   "Skipped posts are deleted and don't come back if you change the keywords. Off or no keywords: every new post goes to the AI. Posts you forward to the bot are never skipped.";
 export const FILTERED_LAST_24H_PREFIX = "Skipped by the filter in the last 24 hours:";
+/** localStorage key: "true" while the Sources panel is collapsed. */
+export const SOURCES_COLLAPSED_STORAGE_KEY = "jobbi:inbox:sourcesCollapsed";

@@ -7,3 +7,5 @@ export const INBOX_NO_MATCHES_TITLE = "No vacancies match these filters.";
 export const INBOX_NO_MATCHES_DESCRIPTION = "Try another source or show all vacancies.";
 /** `/inbox?source=<key>` (link in the Telegram first-scan summary) opens filtered by that source. */
 export const SOURCE_SEARCH_PARAM = "source";
+/** localStorage key: "true" while the Inbox list (with its filters) is collapsed. */
+export const LIST_COLLAPSED_STORAGE_KEY = "jobbi:inbox:listCollapsed";

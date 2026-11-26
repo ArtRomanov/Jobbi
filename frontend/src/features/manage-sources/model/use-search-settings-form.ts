@@ -4,7 +4,7 @@ import { useToast } from "@/shared/ui";
 import { updateSearchSettings } from "@/entities/vacancy-source";
 import type { VacancySearchSettings } from "@/entities/vacancy-source";
 import { DESCRIPTION_MAX_LENGTH, SAVED_MESSAGE } from "../lib/constants";
-import { hasSearchSettingsChanges } from "../lib/search-settings-changes";
+import { hasSearchSettingsChanges, normalizeDescription } from "../lib/search-settings-changes";
 import type { UseSearchSettingsFormResult } from "./types";
 
 /**
@@ -58,7 +58,8 @@ export function useSearchSettingsForm(
     setSaveError(null);
     try {
       const saved = await updateSearchSettings({
-        description: description.trim() === "" ? null : description,
+        // Blank as the server sees it (Python strip, not JS trim); else the raw text
+        description: normalizeDescription(description) === "" ? null : description,
         keywords: [...keywords],
         keyword_filter: keywordFilter,
       });

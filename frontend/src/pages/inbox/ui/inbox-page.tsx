@@ -4,8 +4,10 @@ import { SourcesPanel } from "@/features/manage-sources";
 import { InboxFilters } from "@/features/inbox-filters";
 import type { InboxFilterValues } from "@/features/inbox-filters";
 import type { RemovedVacancySource, VacancySource } from "@/entities/vacancy-source";
-import { PageCard, PageHeader, VISUALLY_HIDDEN_STYLE } from "@/shared/ui";
-import { initialFilters } from "../lib/helpers";
+import { useCollapsibleSection } from "@/shared/lib";
+import { PageCard, PageHeader, SectionHeader, SectionToggle } from "@/shared/ui";
+import { LIST_COLLAPSED_STORAGE_KEY } from "../lib/constants";
+import { getSourceParam, initialFilters } from "../lib/helpers";
 import { VacancyList } from "./vacancy-list";
 
 /** Inbox: filterable vacancies found in the user's sources, plus the Sources panel. */
@@ -19,6 +21,10 @@ export function InboxPage() {
   // `?source=<key>` is read once: later filter changes do not touch the URL
   const [searchParams] = useSearchParams();
   const [filters, setFilters] = useState<InboxFilterValues>(() => initialFilters(searchParams));
+  // A `?source=` link opens a collapsed list for this visit only (the saved choice stays)
+  const listSection = useCollapsibleSection(LIST_COLLAPSED_STORAGE_KEY, {
+    forceExpanded: getSourceParam(searchParams) !== null,
+  });
   // Mirrored from the Sources panel, so the filter needs no request of its own
   const [sources, setSources] = useState<readonly VacancySource[]>([]);
   const [removedSources, setRemovedSources] = useState<readonly RemovedVacancySource[]>([]);
@@ -33,18 +39,31 @@ export function InboxPage() {
   return (
     <PageCard maxWidth="720px">
       <PageHeader title="Inbox" subtitle="Vacancies Jobbi found in your sources" titleRef={titleRef} />
-      {/* h1 > h2 "Vacancies" (screen readers only) > card h3s; "Sources" is the other h2 */}
+      {/* h1 > h2 "Vacancies" > card h3s; "Sources" is the other h2 */}
       <section aria-labelledby={vacanciesHeadingId}>
-        <h2 id={vacanciesHeadingId} style={VISUALLY_HIDDEN_STYLE}>
-          Vacancies
-        </h2>
-        <InboxFilters
-          value={filters}
-          onChange={setFilters}
-          sources={sources}
-          removedSources={removedSources}
+        <SectionHeader
+          id={vacanciesHeadingId}
+          title="Vacancies"
+          hasDivider={false}
+          action={
+            <SectionToggle
+              label="Vacancies"
+              isExpanded={listSection.isExpanded}
+              controlsId={listSection.regionId}
+              onToggle={listSection.toggle}
+            />
+          }
         />
-        <VacancyList refreshKey={refreshKey} filters={filters} onListEmptied={focusTitle} />
+        {/* `hidden`, not unmount: filters, loaded pages and Undo survive a collapse */}
+        <div id={listSection.regionId} hidden={!listSection.isExpanded}>
+          <InboxFilters
+            value={filters}
+            onChange={setFilters}
+            sources={sources}
+            removedSources={removedSources}
+          />
+          <VacancyList refreshKey={refreshKey} filters={filters} onListEmptied={focusTitle} />
+        </div>
       </section>
       <SourcesPanel
         onScanFinished={refreshList}
