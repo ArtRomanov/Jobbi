@@ -8,6 +8,28 @@ import { mockVacancySource, mockVacancySourcesEmpty } from "./mocks/handlers";
 import { server } from "./setup";
 
 const SOURCES_URL = "*/api/v1/vacancy-sources";
+const SOURCE_URL = "*/api/v1/vacancy-sources/:id";
+
+/** A promise the test resolves by hand, to hold an MSW response in flight. */
+function createGate(): { wait: Promise<void>; open: () => void } {
+  let open = (): void => {};
+  const wait = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { wait, open };
+}
+
+/** Hold the DELETE of each listed id until its gate opens; others answer at once. */
+function holdDeletes(ids: readonly string[]): Map<string, () => void> {
+  const gates = new Map(ids.map((id) => [id, createGate()]));
+  server.use(
+    http.delete(SOURCE_URL, async ({ params }) => {
+      await gates.get(String(params.id))?.wait;
+      return new HttpResponse(null, { status: 204 });
+    }),
+  );
+  return new Map(ids.map((id) => [id, () => gates.get(id)?.open()]));
+}
 
 /** `count` Telegram sources named @source_1 … @source_<count>, in list order. */
 function makeSources(count: number): VacancySource[] {
@@ -229,6 +251,55 @@ describe("Sources panel pagination", () => {
       expect(within(select).getByRole("option", { name: "@source_9" })).toBeInTheDocument(),
     );
     expect(within(select).getByRole("option", { name: "@source_8" })).toBeInTheDocument();
+  });
+
+  it("removing the last row of a full page focuses the next row, which slides onto this page", async () => {
+    serveSources(makeSources(9));
+    const user = userEvent.setup();
+    renderWithProviders(<InboxPage />);
+    await waitForSources();
+
+    await user.click(screen.getByRole("button", { name: "Remove @source_7" }));
+
+    await waitFor(() => expect(visibleNames()).toEqual([...names(1, 6), "@source_8"]));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Remove @source_8" })).toHaveFocus());
+  });
+
+  it("two removes in flight: the later one focuses the row before both, not the input", async () => {
+    serveSources(makeSources(9));
+    const release = holdDeletes(["s8"]);
+    const user = userEvent.setup();
+    renderWithProviders(<InboxPage />);
+    await waitForSources();
+    await user.click(within(getPager()).getByRole("button", { name: "Next" }));
+
+    await user.click(screen.getByRole("button", { name: "Remove @source_8" }));
+    await user.click(screen.getByRole("button", { name: "Remove @source_9" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Remove @source_9" })).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(screen.getByRole("button", { name: "Remove @source_7" })).toHaveFocus());
+
+    act(() => release.get("s8")?.());
+    await waitFor(() => expect(visibleNames()).toEqual(names(1, 7)));
+    expect(screen.getByRole("button", { name: "Remove @source_7" })).toHaveFocus();
+  });
+
+  it("leaves focus alone when the user moved on (pressed Next) before the DELETE returned", async () => {
+    serveSources(makeSources(9));
+    const release = holdDeletes(["s3"]);
+    const user = userEvent.setup();
+    renderWithProviders(<InboxPage />);
+    await waitForSources();
+
+    await user.click(screen.getByRole("button", { name: "Remove @source_3" }));
+    const next = within(getPager()).getByRole("button", { name: "Next" });
+    await user.click(next);
+    expect(next).toHaveFocus();
+
+    act(() => release.get("s3")?.());
+    await waitFor(() => expect(visibleNames()).toEqual(["@source_9"]));
+    expect(next).toHaveFocus();
   });
 
   describe("polling", () => {
