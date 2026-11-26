@@ -196,6 +196,39 @@ def _line_markers(text: str) -> tuple[list[_Span], list[tuple[_Span, _Span]]]:
     return spans, bold_pairs
 
 
+def _starts_with_line_marker(line: str) -> bool:
+    """`line` opens with a quote/list/number/heading marker (not a bold wrapper)."""
+    spans, bold_pairs = _line_markers(line)
+    return (
+        bool(spans) and spans[0][0] == 0 and spans[0] not in (o for o, _ in bold_pairs)
+    )
+
+
+def _check_marker_match(content: str, needle: str, start: int, end: int) -> None:
+    """Raise _PassageMissing for a marker-level match that is not a real quote.
+
+    With its markers dropped, "- Java" would match inside "JavaScript" and
+    "## Experience" the end of "Work Experience". The match must start and
+    end on word boundaries, and a quote whose first line has a line marker
+    must start a CV line (after the CV's own markers, if any).
+    """
+    if start > 0 and content[start - 1].isalnum() and content[start].isalnum():
+        raise _PassageMissing
+    if end < len(content) and content[end - 1].isalnum() and content[end].isalnum():
+        raise _PassageMissing
+    if not _starts_with_line_marker(needle.split("\n", 1)[0]):
+        return
+    line_start = content.rfind("\n", 0, start) + 1
+    line_end = content.find("\n", start)
+    line = content[line_start : len(content) if line_end == -1 else line_end]
+    reach = 0
+    for lo, hi in _marker_spans(line.translate(_FOLD)):
+        if lo == reach:
+            reach = hi
+    if start - line_start not in (0, reach):
+        raise _PassageMissing
+
+
 def _keep_bold_pairs_whole(content: str, start: int, end: int) -> _Span:
     """The span of a marker-level match, widened so it cuts no `**` pair.
 
@@ -315,6 +348,7 @@ def _locate_once(content: str, needle: str) -> tuple[int, int]:
         if count == 1:
             start, end = starts[first], ends[first + len(target) - 1]
             if level.get("markers"):
+                _check_marker_match(content, needle, start, end)
                 return _keep_bold_pairs_whole(content, start, end)
             return start, end
         if count > 1:

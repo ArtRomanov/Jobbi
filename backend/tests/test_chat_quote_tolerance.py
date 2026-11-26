@@ -320,7 +320,8 @@ def test_long_cv_and_long_quote_locate_fast() -> None:
     words = [f"word{i}" for i in range(2_500)]
     lines = [f"- {' '.join(words[i : i + 8])} — x‑y" for i in range(0, 2_500, 8)]
     cv = "\n".join(lines)[:20_000]
-    body = cv[2_000:19_000]
+    # Whole lines: a marked quote must start a line and end on a word boundary.
+    body = cv[cv.index("\n", 2_000) + 1 : cv.rindex("\n", 0, 19_000)]
     quote = "> " + body.replace("—", "-").replace("‑", "-")
     missing = quote + " nowhere"
     markers = "\n".join(["> - **" + "a" * 50 + "**"] * 300)
@@ -665,3 +666,40 @@ def test_a_bold_wrapper_in_the_quote_is_not_cut_from_after() -> None:
 
     assert placed is not None
     assert placed.after_text == "**Led team of 8 engineers**"
+
+
+@pytest.mark.parametrize(
+    ("cv", "edit"),
+    [
+        # A quote that names a whole line never lands inside a word ...
+        (
+            "Skills\nJavaScript, TypeScript\nPython",
+            _edit(op="remove", before_text="- Java"),
+        ),
+        (
+            "Skills\nCPython core contributor\nJava",
+            _edit(
+                op="insert", after_text="- Rust", position="after_line",
+                anchor_text="- Python",
+            ),
+        ),
+        (
+            "Summary\n- 12 years Python\n- Go",
+            _edit(before_text="- 2 years Python", after_text="- 3 years Python"),
+        ),
+        ("Footnote: references on request", _edit(op="remove", before_text="> Note")),
+        # ... nor in the middle of a line.
+        (
+            "Work Experience\nAcme 2020-2024",
+            _edit(before_text="## Experience", after_text="## Professional Experience"),
+        ),
+        (
+            "Scaled to 1.5M users",
+            _edit(before_text="1. 5M users", after_text="2M users"),
+        ),
+    ],
+)  # fmt: skip
+def test_a_marked_quote_matches_whole_words_from_a_line_start(
+    cv: str, edit: CvEdit
+) -> None:
+    assert place_edit(cv, edit) is None
