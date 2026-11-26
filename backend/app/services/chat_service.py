@@ -556,6 +556,10 @@ async def _stream_reply(
             ):
                 full_response.append(chunk)
                 yield chunk
+            if not calls:
+                # Rate-limited or too large (the retry kept the first reply):
+                # the rejected edits still get their note.
+                calls.append(LlmToolCall(name="", arguments="", rejected=rejection))
     elif tools and needs_follow_up("".join(full_response), calls):
         # One nudge, never more: the model announced edits but made none.
         # It reuses the trimmed messages, and is skipped if it would not fit.

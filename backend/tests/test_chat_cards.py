@@ -1150,6 +1150,38 @@ async def test_tool_use_failed_twice_gives_a_clear_note(
     assert history[1]["content"] == f"Let me fix that.\n\n{note}"
 
 
+class _RetryRateLimitedGroq(_ScriptedGroq):
+    """The first request is scripted; the retry gets Groq's 429."""
+
+    async def _create(self, **kwargs: Any) -> AsyncIterator[Any]:
+        if self.calls:
+            self.calls.append(kwargs)
+            request = httpx.Request("POST", "http://groq.test")
+            raise groq.RateLimitError(
+                "Rate limit reached",
+                response=httpx.Response(429, request=request),
+                body={"error": {"message": "Rate limit reached"}},
+            )
+        return await super()._create(**kwargs)
+
+
+async def test_tool_use_failed_retry_rate_limited_keeps_the_note(
+    client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
+) -> None:
+    # The retry comes right after the first call, in the same per-minute quota.
+    fake = _RetryRateLimitedGroq(([_chunk("Let me fix that.")], TOOL_USE_FAILED))
+
+    events = await _send_failing(client, setup, fake)
+
+    assert len(fake.calls) == 2
+    note = REJECTED_CALLS_NOTE["en"]
+    assert [name for name, _ in events] == ["token", "token", "cards", "done"]
+    assert events[1][1]["text"] == f"\n\n{note}"
+    assert await _card_count(db_session) == 0
+    history = await _history(client, setup)
+    assert history[-1]["content"] == f"Let me fix that.\n\n{note}"
+
+
 async def test_tool_use_failed_retry_skipped_over_budget(
     client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
 ) -> None:
