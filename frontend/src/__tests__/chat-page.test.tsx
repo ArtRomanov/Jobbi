@@ -408,7 +408,8 @@ describe("ChatPage change cards", () => {
     await send("Tailor my CV");
 
     expect(
-      await screen.findByText(/1\. Add REST API \(not proposed — see below\)/),
+      // "1. " is Markdown: the reply renders as a numbered list item
+      await screen.findByText(/Add REST API \(not proposed — see below\)/),
     ).toBeInTheDocument();
     expect(screen.getByText(/Left out one change\./)).toBeInTheDocument();
     expect(screen.getByRole("article", { name: CARD_TITLE })).toBeInTheDocument();
@@ -495,11 +496,12 @@ describe("ChatPage change cards", () => {
     );
     await send("Hi");
 
-    await waitFor(() =>
-      expect(
-        container.querySelector('[data-message-role="assistant"]'),
-      ).toHaveTextContent('Line one with "quotes"'),
-    );
+    // The newline renders as a Markdown line break (<br>), not a space
+    await waitFor(() => {
+      const bubble = container.querySelector('[data-message-role="assistant"]');
+      expect(bubble).toHaveTextContent('Line onewith "quotes"');
+      expect(bubble?.querySelector("br")).not.toBeNull();
+    });
     expect(screen.queryByText(/\{"text"/)).not.toBeInTheDocument();
   });
 

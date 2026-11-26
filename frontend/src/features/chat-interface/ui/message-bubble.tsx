@@ -1,5 +1,6 @@
 import { colors, fonts } from "@/shared/ui";
 import { formatTimeAgo } from "@/shared/lib/format-time-ago";
+import { AssistantMarkdown } from "./assistant-markdown";
 
 interface MessageBubbleProps {
   role: "user" | "assistant";
@@ -28,6 +29,20 @@ export function MessageBubble({
   isStreaming = false,
 }: MessageBubbleProps) {
   const variant = bubbleStyles[role];
+  const cursor = isStreaming ? (
+    <span
+      aria-hidden="true"
+      style={{
+        display: "inline-block",
+        width: "2px",
+        height: "1em",
+        backgroundColor: role === "user" ? "#ffffff" : colors.textPrimary,
+        marginLeft: "2px",
+        verticalAlign: "text-bottom",
+        animation: "blink 1s step-end infinite",
+      }}
+    />
+  ) : null;
 
   return (
     <div
@@ -41,23 +56,18 @@ export function MessageBubble({
         fontSize: "0.875rem",
         lineHeight: 1.5,
         boxShadow: "0 1px 2px rgba(0, 0, 0, 0.06)",
-        whiteSpace: "pre-wrap",
+        // User text keeps its own line breaks; assistant Markdown lays out its own blocks.
+        whiteSpace: role === "user" ? "pre-wrap" : "normal",
         wordBreak: "break-word",
       }}
     >
-      {content}
-      {isStreaming && (
-        <span
-          style={{
-            display: "inline-block",
-            width: "2px",
-            height: "1em",
-            backgroundColor: role === "user" ? "#ffffff" : colors.textPrimary,
-            marginLeft: "2px",
-            verticalAlign: "text-bottom",
-            animation: "blink 1s step-end infinite",
-          }}
-        />
+      {role === "assistant" ? (
+        <AssistantMarkdown content={content} trailing={cursor} />
+      ) : (
+        <>
+          {content}
+          {cursor}
+        </>
       )}
       {createdAt && (
         <div
