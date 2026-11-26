@@ -41,8 +41,9 @@ from app.services.chat_tools import (
     PASSAGE_NOT_FOUND_NOTE,
     PROPOSE_CV_EDIT_TOOL,
     REJECTED_CALLS_NOTE,
+    CallRejection,
     CvEdit,
-    parse_propose_cv_edit,
+    check_propose_cv_edit,
 )
 from app.services.cv_fact_guard import unsupported_names
 from app.services.cv_structure import (
@@ -286,6 +287,16 @@ def retry_nudge(rejection: str) -> str:
     return _RETRY_NUDGE.format(error=rejection)
 
 
+def parse_retry_nudge(rejections: Sequence[CallRejection]) -> str:
+    """The retry nudge when our parser rejected every call of the reply.
+
+    The error names only the rule each call broke (field and error type),
+    never the model's argument values.
+    """
+    lines = [f"call {i}: {r.summary()}" for i, r in enumerate(rejections, 1)]
+    return retry_nudge("; ".join(lines))
+
+
 def drop_unsupported_edits(
     edits: list[CvEdit], *, cv: str, user_texts: list[str], job_post: str
 ) -> tuple[list[CvEdit], list[list[str]]]:
@@ -340,17 +351,44 @@ def needs_follow_up(reply: str, calls: list[LlmToolCall]) -> bool:
     )
 
 
-def _validate_calls(calls: list[LlmToolCall]) -> tuple[list[CvEdit], int]:
-    """Split the model's tool calls into usable edits and a failure count."""
+def _validate_calls(
+    calls: list[LlmToolCall],
+) -> tuple[list[CvEdit], list[CallRejection]]:
+    """Split the model's tool calls into usable edits and rejections.
+
+    Each rejection is logged once, with the call's shape only (see
+    `CallRejection`): never CV text or argument values.
+    """
     edits: list[CvEdit] = []
-    failed = 0
+    rejections: list[CallRejection] = []
     for call in calls:
-        edit = parse_propose_cv_edit(call.name, call.arguments)
-        if edit is None or len(edits) >= MAX_CARDS_PER_REPLY:
-            failed += 1
-        else:
-            edits.append(edit)
-    return edits, failed
+        result = check_propose_cv_edit(call.name, call.arguments)
+        if isinstance(result, CvEdit) and len(edits) >= MAX_CARDS_PER_REPLY:
+            result = CallRejection(reason="over_card_limit")
+        if isinstance(result, CvEdit):
+            edits.append(result)
+            continue
+        _log_rejection(result)
+        rejections.append(result)
+    return edits, rejections
+
+
+def _log_rejection(rejection: CallRejection) -> None:
+    logger.warning(
+        "chat_tool_call_rejected", reason=rejection.reason, **rejection.log_fields
+    )
+
+
+def _all_parser_rejected(calls: list[LlmToolCall]) -> list[CallRejection] | None:
+    """The rejections when the reply has calls and our parser rejects them all.
+
+    Checked without logging: the caller logs them if it acts on them.
+    """
+    if not calls or any(c.rejected is not None for c in calls):
+        return None
+    results = [check_propose_cv_edit(c.name, c.arguments) for c in calls]
+    rejections = [r for r in results if isinstance(r, CallRejection)]
+    return rejections if len(rejections) == len(results) else None
 
 
 async def _stream_second_call(
@@ -413,7 +451,11 @@ def _call_outcome(
     # note for the whole reply instead of a malformed-call line.
     rejected = any(c.rejected is not None for c in calls)
     calls = [c for c in calls if c.rejected is None]
-    edits, failed = _validate_calls(calls) if cv is not None else ([], len(calls))
+    if cv is not None:
+        edits, rejections = _validate_calls(calls)
+        failed = len(rejections)
+    else:
+        edits, failed = [], len(calls)
     unplaced = 0
     if cv is not None and edits:
         edits, unplaced = place_edits(cv.content, edits)
@@ -538,6 +580,8 @@ async def _stream_reply(
 
     full_response: list[str] = []
     calls: list[LlmToolCall] = []
+    # Parser-rejected first calls whose retry brought no call back.
+    carried_failed = 0
     try:
         async for item in stream_llm_response(system_prompt, messages, tools=tools):
             if isinstance(item, LlmToolCall):
@@ -585,6 +629,38 @@ async def _stream_reply(
                 # Rate-limited or too large (the retry kept the first reply):
                 # the rejected edits still get their note.
                 calls.append(LlmToolCall(name="", arguments="", rejected=rejection))
+    elif tools and (parser_rejected := _all_parser_rejected(calls)):
+        # Groq accepted the calls but our parser rejected every one (wrong
+        # name, bad JSON, invalid arguments): no card would come of the
+        # reply. One retry, never more, told only which rule each call broke;
+        # it reuses the trimmed messages and is skipped if it would not fit.
+        # The first calls are logged here: only the retry's calls go on.
+        for rejection_found in parser_rejected:
+            _log_rejection(rejection_found)
+        calls = []
+        reply = "".join(full_response).strip()
+        retry = _second_messages(messages, reply, parse_retry_nudge(parser_rejected))
+        estimate = request_tokens(system_prompt, retry, tools)
+        if estimate > budget:
+            logger.info("chat_retry_skipped", estimated_tokens=estimate, budget=budget)
+            carried_failed = len(parser_rejected)
+        else:
+            logger.info("chat_parse_retry", reasons=[r.reason for r in parser_rejected])
+            async for chunk in _stream_second_call(
+                system_prompt,
+                retry,
+                tools,
+                has_text=bool(full_response),
+                tool_choice="required",
+                calls=calls,
+                event="chat_retry_failed",
+            ):
+                full_response.append(chunk)
+                yield chunk
+            if not calls:
+                # No call came back (rate-limited, too large, or text only):
+                # the first calls keep their note.
+                carried_failed = len(parser_rejected)
     elif tools and needs_follow_up("".join(full_response), calls):
         # One nudge, never more: the model announced edits but made none.
         # It reuses the trimmed messages, and is skipped if it would not fit.
@@ -613,6 +689,7 @@ async def _stream_reply(
     user_texts = [m.content for m in history if m.role == "user"]
     job_post = application.notes or ""
     outcome = _call_outcome(calls, cv, user_texts=user_texts, job_post=job_post)
+    outcome.failed += carried_failed
     if cv is not None and outcome.edits:
         problems = structure_problems(cv.content, outcome.edits, user_content)
         if any(problems):

@@ -224,7 +224,7 @@ def test_valid_calls_parse(args: dict) -> None:
     [
         "{not json",
         "[]",
-        json.dumps({"op": "rewrite", "before": "x", "after": "y"}),
+        json.dumps({"op": "rename", "before": "x", "after": "y"}),
         json.dumps({"op": "replace", "before": "", "after": "y"}),
         json.dumps({"op": "replace", "before": "x"}),
         json.dumps({"op": "replace", "before": "x", "after": "x"}),

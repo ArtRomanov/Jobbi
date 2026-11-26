@@ -7,10 +7,18 @@ it. A call that does not validate is not a card: the chat shows
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
+from pydantic_core import PydanticCustomError
 
 from app.schemas.cv import CV_CONTENT_MAX_CHARS
 from app.services.chat_guard_notes import Language
@@ -112,6 +120,29 @@ _POSITIONS: dict[str, Position] = {
     "after_line": "after_line",
 }
 
+# gpt-oss quirks seen or likely on Groq; the values are matched lowercased,
+# with "-" and " " read as "_" (`_word`).
+_OP_SYNONYMS = {
+    "update": "replace",
+    "edit": "replace",
+    "rewrite": "replace",
+    "modify": "replace",
+    "delete": "remove",
+    "add": "insert",
+    "append": "insert",
+}
+_POSITION_SYNONYMS: dict[str, Position] = {
+    "top": "start",
+    "beginning": "start",
+    "bottom": "end",
+    "after": "after_line",
+}
+# Field-name synonyms: used only when the real field is missing or null.
+_FIELD_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "before": ("old", "original", "find"),
+    "after": ("new", "text", "replacement"),
+}
+
 _Text = Field(default=None, max_length=CV_CONTENT_MAX_CHARS)
 
 
@@ -127,23 +158,70 @@ class _ProposeCvEditArgs(BaseModel):
     position: str | None = Field(default=None, max_length=32)
     anchor: str | None = _Text
 
+    @model_validator(mode="before")
+    @classmethod
+    def _field_synonyms(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        for real, synonyms in _FIELD_SYNONYMS.items():
+            if data.get(real) is not None:
+                continue
+            for synonym in synonyms:
+                if data.get(synonym) is not None:
+                    data[real] = data[synonym]
+                    break
+        return data
+
+    @field_validator("op", mode="before")
+    @classmethod
+    def _op_synonym(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        word = _word(value)
+        return _OP_SYNONYMS.get(word, word)
+
+    @field_validator("position", mode="before")
+    @classmethod
+    def _position_synonym(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        word = _word(value)
+        return _POSITION_SYNONYMS.get(word, word)
+
     @model_validator(mode="after")
     def _check_op_fields(self) -> Self:
+        # Custom error types: the rejection log names the rule that failed.
         match self.op:
             case "replace":
                 if not _has_text(self.before) or self.after is None:
-                    raise ValueError("replace needs a non-empty before and an after")
+                    raise PydanticCustomError(
+                        "replace_fields",
+                        "replace needs a non-empty before and an after",
+                    )
                 if self.before == self.after:
-                    raise ValueError("replace changes nothing")
+                    raise PydanticCustomError(
+                        "replace_no_change", "replace changes nothing"
+                    )
             case "remove":
                 if not _has_text(self.before):
-                    raise ValueError("remove needs a non-empty before")
+                    raise PydanticCustomError(
+                        "remove_fields", "remove needs a non-empty before"
+                    )
             case "insert":
                 if not _has_text(self.after) or self.position not in _POSITIONS:
-                    raise ValueError("insert needs a non-empty after and a position")
+                    raise PydanticCustomError(
+                        "insert_fields", "insert needs a non-empty after and a position"
+                    )
                 if self.position == "after_line" and not _has_text(self.anchor):
-                    raise ValueError("insert after_line needs an anchor")
+                    raise PydanticCustomError(
+                        "insert_anchor", "insert after_line needs an anchor"
+                    )
         return self
+
+
+def _word(value: str) -> str:
+    return value.strip().lower().replace("-", "_").replace(" ", "_")
 
 
 def _has_text(value: str | None) -> bool:
@@ -164,16 +242,135 @@ class CvEdit:
     warning: str | None = None
 
 
-def parse_propose_cv_edit(name: str, arguments: str) -> CvEdit | None:
-    """Validate one tool call; None when it is not a usable `propose_cv_edit`."""
-    if name != PROPOSE_CV_EDIT:
-        return None
+RejectReason = Literal["wrong_name", "bad_json", "invalid_args", "over_card_limit"]
+
+# Model output, not user data, but still capped in the log.
+_MAX_LOGGED_NAME = 64
+_MAX_LOGGED_OP = 32
+_MAX_LOGGED_KEY = 32
+_MAX_LOGGED_KEYS = 20
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CallRejection:
+    """Why one tool call is not a usable edit.
+
+    `log_fields` describe the call's shape only (name, op, keys, text
+    lengths, decoder or pydantic error types); never argument values.
+    """
+
+    reason: RejectReason
+    log_fields: dict[str, Any] = field(default_factory=dict)
+
+    def summary(self) -> str:
+        """A short, value-free line for the model's retry nudge."""
+        match self.reason:
+            case "wrong_name":
+                return f"the tool name is not {PROPOSE_CV_EDIT}"
+            case "bad_json":
+                error = self.log_fields.get("json_error", "invalid JSON")
+                return f"the arguments are not valid JSON ({error})"
+            case "invalid_args":
+                parts = [
+                    f"{'.'.join(map(str, e['loc'])) or 'arguments'}: {e['type']}"
+                    for e in self.log_fields.get("errors", [])
+                ]
+                return "invalid arguments (" + "; ".join(parts) + ")"
+            case "over_card_limit":
+                return f"more than {MAX_CARDS_PER_REPLY} edits in one reply"
+
+
+def _canonical_name(name: str) -> str:
+    """The tool name without gpt-oss's harmony wrapping.
+
+    gpt-oss may leak its channel markup into the name
+    (`propose_cv_edit<|channel|>commentary`) or keep the namespace
+    (`functions.propose_cv_edit`).
+    """
+    name = name.split("<|", 1)[0].strip()
+    return name.removeprefix("functions.").strip()
+
+
+def _unwrap(raw: Any) -> Any:
+    """Undo one level of each wrapping gpt-oss is known to add.
+
+    A JSON string holding the JSON object (double-encoded), and an object
+    holding the real arguments under `arguments`, are each unwrapped once.
+    """
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return raw
+    if isinstance(raw, dict) and "op" not in raw and "arguments" in raw:
+        inner = raw["arguments"]
+        if isinstance(inner, str):
+            try:
+                inner = json.loads(inner)
+            except json.JSONDecodeError:
+                return raw
+        if isinstance(inner, dict):
+            return inner
+    return raw
+
+
+def _shape_fields(raw: Any) -> dict[str, Any]:
+    """The call's shape for the log: op, keys and text lengths, no values."""
+    if not isinstance(raw, dict):
+        return {"args_type": type(raw).__name__}
+    fields: dict[str, Any] = {
+        "arg_keys": sorted(str(k)[:_MAX_LOGGED_KEY] for k in raw)[:_MAX_LOGGED_KEYS]
+    }
+    if isinstance(op := raw.get("op"), str):
+        fields["op"] = op[:_MAX_LOGGED_OP]
+    for key in ("before", "after", "anchor"):
+        if isinstance(value := raw.get(key), str):
+            fields[f"{key}_len"] = len(value)
+    return fields
+
+
+def check_propose_cv_edit(name: str, arguments: str) -> CvEdit | CallRejection:
+    """Validate one tool call: the edit, or why it is not one."""
+    logged_name = name[:_MAX_LOGGED_NAME]
+    if _canonical_name(name) != PROPOSE_CV_EDIT:
+        return CallRejection(reason="wrong_name", log_fields={"name": logged_name})
     try:
         raw = json.loads(arguments)
+    except json.JSONDecodeError as e:
+        return CallRejection(
+            reason="bad_json",
+            log_fields={
+                "name": logged_name,
+                "json_error": e.msg,
+                "json_pos": e.pos,
+                "args_len": len(arguments),
+            },
+        )
+    raw = _unwrap(raw)
+    try:
         args = _ProposeCvEditArgs.model_validate(raw)
-    except (json.JSONDecodeError, ValidationError):
-        return None
+    except ValidationError as e:
+        errors = [
+            {
+                "loc": [str(part)[:_MAX_LOGGED_KEY] for part in err["loc"]],
+                "type": err["type"],
+            }
+            for err in e.errors(include_input=False, include_url=False)
+        ]
+        return CallRejection(
+            reason="invalid_args",
+            log_fields={"name": logged_name, "errors": errors, **_shape_fields(raw)},
+        )
+    return _to_edit(args)
 
+
+def parse_propose_cv_edit(name: str, arguments: str) -> CvEdit | None:
+    """Validate one tool call; None when it is not a usable `propose_cv_edit`."""
+    result = check_propose_cv_edit(name, arguments)
+    return result if isinstance(result, CvEdit) else None
+
+
+def _to_edit(args: _ProposeCvEditArgs) -> CvEdit:
     match args.op:
         case "replace":
             return CvEdit(

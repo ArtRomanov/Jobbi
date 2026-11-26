@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import groq
@@ -26,6 +26,49 @@ class LlmToolCall:
     name: str
     arguments: str
     rejected: str | None = None
+
+
+@dataclass(slots=True)
+class _CallParts:
+    """One tool call being assembled from stream deltas."""
+
+    call_id: str | None
+    name: str = ""
+    arguments: list[str] = field(default_factory=list)
+
+
+def _starts_new_call(current: _CallParts, call_id: str | None, name: str) -> bool:
+    """A delta at an index already in use begins another call.
+
+    gpt-oss on Groq may send several complete calls under one index; they
+    are told apart by a new call id, or (without ids) by a name arriving
+    after the current call already has its name and arguments.
+    """
+    if call_id and current.call_id:
+        return call_id != current.call_id
+    return bool(name and current.name and "".join(current.arguments))
+
+
+class _CallAssembler:
+    """Tool-call deltas keyed by `index`, assembled into calls in order."""
+
+    def __init__(self) -> None:
+        self.calls: list[_CallParts] = []
+        self._current: dict[int, _CallParts] = {}
+
+    def add(self, index: int, call_id: str | None, name: str, arguments: str) -> None:
+        current = self._current.get(index)
+        if current is None or _starts_new_call(current, call_id, name):
+            current = _CallParts(call_id=call_id)
+            self._current[index] = current
+            self.calls.append(current)
+        current.call_id = current.call_id or call_id
+        # Some servers repeat the whole name on every delta of a call;
+        # OpenAI-style streams send it once (or split, which we join).
+        if name and name != current.name:
+            current.name += name
+        if arguments:
+            current.arguments.append(arguments)
 
 
 class LlmRateLimitError(RuntimeError):
@@ -219,6 +262,7 @@ async def stream_llm_response(
     `LlmToolCall` per tool call the model made (only when `tools` is given).
     Tool calls arrive as deltas keyed by `index`: the first delta of a call
     carries its name, and the JSON arguments may be split across deltas.
+    Calls are yielded in the order they started (`_CallAssembler`).
     """
     settings = get_settings()
     client = _get_client()
@@ -233,8 +277,7 @@ async def stream_llm_response(
         if tools
         else {}
     )
-    names: dict[int, list[str]] = {}
-    arguments: dict[int, list[str]] = {}
+    assembler = _CallAssembler()
 
     try:
         stream = await client.chat.completions.create(
@@ -253,14 +296,13 @@ async def stream_llm_response(
             if delta.content:
                 yield delta.content
             for call in delta.tool_calls or []:
-                names.setdefault(call.index, [])
-                arguments.setdefault(call.index, [])
-                if call.function is None:
-                    continue
-                if call.function.name:
-                    names[call.index].append(call.function.name)
-                if call.function.arguments:
-                    arguments[call.index].append(call.function.arguments)
+                function = call.function
+                assembler.add(
+                    call.index,
+                    getattr(call, "id", None),
+                    (function.name or "") if function else "",
+                    (function.arguments or "") if function else "",
+                )
     except groq.AuthenticationError as e:
         logger.error("Groq authentication error", error=str(e))
         raise RuntimeError(
@@ -292,7 +334,5 @@ async def stream_llm_response(
         yield LlmToolCall(name="", arguments="", rejected=rejection)
         return
 
-    for index in sorted(names):
-        yield LlmToolCall(
-            name="".join(names[index]), arguments="".join(arguments[index])
-        )
+    for parts in assembler.calls:
+        yield LlmToolCall(name=parts.name, arguments="".join(parts.arguments))
