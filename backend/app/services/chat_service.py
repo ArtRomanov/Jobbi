@@ -1,6 +1,6 @@
 import re
-from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal
 
 import structlog
@@ -19,8 +19,12 @@ from app.services.chat_budget import (
     RATE_LIMITED_DETAIL,
     ChatUserError,
     fixed_tokens,
+    input_budget,
     message_tokens,
+    reply_tokens,
     request_tokens,
+    retry_limit,
+    with_margin,
 )
 from app.services.chat_card_service import (
     add_cards,
@@ -391,10 +395,103 @@ def _all_parser_rejected(calls: list[LlmToolCall]) -> list[CallRejection] | None
     return rejections if len(rejections) == len(results) else None
 
 
+# Messages trimmed to fit an input budget (Python 3.11: no `type` statement).
+BuildMessages = Callable[[int], list[dict[str, str]]]
+
+
+@dataclass(slots=True)
+class _Turn:
+    """Request sizing shared by the calls of one chat turn.
+
+    `limit` starts at `CHAT_REQUEST_TOKEN_LIMIT` and drops for the rest of the
+    turn when Groq answers 413; `messages` are the first call's trimmed
+    messages, which the second calls reuse.
+    """
+
+    system_prompt: str
+    tools: list[dict[str, Any]] | None
+    limit: int
+    messages: list[dict[str, str]] = field(default_factory=list)
+
+    def budget(self) -> int:
+        """Max input estimate of a request at the current limit."""
+        settings = get_settings()
+        return input_budget(
+            self.limit,
+            min_reply=settings.CHAT_MIN_REPLY_TOKENS,
+            cap=settings.CHAT_INPUT_TOKEN_BUDGET,
+        )
+
+
+async def _stream_sized(
+    turn: _Turn,
+    build: BuildMessages,
+    *,
+    tool_choice: Literal["auto", "required"] = "auto",
+    on_sent: Callable[[list[dict[str, str]]], None] | None = None,
+) -> AsyncIterator[str | LlmToolCall]:
+    """One Groq call sized to `turn.limit`, retried once smaller on a 413.
+
+    `build(budget)` returns the messages trimmed to an input estimate of at
+    most `budget` (or raises `ChatUserError`). `max_tokens` takes what the
+    limit leaves (`reply_tokens`). On Groq's 413 before any output the limit
+    drops by Groq's overshoot (`retry_limit`), the messages are built again
+    and the call is retried once; a second 413, or messages that no longer
+    fit, raise `LlmRequestTooLargeError`. `on_sent` gets the messages of the
+    request that went through.
+    """
+    settings = get_settings()
+    too_large: LlmRequestTooLargeError | None = None
+    for _ in range(2):
+        try:
+            messages = build(turn.budget())
+        except ChatUserError as e:
+            if too_large is None:
+                raise
+            logger.warning("chat_request_too_large_retry_skipped", limit=turn.limit)
+            raise too_large from e
+        estimated = request_tokens(turn.system_prompt, messages, turn.tools)
+        max_tokens = reply_tokens(
+            estimated,
+            limit=turn.limit,
+            max_tokens=settings.CHAT_MAX_TOKENS,
+            min_reply=settings.CHAT_MIN_REPLY_TOKENS,
+        )
+        started = False
+        try:
+            async for item in stream_llm_response(
+                turn.system_prompt,
+                messages,
+                tools=turn.tools,
+                tool_choice=tool_choice,
+                max_tokens=max_tokens,
+                estimated_tokens=estimated,
+            ):
+                if not started and on_sent is not None:
+                    on_sent(messages)
+                started = True
+                yield item
+            if not started and on_sent is not None:
+                on_sent(messages)
+            return
+        except LlmRequestTooLargeError as e:
+            if too_large is not None or started:
+                raise
+            too_large = e
+            sent = with_margin(estimated) + max_tokens
+            turn.limit = min(turn.limit, retry_limit(sent, e.limit))
+            logger.warning(
+                "chat_request_too_large_retry",
+                estimated_tokens=estimated,
+                max_tokens=max_tokens,
+                retry_limit=turn.limit,
+            )
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 async def _stream_second_call(
-    system_prompt: str,
-    messages: list[dict[str, str]],
-    tools: list[dict[str, Any]],
+    turn: _Turn,
+    build: BuildMessages,
     *,
     has_text: bool,
     tool_choice: Literal["auto", "required"],
@@ -403,15 +500,13 @@ async def _stream_second_call(
 ) -> AsyncIterator[str]:
     """Stream a nudged second call (follow-up or retry) into the same reply.
 
-    Its tool calls are added to `calls`. A rate limit or size error here keeps
-    the first reply: the second request comes right after the first one, in
-    the same per-minute quota.
+    Its tool calls are added to `calls`. A rate limit or size error here (after
+    `_stream_sized`'s one smaller retry) keeps the first reply: the second
+    request comes right after the first one, in the same per-minute quota.
     """
     separator = "\n\n" if has_text else ""
     try:
-        async for item in stream_llm_response(
-            system_prompt, messages, tools=tools, tool_choice=tool_choice
-        ):
+        async for item in _stream_sized(turn, build, tool_choice=tool_choice):
             if isinstance(item, LlmToolCall):
                 calls.append(item)
                 continue
@@ -431,6 +526,27 @@ def _second_messages(
         second.append({"role": "assistant", "content": reply})
     second.append({"role": "system", "content": nudge})
     return second
+
+
+def _second_build(
+    turn: _Turn, fit: BuildMessages, reply: str, nudge: str
+) -> tuple[int, BuildMessages]:
+    """A second call's input estimate, and how to build its messages.
+
+    They reuse the first call's trimmed messages. Only after a 413 (a smaller
+    budget they no longer fit) is the history trimmed again, to leave room
+    for the reply and the nudge.
+    """
+    second = _second_messages(turn.messages, reply, nudge)
+    extra = sum(map(message_tokens, second[len(turn.messages) :]))
+    estimate = request_tokens(turn.system_prompt, second, turn.tools)
+
+    def build(budget: int) -> list[dict[str, str]]:
+        if estimate <= budget:
+            return second
+        return _second_messages(fit(budget - extra), reply, nudge)
+
+    return estimate, build
 
 
 @dataclass(slots=True, kw_only=True)
@@ -565,25 +681,35 @@ async def _stream_reply(
     """
     system_prompt, _, cv = await get_application_context(db, application)
     language = reply_language(user_content)
-    budget = get_settings().CHAT_INPUT_TOKEN_BUDGET
 
     history = await get_chat_history(db, application.id)
+    cards = await cards_by_message(db, application.id)
     tools = [PROPOSE_CV_EDIT_TOOL] if cv is not None else None
-    messages = fit_llm_messages(
-        history,
-        await cards_by_message(db, application.id),
+    turn = _Turn(
         system_prompt=system_prompt,
         tools=tools,
-        budget=budget,
-        language=language,
+        limit=get_settings().CHAT_REQUEST_TOKEN_LIMIT,
     )
+
+    def fit(budget: int) -> list[dict[str, str]]:
+        return fit_llm_messages(
+            history,
+            cards,
+            system_prompt=system_prompt,
+            tools=tools,
+            budget=budget,
+            language=language,
+        )
+
+    def keep_sent(messages: list[dict[str, str]]) -> None:
+        turn.messages = messages
 
     full_response: list[str] = []
     calls: list[LlmToolCall] = []
     # Parser-rejected first calls whose retry brought no call back.
     carried_failed = 0
     try:
-        async for item in stream_llm_response(system_prompt, messages, tools=tools):
+        async for item in _stream_sized(turn, fit, on_sent=keep_sent):
             if isinstance(item, LlmToolCall):
                 calls.append(item)
                 continue
@@ -606,18 +732,16 @@ async def _stream_reply(
         # reuses the trimmed messages and is skipped if it would not fit.
         calls = []
         reply = "".join(full_response).strip()
-        retry = _second_messages(messages, reply, retry_nudge(rejection))
-        estimate = request_tokens(system_prompt, retry, tools)
-        if estimate > budget:
+        estimate, build = _second_build(turn, fit, reply, retry_nudge(rejection))
+        if estimate > (budget := turn.budget()):
             logger.info("chat_retry_skipped", estimated_tokens=estimate, budget=budget)
             calls.append(LlmToolCall(name="", arguments="", rejected=rejection))
         else:
             logger.info("chat_tool_use_retry", error=rejection)
             # The model meant to propose edits: this time a call is required.
             async for chunk in _stream_second_call(
-                system_prompt,
-                retry,
-                tools,
+                turn,
+                build,
                 has_text=bool(full_response),
                 tool_choice="required",
                 calls=calls,
@@ -639,17 +763,16 @@ async def _stream_reply(
             _log_rejection(rejection_found)
         calls = []
         reply = "".join(full_response).strip()
-        retry = _second_messages(messages, reply, parse_retry_nudge(parser_rejected))
-        estimate = request_tokens(system_prompt, retry, tools)
-        if estimate > budget:
+        nudge = parse_retry_nudge(parser_rejected)
+        estimate, build = _second_build(turn, fit, reply, nudge)
+        if estimate > (budget := turn.budget()):
             logger.info("chat_retry_skipped", estimated_tokens=estimate, budget=budget)
             carried_failed = len(parser_rejected)
         else:
             logger.info("chat_parse_retry", reasons=[r.reason for r in parser_rejected])
             async for chunk in _stream_second_call(
-                system_prompt,
-                retry,
-                tools,
+                turn,
+                build,
                 has_text=bool(full_response),
                 tool_choice="required",
                 calls=calls,
@@ -665,9 +788,8 @@ async def _stream_reply(
         # One nudge, never more: the model announced edits but made none.
         # It reuses the trimmed messages, and is skipped if it would not fit.
         reply = "".join(full_response).strip()
-        follow_up = _second_messages(messages, reply, FOLLOW_UP_NUDGE)
-        estimate = request_tokens(system_prompt, follow_up, tools)
-        if estimate > budget:
+        estimate, build = _second_build(turn, fit, reply, FOLLOW_UP_NUDGE)
+        if estimate > (budget := turn.budget()):
             logger.info(
                 "chat_follow_up_skipped", estimated_tokens=estimate, budget=budget
             )
@@ -675,9 +797,8 @@ async def _stream_reply(
             # The reply announced edits: this time a tool call is required.
             # An empty reply announced nothing, so the model may still answer.
             async for chunk in _stream_second_call(
-                system_prompt,
-                follow_up,
-                tools,
+                turn,
+                build,
                 has_text=bool(full_response),
                 tool_choice="required" if reply else "auto",
                 calls=calls,
@@ -699,9 +820,8 @@ async def _stream_reply(
             # broken (or no usable edit came back): the cards keep a warning.
             reply = "".join(full_response).strip()
             found = [p for edit_problems in problems for p in edit_problems]
-            repair = _second_messages(messages, reply, repair_nudge(found))
-            estimate = request_tokens(system_prompt, repair, tools)
-            if estimate > budget:
+            estimate, build = _second_build(turn, fit, reply, repair_nudge(found))
+            if estimate > (budget := turn.budget()):
                 logger.info(
                     "chat_repair_skipped", estimated_tokens=estimate, budget=budget
                 )
@@ -709,9 +829,8 @@ async def _stream_reply(
                 logger.info("chat_structure_repair", problems=[p.kind for p in found])
                 repair_calls: list[LlmToolCall] = []
                 async for chunk in _stream_second_call(
-                    system_prompt,
-                    repair,
-                    tools or [],
+                    turn,
+                    build,
                     has_text=bool(full_response),
                     tool_choice="required",
                     calls=repair_calls,

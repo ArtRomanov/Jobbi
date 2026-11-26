@@ -122,8 +122,13 @@ async def test_follow_up_call_gets_the_same_options(
         [_chunk("Let me fetch the current CV.")], [_chunk("Nothing to change.")]
     )
 
+    # A limit far above the request: max_tokens is the configured cap (under
+    # the 8000 default limit it would be lowered to fit the request).
     with _chat_settings(
-        GROQ_MODEL=GPT_OSS, CHAT_REASONING_EFFORT="high", CHAT_MAX_TOKENS=7000
+        GROQ_MODEL=GPT_OSS,
+        CHAT_REASONING_EFFORT="high",
+        CHAT_MAX_TOKENS=7000,
+        CHAT_REQUEST_TOKEN_LIMIT=100_000,
     ):
         await _send_seq(client, setup, fake, "Shorten it")
 

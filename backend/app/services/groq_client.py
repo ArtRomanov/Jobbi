@@ -1,3 +1,4 @@
+import re
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -71,12 +72,61 @@ class _CallAssembler:
             current.arguments.append(arguments)
 
 
+@dataclass(frozen=True, slots=True)
+class GroqLimit:
+    """The numbers in Groq's 413/429 message; None for any it does not name.
+
+    E.g. "... on tokens per minute (TPM): Limit 8000, Requested 9500, ...":
+    kind "TPM" (or ITPM, TPD, RPM ...), limit 8000, requested 9500.
+    """
+
+    kind: str | None
+    limit: int | None
+    requested: int | None
+
+
+_LIMIT_KIND = re.compile(r"\(([A-Z]{2,5})\)")
+_LIMIT = re.compile(r"\bLimit (\d+)")
+_REQUESTED = re.compile(r"\bRequested (\d+)")
+
+
+def parse_groq_limit(body: object) -> GroqLimit:
+    """The limit numbers of a Groq error body (`{"error": {...}}` or the error).
+
+    Only these numbers are kept: the message also names the organization.
+    """
+    error = body.get("error", body) if isinstance(body, Mapping) else None
+    message = error.get("message") if isinstance(error, Mapping) else None
+    if not isinstance(message, str):
+        return GroqLimit(kind=None, limit=None, requested=None)
+
+    def number(pattern: re.Pattern[str]) -> int | None:
+        found = pattern.search(message)
+        return int(found.group(1)) if found else None
+
+    kind = _LIMIT_KIND.search(message)
+    return GroqLimit(
+        kind=kind.group(1) if kind else None,
+        limit=number(_LIMIT),
+        requested=number(_REQUESTED),
+    )
+
+
 class LlmRateLimitError(RuntimeError):
     """Groq 429: the model's per-minute (or per-day) token quota is used up."""
 
+    def __init__(self, message: str, *, limit: GroqLimit) -> None:
+        super().__init__(message)
+        self.limit = limit
+
 
 class LlmRequestTooLargeError(RuntimeError):
-    """Groq 413: this one request is over the model's input-token limit."""
+    """Groq 413: this one request (input + max_tokens) is over the model's
+    per-minute token limit."""
+
+    def __init__(self, message: str, *, limit: GroqLimit) -> None:
+        super().__init__(message)
+        self.limit = limit
 
 
 def _get_client() -> groq.AsyncGroq:
@@ -238,6 +288,27 @@ def _is_tool_use_failed(body: object) -> bool:
     return isinstance(error, Mapping) and error.get("code") == "tool_use_failed"
 
 
+def _log_limit(
+    event: str,
+    error: groq.APIStatusError,
+    limit: GroqLimit,
+    max_tokens: int,
+    estimated_tokens: int | None,
+) -> None:
+    """Log Groq's limit numbers next to ours. Never the message: it names the
+    organization."""
+    logger.error(
+        event,
+        status_code=error.status_code,
+        limit_kind=limit.kind,
+        limit=limit.limit,
+        requested=limit.requested,
+        estimated_tokens=estimated_tokens,
+        max_tokens=max_tokens,
+        model=get_settings().GROQ_MODEL,
+    )
+
+
 def _rejection_message(body: object) -> str:
     """Groq's `error.message` of a `tool_use_failed` body, capped.
 
@@ -255,6 +326,8 @@ async def stream_llm_response(
     tools: list[dict[str, Any]] | None = None,
     *,
     tool_choice: Literal["auto", "required"] = "auto",
+    max_tokens: int | None = None,
+    estimated_tokens: int | None = None,
 ) -> AsyncIterator[str | LlmToolCall]:
     """Stream the LLM's response.
 
@@ -263,9 +336,13 @@ async def stream_llm_response(
     Tool calls arrive as deltas keyed by `index`: the first delta of a call
     carries its name, and the JSON arguments may be split across deltas.
     Calls are yielded in the order they started (`_CallAssembler`).
+
+    `max_tokens` defaults to `CHAT_MAX_TOKENS`; `estimated_tokens` (our input
+    estimate) only goes into the 413/429 log line.
     """
     settings = get_settings()
     client = _get_client()
+    reply_cap = settings.CHAT_MAX_TOKENS if max_tokens is None else max_tokens
 
     full_messages = [
         {"role": "system", "content": system_prompt},
@@ -283,7 +360,7 @@ async def stream_llm_response(
         stream = await client.chat.completions.create(
             model=settings.GROQ_MODEL,
             # gpt-oss spends part of this cap on reasoning (not shown).
-            max_tokens=settings.CHAT_MAX_TOKENS,
+            max_tokens=reply_cap,
             messages=full_messages,
             stream=True,
             **reasoning_options(settings.GROQ_MODEL, settings.CHAT_REASONING_EFFORT),
@@ -309,19 +386,21 @@ async def stream_llm_response(
             "AI service authentication failed. Please contact the operator."
         ) from e
     except groq.RateLimitError as e:
-        logger.error("Groq rate limit", error=str(e))
+        limit = parse_groq_limit(e.body)
+        _log_limit("groq_rate_limited", e, limit, reply_cap, estimated_tokens)
         raise LlmRateLimitError(
-            "Rate limit reached. Please try again in a moment."
+            "Rate limit reached. Please try again in a moment.", limit=limit
         ) from e
     except groq.APIConnectionError as e:
         logger.error("Groq connection error", error=str(e))
         raise RuntimeError("Couldn't reach the AI service. Please try again.") from e
     except groq.APIError as e:
         if isinstance(e, groq.APIStatusError) and e.status_code == 413:
-            # The error text names the organization: log the status only.
-            logger.error("Groq request too large", status_code=e.status_code)
+            limit = parse_groq_limit(e.body)
+            _log_limit("groq_request_too_large", e, limit, reply_cap, estimated_tokens)
             raise LlmRequestTooLargeError(
-                "The request is over the model's input-token limit."
+                "The request is over the model's per-minute token limit.",
+                limit=limit,
             ) from e
         if not (tools and _is_tool_use_failed(e.body)):
             logger.error("Groq API error", error=str(e))

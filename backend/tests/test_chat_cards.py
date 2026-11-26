@@ -19,6 +19,7 @@ from app.models.chat_change_card import ChatChangeCard
 from app.models.chat_message import ChatMessage
 from app.models.cv import Cv
 from app.services import chat_service, cv_service
+from app.services.chat_budget import input_budget
 from app.services.chat_card_service import (
     CARD_NOTE_HEADER,
     REMOVED_TEXT_LABEL,
@@ -1248,10 +1249,18 @@ async def test_retry_fits_the_input_budget(
     with patch.object(chat_service, "request_tokens", _spy):
         await _send_failing(client, setup, fake)
 
+    # Each request is estimated (that also sizes its max_tokens); the retry's
+    # estimate is the one checked against the budget.
     retry = fake.calls[1]
     system, *messages = retry["messages"]
-    assert estimates == [real(system["content"], messages, retry["tools"])]
-    assert estimates[0] <= get_settings().CHAT_INPUT_TOKEN_BUDGET
+    assert estimates[-1] == real(system["content"], messages, retry["tools"])
+    settings = get_settings()
+    budget = input_budget(
+        settings.CHAT_REQUEST_TOKEN_LIMIT,
+        min_reply=settings.CHAT_MIN_REPLY_TOKENS,
+        cap=settings.CHAT_INPUT_TOKEN_BUDGET,
+    )
+    assert estimates[-1] <= budget
 
 
 async def test_other_groq_errors_still_end_the_stream_with_error(

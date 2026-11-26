@@ -300,15 +300,20 @@ def _status_error(status: int, cls: type[groq.APIStatusError]) -> groq.APIStatus
 
 
 class _RaisingGroq(_SequenceGroq):
-    """Answers the n-th `create` call (1-based) with an error."""
+    """Answers the n-th `create` call (1-based), or every one from it, with an
+    error."""
 
-    def __init__(self, error: Exception, at: int, *answers: list[Any]) -> None:
+    def __init__(
+        self, error: Exception, at: int, *answers: list[Any], every: bool = False
+    ) -> None:
         super().__init__(*answers)
         self.error = error
         self.at = at
+        self.every = every  # also every call after the n-th
 
     async def _create(self, **kwargs: Any) -> AsyncIterator[Any]:
-        if len(self.calls) + 1 == self.at:
+        n = len(self.calls) + 1
+        if n == self.at or (self.every and n > self.at):
             self.calls.append(kwargs)
             raise self.error
         return await super()._create(**kwargs)
@@ -339,10 +344,12 @@ async def test_groq_size_and_rate_errors_reach_the_user_clearly(
     cls: type[groq.APIStatusError],
     texts: dict[str, str],
 ) -> None:
-    fake = _RaisingGroq(_status_error(status, cls), 1)
+    # A 413 is retried once smaller: only a second 413 reaches the user.
+    fake = _RaisingGroq(_status_error(status, cls), 1, every=True)
 
     events = await _send_seq(client, setup, fake, "Hello")
 
+    assert len(fake.calls) == (2 if status == 413 else 1)
     assert events == [("error", {"detail": texts["en"]})]
 
 

@@ -24,11 +24,18 @@ class Settings(BaseSettings):
     # How hard a gpt-oss chat model reasons before replying; other models get
     # no reasoning_effort at all (see app.core.llm_options).
     CHAT_REASONING_EFFORT: Literal["low", "medium", "high"] = "medium"
-    # Max estimated input tokens of one chat request (system prompt with CV and
-    # vacancy, history, tools schema; the reply's max_tokens is not counted).
-    # Model-agnostic: keep it under GROQ_MODEL's per-request input limit (Groq
-    # on-demand chat models: ~7000 tokens per minute). The estimate runs ~10%
-    # high, so 6500 is about 5900 real tokens.
+    # Groq checks input + max_tokens of each request against GROQ_MODEL's
+    # tokens-per-minute limit and answers 413 above it (gpt-oss-20b free tier:
+    # 8000). Each chat request is sized to fit: the history is trimmed and
+    # max_tokens lowered (never under CHAT_MIN_REPLY_TOKENS) so that the input
+    # estimate (+15% margin) + max_tokens <= this.
+    CHAT_REQUEST_TOKEN_LIMIT: int = Field(default=8000, ge=2000)
+    # Reply tokens a request always keeps (gpt-oss reasons inside them): older
+    # history is left out before max_tokens goes below this.
+    CHAT_MIN_REPLY_TOKENS: int = Field(default=2048, ge=256)
+    # Upper bound on the estimated input of one chat request (system prompt
+    # with CV and vacancy, history, tools schema), on top of the room
+    # CHAT_REQUEST_TOKEN_LIMIT leaves (about 5175 at the defaults).
     CHAT_INPUT_TOKEN_BUDGET: int = Field(default=6500, ge=1000)
     # Model for vacancy discovery (separate from the chat model above).
     GROQ_DISCOVERY_MODEL: str = "openai/gpt-oss-20b"
