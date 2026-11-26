@@ -213,9 +213,33 @@ def _is_tool_use_failed(body: object) -> bool:
     return isinstance(error, Mapping) and error.get("code") == "tool_use_failed"
 
 
+def _midstream_limit_status(body: object) -> int | None:
+    """413 or 429 for a limit error Groq sent inside the stream, else None.
+
+    Mid-stream the SDK raises a plain `APIError` (no status code) whose body
+    is the error object; Groq's message says which limit it is.
+    """
+    error = body.get("error", body) if isinstance(body, Mapping) else None
+    message = error.get("message") if isinstance(error, Mapping) else None
+    if not isinstance(message, str):
+        return None
+    if message.startswith("Request too large"):
+        return 413
+    if message.startswith("Rate limit reached"):
+        return 429
+    return None
+
+
+def _error_code(body: object) -> str | None:
+    """Groq's `error.code` (e.g. "rate_limit_exceeded"), capped; never the message."""
+    error = body.get("error", body) if isinstance(body, Mapping) else None
+    code = error.get("code") if isinstance(error, Mapping) else None
+    return code[:64] if isinstance(code, str) else None
+
+
 def _log_limit(
     event: str,
-    error: groq.APIStatusError,
+    error: groq.APIError,
     limit: GroqLimit,
     max_tokens: int,
     estimated_tokens: int | None,
@@ -224,7 +248,7 @@ def _log_limit(
     organization."""
     logger.error(
         event,
-        status_code=error.status_code,
+        status_code=getattr(error, "status_code", None),
         limit_kind=limit.kind,
         limit=limit.limit,
         requested=limit.requested,
@@ -308,7 +332,18 @@ async def stream_llm_response(
         logger.error("Groq connection error", error=str(e))
         raise RuntimeError("Couldn't reach the AI service. Please try again.") from e
     except groq.APIError as e:
-        if isinstance(e, groq.APIStatusError) and e.status_code == 413:
+        status = (
+            e.status_code
+            if isinstance(e, groq.APIStatusError)
+            else _midstream_limit_status(e.body)
+        )
+        if status == 429:
+            limit = parse_groq_limit(e.body)
+            _log_limit("groq_rate_limited", e, limit, reply_cap, estimated_tokens)
+            raise LlmRateLimitError(
+                "Rate limit reached. Please try again in a moment.", limit=limit
+            ) from e
+        if status == 413:
             limit = parse_groq_limit(e.body)
             _log_limit("groq_request_too_large", e, limit, reply_cap, estimated_tokens)
             raise LlmRequestTooLargeError(
@@ -316,7 +351,14 @@ async def stream_llm_response(
                 limit=limit,
             ) from e
         if not (tools and _is_tool_use_failed(e.body)):
-            logger.error("Groq API error", error=str(e))
+            # Never the message or body: they name the organization, and a
+            # body may carry the model's output.
+            logger.error(
+                "Groq API error",
+                error_type=type(e).__name__,
+                status_code=getattr(e, "status_code", None),
+                code=_error_code(e.body),
+            )
             raise
         # Groq checks the model's tool calls against the tool's JSON schema
         # and fails the whole generation on a mismatch. Keep the text streamed

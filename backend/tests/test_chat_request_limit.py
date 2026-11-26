@@ -88,6 +88,34 @@ class _FailingGroq(_SequenceGroq):
         return await super()._create(**kwargs)
 
 
+def _midstream_error(message: str) -> groq.APIError:
+    """What the Groq SDK raises for an error event inside the stream: a plain
+    APIError (no status code) whose body is the error object alone."""
+    request = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    return groq.APIError(message, request, body=_body(message)["error"])
+
+
+class _MidStreamFailingGroq(_SequenceGroq):
+    """The listed `create` calls (1-based) open a stream that raises `error`."""
+
+    def __init__(self, error: Exception, at: set[int], *answers: list[Any]) -> None:
+        super().__init__(*answers)
+        self.error = error
+        self.at = at
+
+    async def _create(self, **kwargs: Any) -> AsyncIterator[Any]:
+        if len(self.calls) + 1 not in self.at:
+            return await super()._create(**kwargs)
+        self.calls.append(kwargs)
+        error = self.error
+
+        async def _gen() -> AsyncIterator[Any]:
+            raise error
+            yield  # pragma: no cover
+
+        return _gen()
+
+
 @contextmanager
 def _settings(**values: Any) -> Iterator[None]:
     settings = get_settings()
@@ -377,3 +405,69 @@ async def test_request_limit_setting_is_used(
 
     call = fake.calls[0]
     assert with_margin(_sent_tokens(call)) + call["max_tokens"] <= 6000
+
+
+# ---------------------------------------------------------------------------
+# The same limit errors raised inside the stream (no status code)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("message", "error_type", "limit"),
+    [
+        (GPT_OSS_413, LlmRequestTooLargeError, GroqLimit("TPM", 8000, 11950)),
+        (TPM_429, LlmRateLimitError, GroqLimit("TPM", 8000, 1443)),
+    ],
+    ids=["413", "429"],
+)
+async def test_midstream_limit_error_maps_like_the_status_error(
+    logs: list[dict[str, Any]],
+    message: str,
+    error_type: type[Exception],
+    limit: GroqLimit,
+) -> None:
+    fake = _MidStreamFailingGroq(_midstream_error(message), {1})
+
+    with (
+        patch("app.services.groq_client._get_client", return_value=fake),
+        pytest.raises(error_type) as caught,
+    ):
+        async for _ in stream_llm_response(
+            "s", [], tools=[PROPOSE_CV_EDIT_TOOL], max_tokens=2000
+        ):
+            pass
+
+    assert caught.value.limit == limit  # type: ignore[attr-defined]
+    assert "org_secret" not in repr(logs)
+
+
+async def test_midstream_other_error_is_logged_without_its_message(
+    logs: list[dict[str, Any]],
+) -> None:
+    error = _midstream_error("Internal failure in organization `org_secret`")
+    fake = _MidStreamFailingGroq(error, {1})
+
+    with (
+        patch("app.services.groq_client._get_client", return_value=fake),
+        pytest.raises(groq.APIError),
+    ):
+        async for _ in stream_llm_response("s", [], tools=[PROPOSE_CV_EDIT_TOOL]):
+            pass
+
+    assert any(e["event"] == "Groq API error" for e in logs)
+    assert "org_secret" not in repr(logs)
+
+
+async def test_midstream_413_before_any_output_retries_once_smaller(
+    client: httpx.AsyncClient, setup: dict[str, str], logs: list[dict[str, Any]]
+) -> None:
+    fake = _MidStreamFailingGroq(
+        _midstream_error(SMALL_413), {1}, [_chunk("never")], [_chunk("Fine.")]
+    )
+
+    events = await _send_seq(client, setup, fake, "Hello")
+
+    assert len(fake.calls) == 2
+    assert fake.calls[1]["max_tokens"] < fake.calls[0]["max_tokens"]
+    assert [name for name, _ in events] == ["token", "cards", "done"]
+    assert "org_secret" not in repr(logs)
