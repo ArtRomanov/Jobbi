@@ -27,6 +27,7 @@ from app.services.chat_card_service import (
     card_history_note,
     cards_by_message,
     delete_application_cards,
+    place_edit,
 )
 from app.services.chat_guard_notes import (
     Language,
@@ -37,6 +38,7 @@ from app.services.chat_guard_notes import (
 from app.services.chat_tools import (
     MALFORMED_CALL_NOTE,
     MAX_CARDS_PER_REPLY,
+    PASSAGE_NOT_FOUND_NOTE,
     PROPOSE_CV_EDIT_TOOL,
     REJECTED_CALLS_NOTE,
     CvEdit,
@@ -306,6 +308,21 @@ def drop_unsupported_edits(
     return kept, left_out
 
 
+def place_edits(cv: str, edits: Sequence[CvEdit]) -> tuple[list[CvEdit], int]:
+    """The edits Accept can apply, quotes made exact, and how many were dropped.
+
+    A quote that differs from the CV only in whitespace (a hard-wrapped
+    paragraph quoted with spaces) is rewritten to the exact CV text, so the
+    structure check and the stored card see the real passage. An edit whose
+    passage is not in the CV at all is dropped (`place_edit`).
+    """
+    placed: list[CvEdit] = []
+    for edit in edits:
+        if (fixed := place_edit(cv, edit)) is not None:
+            placed.append(fixed)
+    return placed, len(edits) - len(placed)
+
+
 def needs_follow_up(reply: str, calls: list[LlmToolCall]) -> bool:
     """The model ended its turn without the edits it announced.
 
@@ -386,6 +403,7 @@ class _CallOutcome:
     rejected: bool  # Groq rejected the calls (`tool_use_failed`)
     failed: int  # calls that are not a usable edit
     left_out: list[list[str]]  # per edit the fact guard left out: its names
+    unplaced: int = 0  # edits whose quoted passage is not in the CV
 
 
 def _call_outcome(
@@ -396,13 +414,20 @@ def _call_outcome(
     rejected = any(c.rejected is not None for c in calls)
     calls = [c for c in calls if c.rejected is None]
     edits, failed = _validate_calls(calls) if cv is not None else ([], len(calls))
+    unplaced = 0
+    if cv is not None and edits:
+        edits, unplaced = place_edits(cv.content, edits)
     left_out: list[list[str]] = []
     if cv is not None and edits:
         edits, left_out = drop_unsupported_edits(
             edits, cv=cv.content, user_texts=user_texts, job_post=job_post
         )
     return _CallOutcome(
-        edits=edits, rejected=rejected, failed=failed, left_out=left_out
+        edits=edits,
+        rejected=rejected,
+        failed=failed,
+        left_out=left_out,
+        unplaced=unplaced,
     )
 
 
@@ -631,6 +656,7 @@ async def _stream_reply(
                         rejected=outcome.rejected or repaired.rejected,
                         failed=outcome.failed + repaired.failed,
                         left_out=left_out,
+                        unplaced=outcome.unplaced + repaired.unplaced,
                     )
                     problems = structure_problems(
                         cv.content, outcome.edits, user_content
@@ -640,6 +666,7 @@ async def _stream_reply(
     notes = (
         [REJECTED_CALLS_NOTE[language]] * outcome.rejected
         + [MALFORMED_CALL_NOTE] * outcome.failed
+        + [PASSAGE_NOT_FOUND_NOTE[language]] * outcome.unplaced
         + [unsupported_names_note(names, language) for names in left_out]
     )
     streamed = "".join(full_response)

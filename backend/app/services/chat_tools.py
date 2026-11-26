@@ -27,6 +27,15 @@ REJECTED_CALLS_NOTE: dict[Language, str] = {
     ),
 }
 
+# A call whose quoted passage (or anchor) is not in the CV, even with
+# whitespace ignored: Accept could never apply it, so it is no card.
+PASSAGE_NOT_FOUND_NOTE: dict[Language, str] = {
+    "en": (
+        "Could not prepare one suggested change: the text it quotes is not in your CV."
+    ),
+    "ru": "Не удалось подготовить одну правку: цитируемого текста нет в вашем CV.",
+}
+
 # Bounds one reply; extra calls are dropped with the malformed note.
 MAX_CARDS_PER_REPLY = 10
 

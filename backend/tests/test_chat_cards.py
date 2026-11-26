@@ -639,6 +639,26 @@ async def test_two_cards_from_one_reply_accept_one_after_another(
 # ---------------------------------------------------------------------------
 
 
+async def _stored_card(
+    client: httpx.AsyncClient,
+    s: dict[str, str],
+    db: AsyncSession,
+    edit: dict,
+    **stored: str,
+) -> dict:
+    """A card whose stored quote is not in the CV (made before the creation check).
+
+    The chat no longer stores such a card, so a valid one is proposed and its
+    `stored` fields are then overwritten in the database.
+    """
+    (card,) = await _propose(client, s, edit)
+    await db.execute(
+        update(ChatChangeCard).where(ChatChangeCard.id == card["id"]).values(**stored)
+    )
+    await db.commit()
+    return card
+
+
 async def _card_state(db: AsyncSession, card_id: str) -> str:
     return (
         await db.execute(
@@ -650,7 +670,13 @@ async def _card_state(db: AsyncSession, card_id: str) -> str:
 async def test_accept_missing_passage_marks_stale(
     client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
 ) -> None:
-    (card,) = await _propose(client, setup, {"op": "remove", "before": "- Rust"})
+    card = await _stored_card(
+        client,
+        setup,
+        db_session,
+        {"op": "remove", "before": "- jQuery"},
+        before_text="- Rust",
+    )
 
     resp = await _decide(client, setup, card["id"])
 
@@ -684,12 +710,14 @@ async def test_accept_after_user_edited_the_passage_is_stale(
 
 
 async def test_accept_missing_anchor_marks_stale(
-    client: httpx.AsyncClient, setup: dict[str, str]
+    client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
 ) -> None:
-    (card,) = await _propose(
+    card = await _stored_card(
         client,
         setup,
-        {"op": "insert", "after": "x", "position": "after_line", "anchor": "- Go"},
+        db_session,
+        {"op": "insert", "after": "x", "position": "after_line", "anchor": "- Python"},
+        anchor_text="- Go",
     )
 
     resp = await _decide(client, setup, card["id"])
@@ -1359,7 +1387,13 @@ async def test_card_is_outdated_once_the_user_sends_a_new_message(
 async def test_outdated_stale_card_cannot_be_rejected(
     client: httpx.AsyncClient, setup: dict[str, str], db_session: AsyncSession
 ) -> None:
-    (old,) = await _propose(client, setup, {"op": "remove", "before": "- Rust"})
+    old = await _stored_card(
+        client,
+        setup,
+        db_session,
+        {"op": "remove", "before": "- jQuery"},
+        before_text="- Rust",
+    )
     assert (await _decide(client, setup, old["id"])).json()["detail"] == "CARD_STALE"
     await _send(client, setup, _chunk("Just text."))
 

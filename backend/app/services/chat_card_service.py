@@ -4,8 +4,10 @@ A card is matched against the RAW stored CV text, never the defanged copy the
 model saw (tech spec 2.5): a passage containing "<<<" therefore goes stale.
 """
 
+import re
 from collections import defaultdict
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import ClassVar, NoReturn
 
@@ -115,6 +117,58 @@ def _find_once(content: str, needle: str) -> int:
     return first
 
 
+_WHITESPACE_OR_TEXT = re.compile(r"\s+|\S+")
+
+
+def _squeeze(text: str) -> tuple[str, list[int], list[int]]:
+    """`text` with each whitespace run as one space, and where each char came from.
+
+    For every character of the squeezed text, `starts` / `ends` hold the start
+    and end of what it stands for in `text` (a whole run for a squeezed space).
+    Linear time: a whitespace run and a non-whitespace run never share a
+    character, so the regex never backtracks.
+    """
+    parts: list[str] = []
+    starts: list[int] = []
+    ends: list[int] = []
+    for match in _WHITESPACE_OR_TEXT.finditer(text):
+        lo, hi = match.span()
+        if match.group().isspace():
+            parts.append(" ")
+            starts.append(lo)
+            ends.append(hi)
+        else:
+            parts.append(match.group())
+            starts.extend(range(lo, hi))
+            ends.extend(range(lo + 1, hi + 1))
+    return "".join(parts), starts, ends
+
+
+def _locate_once(content: str, needle: str) -> tuple[int, int]:
+    """(start, end) of the only passage of `content` that `needle` quotes.
+
+    An exact match comes first. When there is none, runs of whitespace
+    (spaces, tabs, line breaks) count as equal: the model often quotes a
+    hard-wrapped CV paragraph with spaces where the CV breaks its lines. That
+    looser match must be unique too, else the passage counts as missing (and
+    Accept may still re-aim it, `cv_rebase`).
+
+    Raises _PassageMissing, or _PassageNotUnique for an exact repeat.
+    """
+    try:
+        start = _find_once(content, needle)
+    except _PassageMissing:
+        pass
+    else:
+        return start, start + len(needle)
+    squeezed, starts, ends = _squeeze(content)
+    target = _squeeze(needle)[0]
+    first = squeezed.find(target)
+    if not target or first == -1 or squeezed.find(target, first + 1) != -1:
+        raise _PassageMissing
+    return starts[first], ends[first + len(target) - 1]
+
+
 def normalize_newlines(text: str) -> str:
     """CRLF and lone CR become LF (uploaded or pasted text may carry them)."""
     return text.replace("\r\n", "\n").replace("\r", "\n")
@@ -144,11 +198,10 @@ def apply_card_edit(
         anchor_text = normalize_newlines(anchor_text)
     match op:
         case "replace":
-            start = _find_once(content, before_text)
-            return content[:start] + after_text + content[start + len(before_text) :]
+            start, end = _locate_once(content, before_text)
+            return content[:start] + after_text + content[end:]
         case "remove":
-            start = _find_once(content, before_text)
-            end = start + len(before_text)
+            start, end = _locate_once(content, before_text)
             # Removing whole lines also removes their line break, so no blank
             # line is left behind.
             at_line_start = start == 0 or content[start - 1] == "\n"
@@ -168,9 +221,8 @@ def apply_card_edit(
                     separator = "" if content.endswith("\n") else "\n"
                     return f"{content}{separator}{block}"
                 case "after_line":
-                    anchor = anchor_text or ""
-                    start = _find_once(content, anchor)
-                    line_end = content.find("\n", start + len(anchor))
+                    _, anchor_end = _locate_once(content, anchor_text or "")
+                    line_end = content.find("\n", anchor_end)
                     if line_end == -1:
                         return f"{content}\n{block}"
                     return (
@@ -222,6 +274,42 @@ def apply_card_edit_rebased(
         else:
             raise
     return apply_card_edit(content, **edit)
+
+
+def place_edit(content: str, edit: CvEdit) -> CvEdit | None:
+    """The edit as a card can store it, or None when Accept could never apply it.
+
+    A quote (`before_text`, or an insert's `anchor_text`) that matches the CV
+    only with different whitespace is replaced by the exact CV text, so the
+    card shows and applies the real passage; `after_text` stays as the model
+    wrote it. The edit is then dry-run the way Accept runs it: a passage that
+    cannot be found even so (nor re-aimed) means None. A passage found more
+    than once is kept, as before: Accept answers PASSAGE_NOT_UNIQUE.
+    """
+    content = normalize_newlines(content)
+    field = "anchor_text" if edit.op == "insert" else "before_text"
+    quote = getattr(edit, field)
+    if quote is not None and (edit.op != "insert" or edit.position == "after_line"):
+        try:
+            start, end = _locate_once(content, normalize_newlines(quote))
+        except (_PassageMissing, _PassageNotUnique):
+            pass
+        else:
+            edit = replace(edit, **{field: content[start:end]})
+    try:
+        apply_card_edit_rebased(
+            content,
+            op=edit.op,
+            before_text=edit.before_text,
+            after_text=edit.after_text,
+            position=edit.position,
+            anchor_text=edit.anchor_text,
+        )
+    except _PassageMissing:
+        return None
+    except _PassageNotUnique:
+        pass
+    return edit
 
 
 # ---------------------------------------------------------------------------
