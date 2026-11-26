@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from app.services.chat_tools import PROPOSE_CV_EDIT
+from evals.cv_chat.fixtures import CV
 
 CheckKind = Literal[
     "present",  # `text` is in the CV (or in `section`)
@@ -19,6 +20,11 @@ CheckKind = Literal[
     "reply_cyrillic",  # the last reply is written in Cyrillic
     "reply_asks_or_explains",  # the last reply asks a question or says why not
     "cv_no_cyrillic",  # the CV stays in its own language (English here)
+    # Backlog #27, CV structure:
+    "only_removed",  # exactly the `text` section is gone, nothing else changed
+    "ars_kept",  # every EXPERIENCE bullet is action – result – scope or unchanged
+    "min_sections",  # a `# ` header and at least int(`text`) `## ` sections
+    "wording_kept",  # same words as before once Markdown markup is ignored
 ]
 
 
@@ -50,6 +56,8 @@ class Scenario:
     turns: tuple[Turn, ...]
     # Scored on the CV after all cards of all turns are accepted.
     requests: tuple[Request, ...]
+    # The CV the scenario starts from.
+    cv: str = CV
 
 
 @dataclass(slots=True, kw_only=True)
@@ -85,6 +93,38 @@ def section_body(cv: str, name: str) -> str:
 
 def h3_count(cv: str) -> int:
     return len(_H3.findall(cv))
+
+
+_BULLET_LINE = re.compile(r"^\s*[-*]\s+(.+)$", re.MULTILINE)
+_ARS = re.compile(r"^\*\*[^*]+:\*\* .+\*\*Scope:\*\* .+")
+
+
+def experience_bullets(cv: str) -> list[str]:
+    return [b.strip() for b in _BULLET_LINE.findall(section_body(cv, "EXPERIENCE"))]
+
+
+def is_ars(bullet: str) -> bool:
+    """`**Action:** result. **Scope:** ...` (the bullet text without "- ")."""
+    return _ARS.match(bullet) is not None
+
+
+def without_section(cv: str, name: str) -> str:
+    """`cv` with the `## name` section (heading and body) taken out."""
+    pattern = re.compile(
+        rf"^##\s+{re.escape(name)}\s*$.*?(?=^##\s|\Z)",
+        re.MULTILINE | re.DOTALL | re.IGNORECASE,
+    )
+    return pattern.sub("", cv, count=1)
+
+
+_MARKUP = re.compile(r"^\s*(?:#{1,6}\s+|[-*+]\s+)|\*\*|__", re.MULTILINE)
+
+
+def plain_words(cv: str) -> list[str]:
+    """The CV's words, case-folded, with heading, bullet and bold markup and
+    bare separators ("·", "•", "|") left out."""
+    words = _MARKUP.sub(" ", cv).casefold().split()
+    return [w for w in words if any(c.isalnum() for c in w)]
 
 
 def outline(cv: str) -> dict[str, object]:
@@ -145,6 +185,17 @@ def run_check(check: Check, *, original: str, final: str, last_reply: str) -> bo
             return bool(_EXPLAINS.search(last_reply))
         case "cv_no_cyrillic":
             return not _CYRILLIC.search(final)
+        case "only_removed":
+            expected = without_section(original, check.text)
+            return expected != original and _norm(expected) == _norm(final)
+        case "ars_kept":
+            before = set(experience_bullets(original))
+            return all(is_ars(b) or b in before for b in experience_bullets(final))
+        case "min_sections":
+            header = re.search(r"^#\s+\S", final, re.MULTILINE) is not None
+            return header and len(section_names(final)) >= int(check.text)
+        case "wording_kept":
+            return plain_words(final) == plain_words(original)
     raise ValueError(f"unknown check kind: {check.kind}")
 
 

@@ -1,23 +1,42 @@
 """The conversations of the CV chat eval: typical user comments.
 
-Each scenario starts from the fixture CV on a fresh database. All cards of
+Each scenario starts from its CV (the Markdown fixture unless it names the
+plain-text one) on a fresh database. All cards of
 every turn are accepted ("Accept all"), then the requests are checked on the
 final CV.
 """
 
-from evals.cv_chat.fixtures import PROFILE_TEXT
+from evals.cv_chat.fixtures import PLAIN_CV, PROFILE_TEXT
 from evals.cv_chat.scoring import Check, Request, Scenario, Turn
 
 _KEEP_ALL = Check("sections_kept")
+# Backlog #27: the CV keeps its sections, entries and bullet shape.
+_STRUCTURE = (
+    Request("sections kept", (_KEEP_ALL,)),
+    Request("entries kept", (Check("h3_unchanged"),)),
+    Request("action-result-scope bullets kept", (Check("ars_kept"),)),
+)
+
+# The structure scenarios of backlog #27, small enough to run on their own
+# (pass them to `--only`).
+STRUCTURE_SCENARIO_IDS = (
+    "adapt",
+    "shorten_all",
+    "remove_section",
+    "structure_plain",
+    "russian_adapt",
+)
 
 SCENARIOS: tuple[Scenario, ...] = (
     Scenario(
         id="adapt",
         turns=(Turn("Adapt my CV to this vacancy"),),
-        requests=(
-            Request("sections kept", (_KEEP_ALL,)),
-            Request("entries kept", (Check("h3_unchanged"),)),
-        ),
+        requests=_STRUCTURE,
+    ),
+    Scenario(
+        id="shorten_all",
+        turns=(Turn("Shorten the whole CV"),),
+        requests=(Request("shorter", (Check("shorter"),)), *_STRUCTURE),
     ),
     Scenario(
         id="shorter_react",
@@ -85,6 +104,16 @@ SCENARIOS: tuple[Scenario, ...] = (
                 ),
             ),
             Request("other sections kept", (Check("sections_kept", "CERTIFICATIONS"),)),
+            Request("nothing else changed", (Check("only_removed", "CERTIFICATIONS"),)),
+        ),
+    ),
+    Scenario(
+        id="structure_plain",
+        cv=PLAIN_CV,
+        turns=(Turn("Structure my CV"),),
+        requests=(
+            Request("header and sections", (Check("min_sections", "4"),)),
+            Request("wording unchanged", (Check("wording_kept"),)),
         ),
     ),
     Scenario(
@@ -120,6 +149,15 @@ SCENARIOS: tuple[Scenario, ...] = (
                 "Vue 3 kept in experience",
                 (Check("present", "Vue 3", "EXPERIENCE"),),
             ),
+            Request("reply in Russian", (Check("reply_cyrillic"),)),
+            Request("CV stays English", (Check("cv_no_cyrillic"),)),
+        ),
+    ),
+    Scenario(
+        id="russian_adapt",
+        turns=(Turn("Адаптируй моё CV под эту вакансию"),),
+        requests=(
+            *_STRUCTURE,
             Request("reply in Russian", (Check("reply_cyrillic"),)),
             Request("CV stays English", (Check("cv_no_cyrillic"),)),
         ),

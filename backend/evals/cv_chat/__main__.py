@@ -4,6 +4,10 @@ From `backend/`:
 
     .venv/bin/python -m evals.cv_chat --label baseline
     .venv/bin/python -m evals.cv_chat --label after --only three_requests russian
+    .venv/bin/python -m evals.cv_chat --label structure --structure
+
+`--structure` runs only the CV-structure scenarios of backlog #27
+(`STRUCTURE_SCENARIO_IDS`, 5 single-turn scenarios).
 
 Uses the real `stream_chat_response` path and `accept_card` on an in-memory
 SQLite database; the app database is never opened. Only GROQ_API_KEY,
@@ -68,8 +72,8 @@ from app.services import (
     groq_client,
 )
 from app.services.chat_service import CardsReady, stream_chat_response
-from evals.cv_chat.fixtures import COMPANY, CV, ROLE, VACANCY
-from evals.cv_chat.scenarios import SCENARIOS
+from evals.cv_chat.fixtures import COMPANY, ROLE, VACANCY
+from evals.cv_chat.scenarios import SCENARIOS, STRUCTURE_SCENARIO_IDS
 from evals.cv_chat.scoring import (
     Scenario,
     TurnOutcome,
@@ -149,6 +153,7 @@ def _card_dict(card: Any) -> dict[str, str | None]:
         "after": card.after_text,
         "position": card.position,
         "anchor": card.anchor_text,
+        "warning": card.warning,
     }
 
 
@@ -163,7 +168,7 @@ async def _run_scenario(scenario: Scenario) -> dict[str, Any]:
         user = User(email="alex@example.com", password_hash="x", full_name="Alex")
         db.add(user)
         await db.flush()
-        cv = Cv(user_id=user.id, name="Alex CV", content=CV, kind="tailored")
+        cv = Cv(user_id=user.id, name="Alex CV", content=scenario.cv, kind="tailored")
         db.add(cv)
         await db.flush()
         application = Application(
@@ -210,7 +215,7 @@ async def _run_scenario(scenario: Scenario) -> dict[str, Any]:
 
     usage = USAGE[usage_from:]
     scores = score_scenario(
-        scenario, outcomes, original=CV, final=final, vacancy=VACANCY
+        scenario, outcomes, original=scenario.cv, final=final, vacancy=VACANCY
     )
     return {
         "id": scenario.id,
@@ -231,7 +236,7 @@ async def _run_scenario(scenario: Scenario) -> dict[str, Any]:
             }
             for o in outcomes
         ],
-        "outline_before": outline(CV),
+        "outline_before": outline(scenario.cv),
         "outline_after": outline(final),
         "final_cv": final,
     }
@@ -327,7 +332,7 @@ def _rescore(path: Path) -> int:
         result["scores"] = score_scenario(
             by_id[result["id"]],
             outcomes,
-            original=CV,
+            original=by_id[result["id"]].cv,
             final=result["final_cv"],
             vacancy=VACANCY,
         )
@@ -341,12 +346,18 @@ def main() -> None:
     parser.add_argument("--label", default="run", help="name in the results file")
     parser.add_argument("--only", nargs="*", default=[], help="scenario ids")
     parser.add_argument(
+        "--structure",
+        action="store_true",
+        help="only the CV-structure scenarios (backlog #27)",
+    )
+    parser.add_argument(
         "--rescore", type=Path, help="score a saved results file again (no Groq)"
     )
     args = parser.parse_args()
     if args.rescore:
         sys.exit(_rescore(args.rescore))
-    sys.exit(asyncio.run(_main(args.label, args.only)))
+    only = [*args.only, *(STRUCTURE_SCENARIO_IDS if args.structure else ())]
+    sys.exit(asyncio.run(_main(args.label, only)))
 
 
 if __name__ == "__main__":
