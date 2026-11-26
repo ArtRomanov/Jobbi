@@ -52,6 +52,8 @@ export interface UseSearchSettingsFormResult {
   /** "Only send posts with these words to the AI" draft. */
   keywordFilter: boolean;
   setKeywordFilter: (value: boolean) => void;
+  /** Drafts differ from the saved settings after server-style normalization (false until loaded). */
+  isDirty: boolean;
   /** Inline error under the Save button, or null. */
   saveError: string | null;
   isSaving: boolean;

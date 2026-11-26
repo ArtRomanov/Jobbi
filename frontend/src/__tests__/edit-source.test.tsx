@@ -572,3 +572,88 @@ describe("Edit source: links and patterns", () => {
     expect(requests.patches).toEqual([]);
   });
 });
+
+describe("Edit source: Save is active only with changes", () => {
+  afterEach(() => {
+    server.events.removeAllListeners();
+  });
+
+  function getSave(dialog: HTMLElement): HTMLElement {
+    return within(dialog).getByRole("button", { name: "Save" });
+  }
+
+  it("is off on open, on after an edit and off again after reverting it", async () => {
+    serveSources([WEB]);
+    const user = userEvent.setup();
+    renderWithProviders(<InboxPage />);
+
+    const dialog = await openEdit(user, "Geekjob React");
+    expect(getSave(dialog)).toHaveAttribute("aria-disabled", "true");
+
+    await user.type(within(dialog).getByLabelText("Name"), "!");
+    expect(getSave(dialog)).not.toHaveAttribute("aria-disabled");
+    await user.type(within(dialog).getByLabelText("Name"), "{Backspace}");
+    expect(getSave(dialog)).toHaveAttribute("aria-disabled", "true");
+
+    const pattern = within(dialog).getByLabelText("Job link contains (optional)");
+    await user.type(pattern, "/vacancy/");
+    expect(getSave(dialog)).not.toHaveAttribute("aria-disabled");
+    await user.clear(pattern);
+    expect(getSave(dialog)).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("spaces around the name, link or pattern are no change", async () => {
+    serveSources([WEB]);
+    const user = userEvent.setup();
+    renderWithProviders(<InboxPage />);
+
+    const dialog = await openEdit(user, "Geekjob React");
+    await user.type(within(dialog).getByLabelText("Name"), "  ");
+    await user.type(within(dialog).getByLabelText("Link"), " ");
+    await user.type(within(dialog).getByLabelText("Job link contains (optional)"), "   ");
+
+    expect(getSave(dialog)).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("a default-named source stays unchanged with a blank name", async () => {
+    serveSources([TELEGRAM]);
+    const user = userEvent.setup();
+    renderWithProviders(<InboxPage />);
+
+    const dialog = await openEdit(user, "@frontend_jobs");
+    await user.type(within(dialog).getByLabelText("Name"), "   ");
+
+    expect(getSave(dialog)).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("sends nothing when the aria-disabled Save is pressed or Enter is hit", async () => {
+    serveSources([TELEGRAM]);
+    const requests = recordRequests();
+    const user = userEvent.setup();
+    renderWithProviders(<InboxPage />);
+
+    const dialog = await openEdit(user, "@frontend_jobs");
+    await user.click(getSave(dialog));
+    await user.type(within(dialog).getByLabelText("Name"), "{Enter}");
+    await act(() => Promise.resolve());
+
+    expect(screen.getByRole("dialog", { name: "Edit source" })).toBeInTheDocument();
+    expect(requests.patches).toEqual([]);
+    expect(requests.previews).toEqual([]);
+  });
+
+  it("is off again when reopened after a successful save", async () => {
+    serveSources([TELEGRAM]);
+    const user = userEvent.setup();
+    renderWithProviders(<InboxPage />);
+
+    let dialog = await openEdit(user, "@frontend_jobs");
+    await user.type(within(dialog).getByLabelText("Name"), "Frontend jobs");
+    await user.click(getSave(dialog));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    dialog = await openEdit(user, "Frontend jobs");
+    expect(within(dialog).getByLabelText("Name")).toHaveValue("Frontend jobs");
+    expect(getSave(dialog)).toHaveAttribute("aria-disabled", "true");
+  });
+});

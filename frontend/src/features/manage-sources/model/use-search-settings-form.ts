@@ -1,16 +1,18 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { getErrorMessage } from "@/shared/api";
 import { useToast } from "@/shared/ui";
 import { updateSearchSettings } from "@/entities/vacancy-source";
 import type { VacancySearchSettings } from "@/entities/vacancy-source";
 import { DESCRIPTION_MAX_LENGTH, SAVED_MESSAGE } from "../lib/constants";
+import { hasSearchSettingsChanges } from "../lib/search-settings-changes";
 import type { UseSearchSettingsFormResult } from "./types";
 
 /**
  * Drafts (description, keywords, keyword-filter switch) for the "What are you
  * looking for?" form. `initial` seeds them once (the form is re-mounted when
- * settings load). Save PATCHes all three in one request, then resets the
- * drafts to the server-normalized values,
+ * settings load) and stays the last saved value (the parent passes each save
+ * back), so `isDirty` compares the drafts with it. Save PATCHes all three in
+ * one request, then resets the drafts to the server-normalized values,
  * reports it via `onSaved` and toasts "Saved"; a failure becomes an inline error.
  */
 export function useSearchSettingsForm(
@@ -41,6 +43,13 @@ export function useSearchSettingsForm(
     setKeywordFilterValue(value);
     setSaveError(null);
   }, []);
+
+  const isDirty = useMemo(
+    () =>
+      initial !== null &&
+      hasSearchSettingsChanges({ description, keywords, keywordFilter }, initial),
+    [initial, description, keywords, keywordFilter],
+  );
 
   const save = useCallback(async (): Promise<boolean> => {
     if (isSavingRef.current) return false;
@@ -75,6 +84,7 @@ export function useSearchSettingsForm(
     setKeywords,
     keywordFilter,
     setKeywordFilter,
+    isDirty,
     saveError,
     isSaving,
     save,

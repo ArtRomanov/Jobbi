@@ -74,7 +74,9 @@ describe("Search settings in the Sources panel", () => {
     await waitFor(() => expect(getDescription()).toBeEnabled());
     expect(getDescription()).toHaveValue("Senior frontend, React");
     expect(screen.getByText("22/500")).toBeInTheDocument();
+    // Loaded but untouched: focusable, yet nothing to save
     expect(getSave()).toBeEnabled();
+    expect(getSave()).toHaveAttribute("aria-disabled", "true");
     expect(screen.queryByText(HINT)).not.toBeInTheDocument();
   });
 
@@ -227,7 +229,7 @@ describe("Search settings in the Sources panel", () => {
     server.use(
       http.patch(SETTINGS_URL, async () => {
         await gate;
-        return HttpResponse.json({ description: "Frontend" });
+        return HttpResponse.json({ description: "Frontend", keywords: [], keyword_filter: true });
       }),
     );
     const user = userEvent.setup();
@@ -237,10 +239,93 @@ describe("Search settings in the Sources panel", () => {
     await user.click(getSave());
 
     expect(getSave()).toHaveAttribute("aria-busy", "true");
-    expect(getSave()).toBeDisabled();
+    // Stays focusable while loading so focus is not dropped
+    expect(getSave()).toHaveAttribute("aria-disabled", "true");
+    expect(getSave()).toHaveFocus();
     release();
     expect(await screen.findByText("Saved")).toBeInTheDocument();
-    expect(getSave()).toBeEnabled();
+    expect(getSave()).not.toHaveAttribute("aria-busy");
+    // The drafts now match what was saved
+    expect(getSave()).toHaveAttribute("aria-disabled", "true");
+  });
+
+  describe("Save is active only with changes", () => {
+    it("is off after load, on after an edit and off again after reverting it", async () => {
+      serveSettings("Frontend", { keywords: ["react"], keyword_filter: true });
+      const user = userEvent.setup();
+      await renderLoaded();
+
+      expect(getSave()).toHaveAttribute("aria-disabled", "true");
+      await user.type(getDescription(), "!");
+      expect(getSave()).not.toHaveAttribute("aria-disabled");
+      await user.type(getDescription(), "{Backspace}");
+      expect(getSave()).toHaveAttribute("aria-disabled", "true");
+
+      await user.click(getFilterSwitch());
+      expect(getSave()).not.toHaveAttribute("aria-disabled");
+      await user.click(getFilterSwitch());
+      expect(getSave()).toHaveAttribute("aria-disabled", "true");
+
+      await user.type(getKeywordsInput(), "vue{Enter}");
+      expect(getSave()).not.toHaveAttribute("aria-disabled");
+      await user.click(screen.getByRole("button", { name: "Remove vue" }));
+      expect(getSave()).toHaveAttribute("aria-disabled", "true");
+    });
+
+    it("is off again after a successful save and keeps focus", async () => {
+      const user = userEvent.setup();
+      await renderLoaded();
+
+      await user.type(getDescription(), "Frontend");
+      expect(getSave()).not.toHaveAttribute("aria-disabled");
+      await user.click(getSave());
+
+      expect(await screen.findByText("Saved")).toBeInTheDocument();
+      expect(getSave()).toHaveAttribute("aria-disabled", "true");
+      expect(getSave()).toHaveFocus();
+    });
+
+    it("ignores a keyword re-typed in another case and spaces-only description edits", async () => {
+      serveSettings("Frontend", { keywords: ["react"] });
+      const user = userEvent.setup();
+      await renderLoaded();
+
+      await user.click(screen.getByRole("button", { name: "Remove react" }));
+      expect(getSave()).not.toHaveAttribute("aria-disabled");
+      await user.type(getKeywordsInput(), "  React {Enter}");
+      expect(getKeywordChips()).toEqual(["React"]);
+      expect(getSave()).toHaveAttribute("aria-disabled", "true");
+
+      await user.type(getDescription(), "   ");
+      expect(getSave()).toHaveAttribute("aria-disabled", "true");
+    });
+
+    it("a description of only spaces is no change when none is saved", async () => {
+      const user = userEvent.setup();
+      await renderLoaded();
+
+      await user.type(getDescription(), "   ");
+      expect(getSave()).toHaveAttribute("aria-disabled", "true");
+    });
+
+    it("sends nothing when the aria-disabled Save is pressed", async () => {
+      let patches = 0;
+      server.use(
+        http.patch(SETTINGS_URL, () => {
+          patches += 1;
+          return HttpResponse.json(mockVacancySourcesEmpty.settings);
+        }),
+      );
+      const user = userEvent.setup();
+      await renderLoaded();
+
+      await user.click(getSave());
+      getSave().focus();
+      await user.keyboard("{Enter}");
+
+      expect(screen.queryByText("Saved")).not.toBeInTheDocument();
+      expect(patches).toBe(0);
+    });
   });
 
   describe("keywords and the keyword filter", () => {
