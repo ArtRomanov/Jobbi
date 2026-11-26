@@ -20,10 +20,17 @@ function serializeJson(body: unknown): string | undefined {
   return body !== undefined ? JSON.stringify(body) : undefined;
 }
 
+/** Extra fetch options a caller may need. */
+export interface RequestOptions {
+  /** Let the request outlive the page (e.g. sent from `pagehide`). */
+  keepalive?: boolean;
+}
+
 async function request<T>(
   method: string,
   path: string,
   body?: unknown,
+  options: RequestOptions = {},
 ): Promise<T> {
   // FormData sets its own multipart Content-Type (with the boundary).
   const isForm = body instanceof FormData;
@@ -40,6 +47,7 @@ async function request<T>(
     method,
     headers,
     body: isForm ? body : serializeJson(body),
+    ...(options.keepalive ? { keepalive: true } : {}),
   });
 
   const data: unknown = await response.json().catch(() => null);
@@ -64,5 +72,6 @@ export const apiClient = {
     request<T>("POST", path, form),
   patch: <T>(path: string, body: unknown): Promise<T> =>
     request<T>("PATCH", path, body),
-  delete: <T>(path: string): Promise<T> => request<T>("DELETE", path),
+  delete: <T>(path: string, options?: RequestOptions): Promise<T> =>
+    request<T>("DELETE", path, undefined, options),
 };

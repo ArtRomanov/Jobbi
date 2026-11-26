@@ -12,10 +12,16 @@ import type { AddSourceAction, AddSubmitOutcome, UseAddSourceResult, WebPreview 
  *
  * One ref blocks every overlapping request (submit, re-check, save), so a
  * second Enter before React re-renders cannot send a duplicate.
+ *
+ * `beforeAdd` runs (awaited) before Add / Save / "Add the board" talk to the
+ * server: the panel sends pending removals there, so re-adding a source whose
+ * Undo window is still open is not a duplicate and a hidden row does not
+ * count toward the source limit.
  */
 export function useAddSource(
   isDisabled: boolean,
   onAdded: (source: VacancySource) => void,
+  beforeAdd?: () => Promise<void>,
 ): UseAddSourceResult {
   const [input, setInputValue] = useState("");
   const [addError, setAddError] = useState<string | null>(null);
@@ -57,6 +63,7 @@ export function useAddSource(
       setAddError(null);
       setPreviewError(null);
       try {
+        await beforeAdd?.();
         const result = await previewVacancySource({ input: value });
         if (result.kind === "web") {
           setPreview((prev) => ({ id: (prev?.id ?? 0) + 1, input: value, result }));
@@ -75,7 +82,7 @@ export function useAddSource(
       }
     });
     return outcome;
-  }, [input, isDisabled, onAdded, runExclusive]);
+  }, [input, isDisabled, onAdded, beforeAdd, runExclusive]);
 
   const recheck = useCallback(
     async (jobLinkContains: string | null): Promise<void> => {
@@ -106,6 +113,7 @@ export function useAddSource(
       await runExclusive("save", async () => {
         setPreviewError(null);
         try {
+          await beforeAdd?.();
           const created = await addVacancySource({
             input: current.input,
             job_link_contains: options.jobLinkContains,
@@ -121,7 +129,7 @@ export function useAddSource(
       });
       return isSaved;
     },
-    [preview, onAdded, runExclusive],
+    [preview, onAdded, beforeAdd, runExclusive],
   );
 
   // The ATS hint's board goes the non-web way (like a pasted board link);
@@ -132,6 +140,7 @@ export function useAddSource(
       await runExclusive("board", async () => {
         setPreviewError(null);
         try {
+          await beforeAdd?.();
           const created = await addVacancySource({ input: boardInput });
           onAdded(created);
           setInputValue("");
@@ -143,7 +152,7 @@ export function useAddSource(
       });
       return isAdded;
     },
-    [onAdded, runExclusive],
+    [onAdded, beforeAdd, runExclusive],
   );
 
   const cancelPreview = useCallback((): void => {

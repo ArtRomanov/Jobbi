@@ -35,6 +35,8 @@ const REGION_STYLE = { display: "flex", flexDirection: "column", gap: "0.5rem" }
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastData[]>([]);
   const timersRef = useRef<Map<number, ToastTimer>>(new Map());
+  // `onTimeout` per toast; dropped when the toast closes any other way
+  const timeoutHandlersRef = useRef<Map<number, () => void>>(new Map());
 
   useEffect(() => {
     const timers = timersRef.current;
@@ -49,18 +51,28 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     const entry = timersRef.current.get(id);
     if (entry?.timer) clearTimeout(entry.timer);
     timersRef.current.delete(id);
+    timeoutHandlersRef.current.delete(id);
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
+
+  const expireToast = useCallback(
+    (id: number): void => {
+      const onTimeout = timeoutHandlersRef.current.get(id);
+      dismissToast(id);
+      onTimeout?.();
+    },
+    [dismissToast],
+  );
 
   const startTimer = useCallback(
     (id: number, durationMs: number): void => {
       timersRef.current.set(id, {
-        timer: setTimeout(() => dismissToast(id), durationMs),
+        timer: setTimeout(() => expireToast(id), durationMs),
         endsAt: Date.now() + durationMs,
         remainingMs: durationMs,
       });
     },
-    [dismissToast],
+    [expireToast],
   );
 
   const pauseToast = useCallback((id: number): void => {
@@ -83,7 +95,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const showToast = useCallback(
     (message: string, type: ToastType, options: ToastOptions = {}): number => {
       const id = nextId++;
-      const { action, link, durationMs = DEFAULT_TOAST_DURATION_MS } = options;
+      const { action, link, durationMs = DEFAULT_TOAST_DURATION_MS, onTimeout } = options;
+      if (onTimeout) timeoutHandlersRef.current.set(id, onTimeout);
       setToasts((prev) => [...prev, { id, message, type, action, link }]);
       startTimer(id, durationMs);
       return id;

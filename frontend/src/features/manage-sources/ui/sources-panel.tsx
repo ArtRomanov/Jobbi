@@ -36,6 +36,8 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
   const editButtonsRef = useRef(new Map<string, HTMLButtonElement>());
   // A replaced source gets a new row, so the Modal can't return focus to its Edit
   const [focusEditId, setFocusEditId] = useState<string | null>(null);
+  // Undo shows a removed row again; its Remove takes focus once it is rendered
+  const [focusRemoveId, setFocusRemoveId] = useState<string | null>(null);
   const {
     sources,
     settings,
@@ -47,6 +49,7 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
     appendSource,
     replaceSource,
     removeSource,
+    flushRemovals,
     retryLoad,
   } = useManageSources(onScanFinished, onSourcesChange);
   const {
@@ -62,7 +65,7 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
     save,
     addBoard,
     cancelPreview,
-  } = useAddSource(isAddDisabled, appendSource);
+  } = useAddSource(isAddDisabled, appendSource, flushRemovals);
 
   const registerRemoveButton = useCallback(
     (id: string, element: HTMLButtonElement | null): void => {
@@ -88,6 +91,12 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
     target?.focus();
     setFocusEditId(null);
   }, [focusEditId]);
+
+  useEffect(() => {
+    if (focusRemoveId === null) return;
+    removeButtonsRef.current.get(focusRemoveId)?.focus();
+    setFocusRemoveId(null);
+  }, [focusRemoveId]);
 
   // Created or failed: back to the input. A web preview focuses its own heading.
   const handleAdd = useCallback(async (): Promise<void> => {
@@ -127,12 +136,12 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
     [replaceSource, onSourceEdited],
   );
 
-  // After a removal, focus the next Remove button, or the input when the list is empty
+  // The row hides at once (Undo toast): focus the next Remove button, else the
+  // previous one, else the input. Undo focuses the restored row's Remove.
   const handleRemove = useCallback(
-    async (id: string): Promise<void> => {
+    (id: string): void => {
       const orderedIds = sources.map((source) => source.id);
-      const isRemoved = await removeSource(id);
-      if (!isRemoved) return;
+      removeSource(id, () => setFocusRemoveId(id));
       const buttons = removeButtonsRef.current;
       const nextId = pickFocusAfterRemove(orderedIds, id, (candidate) => buttons.has(candidate));
       const target = nextId === null ? inputRef.current : buttons.get(nextId);
@@ -167,7 +176,7 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
         <SourceList
           sources={sources}
           removingIds={removingIds}
-          onRemove={(id) => void handleRemove(id)}
+          onRemove={handleRemove}
           onEdited={handleEdited}
           onRegisterRemoveButton={registerRemoveButton}
           onRegisterEditButton={registerEditButton}
