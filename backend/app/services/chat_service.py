@@ -249,8 +249,12 @@ _IMAGINED_ACTION = re.compile(
     r"\b(?:pull|load|check)(?:ing)? (?:up )?the (?:current |latest )?cv\b",
     re.IGNORECASE,
 )
+# After a newline only spaces/tabs are skipped: `\n\s*` restarted a scan of
+# the whole whitespace run at every newline in it (quadratic on the model's
+# reply, seconds of CPU on the event loop). The last newline of a blank-line
+# run still matches, so a promise after blank lines is still found.
 _PROMISE = re.compile(
-    r"(?:^|[.!?:]\s+|\n\s*)(?:I'll|I will|Let me|I'm going to|I am going to|"
+    r"(?:^|[.!?:]\s+|\n[ \t]*)(?:I'll|I will|Let me|I'm going to|I am going to|"
     r"Сейчас|Я сейчас)\b",
     re.IGNORECASE,
 )

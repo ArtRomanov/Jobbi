@@ -78,6 +78,36 @@ def test_needs_follow_up(reply: str, calls: list[LlmToolCall], expected: bool) -
     assert needs_follow_up(reply, calls) is expected
 
 
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        ("Done.\n\n  \n\tI'll add the dates next.", True),
+        ("Done.\n \n I will shorten it.", True),
+        ("Done. Thanks!\n\n\nNo more changes needed.", False),
+    ],
+)
+def test_needs_follow_up_promise_after_blank_lines(reply: str, expected: bool) -> None:
+    assert needs_follow_up(reply, []) is expected
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        "ok" + "\n" * 20_000 + "ok",
+        "ok" + "\n " * 10_000 + "ok",
+        "ok" + ("\n" + " " * 100) * 300 + "ok",
+    ],
+    ids=["newlines", "newline-space", "newline-long-spaces"],
+)
+def test_needs_follow_up_is_linear_on_whitespace_runs(reply: str) -> None:
+    """The model's reply sat in a quadratic regex on the event loop (10 s at 20k)."""
+    import time
+
+    start = time.perf_counter()
+    needs_follow_up(reply, [])
+    assert time.perf_counter() - start < 0.2
+
+
 class _SequenceGroq(_FakeGroq):
     """Answers each `create` call with the next list of chunks."""
 
