@@ -98,6 +98,29 @@ _CV_EDIT_RULES = (
     "that. Reply in the language of the user's latest message, but write CV "
     "text in the language the CV is written in."
 )
+# Backlog #27: tailoring must keep the CV's Markdown shape (the CV page and
+# export parse it) and its sections. `cv_structure` checks rule 1 after the
+# reply; rules 2-4 are prompt-only.
+_CV_STRUCTURE_RULES = (
+    "CV structure rules (an explicit request in the user's latest message wins):\n"
+    '1. Keep every "## " section the CV has, its "# Name" line and every '
+    '"###" / "####" entry heading. Never remove, rename or merge a section '
+    "unless the user's latest message asks for exactly that. Tailoring or "
+    "shortening rewords, reorders and trims inside sections.\n"
+    '2. Keep the Markdown shape: "# Name"; the job title on the next line; '
+    'contacts on one line joined with " · "; "## SECTION"; "### Role — '
+    'Company" with the date range alone on the next line; "#### Project" for '
+    'a project under an employer; "- " for bullets. Never turn bullets into '
+    "prose.\n"
+    '3. EXPERIENCE bullets read action – result – scope ("- **Action:** '
+    'result. **Scope:** team, users, size."). Keep that shape when editing a '
+    "bullet; a new or reworded bullet follows it, with facts from the CV or "
+    "the user only (edit rule 3). If a part is unknown, leave it out.\n"
+    "4. When the user asks to structure or format the CV (e.g. a plain-text CV "
+    'with no "#" headings), propose edits that only add the "#", "##", "###", '
+    '"####" and "- " markup above, one section per edit, keeping every word '
+    "as it is."
+)
 _NO_CV_RULES = (
     "No CV is linked to this application, so you cannot propose CV edits. If "
     "the user asks about their CV or asks to change it, say that no CV is "
@@ -145,6 +168,8 @@ def build_system_prompt(application: Application, cv: Cv | None) -> str:
         parts.append(fence("CV", cv.content))
         parts.append("")
         parts.append(_CV_EDIT_RULES)
+        parts.append("")
+        parts.append(_CV_STRUCTURE_RULES)
     else:
         parts.append(_NO_CV_RULES)
     parts.append("")

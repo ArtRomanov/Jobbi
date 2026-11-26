@@ -23,6 +23,9 @@ class ChangeCardRead(BaseModel):
     after_text: str
     position: CardPosition | None
     anchor_text: str | None
+    # Set when the edit breaks the CV structure the user did not ask to change
+    # ("This change removes the CERTIFICATIONS section."); null otherwise.
+    warning: str | None
     state: CardState
     created_at: datetime
     decided_at: datetime | None

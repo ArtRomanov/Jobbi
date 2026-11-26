@@ -1,6 +1,6 @@
 import re
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 import structlog
@@ -43,6 +43,12 @@ from app.services.chat_tools import (
     parse_propose_cv_edit,
 )
 from app.services.cv_fact_guard import unsupported_names
+from app.services.cv_structure import (
+    Problem,
+    repair_problems_text,
+    structure_warning,
+    unrequested_problems,
+)
 from app.services.groq_client import (
     LlmRateLimitError,
     LlmRequestTooLargeError,
@@ -368,6 +374,69 @@ def _second_messages(
     return second
 
 
+@dataclass(slots=True, kw_only=True)
+class _CallOutcome:
+    """The model's tool calls of one reply, sorted out."""
+
+    edits: list[CvEdit]
+    rejected: bool  # Groq rejected the calls (`tool_use_failed`)
+    failed: int  # calls that are not a usable edit
+    left_out: list[list[str]]  # per edit the fact guard left out: its names
+
+
+def _call_outcome(
+    calls: list[LlmToolCall], cv: Cv | None, *, user_texts: list[str], job_post: str
+) -> _CallOutcome:
+    # A rejection left after the retry (or in a follow-up) gets one clear
+    # note for the whole reply instead of a malformed-call line.
+    rejected = any(c.rejected is not None for c in calls)
+    calls = [c for c in calls if c.rejected is None]
+    edits, failed = _validate_calls(calls) if cv is not None else ([], len(calls))
+    left_out: list[list[str]] = []
+    if cv is not None and edits:
+        edits, left_out = drop_unsupported_edits(
+            edits, cv=cv.content, user_texts=user_texts, job_post=job_post
+        )
+    return _CallOutcome(
+        edits=edits, rejected=rejected, failed=failed, left_out=left_out
+    )
+
+
+_REPAIR_NUDGE = (
+    "Your propose_cv_edit calls above break the CV structure, and the user's "
+    "latest message did not ask for that: {problems}. Propose all your edits "
+    'for this request again, in this reply, keeping every "## " section, '
+    'every "###" / "####" entry heading and the "# Name" line: change only '
+    "the text inside them. Do not repeat your earlier text."
+)
+
+
+def repair_nudge(problems: Sequence[Problem]) -> str:
+    """The system message for the one repair call after a structure break."""
+    return _REPAIR_NUDGE.format(problems=repair_problems_text(problems))
+
+
+def structure_problems(
+    cv: str, edits: Sequence[CvEdit], user_message: str
+) -> list[list[Problem]]:
+    """Per edit, the structure losses the user's latest message did not ask for.
+
+    Each edit is dry-run on its own on the CV the model saw: the edits of one
+    reply quote that same text and must not overlap.
+    """
+    return [unrequested_problems(cv, edit, user_message) for edit in edits]
+
+
+def with_structure_warnings(
+    edits: Sequence[CvEdit], problems: Sequence[Sequence[Problem]], language: Language
+) -> list[CvEdit]:
+    """The edits, each with its card warning (None when it breaks nothing)."""
+    return [
+        replace(edit, warning=structure_warning(found, language))
+        for edit, found in zip(edits, problems, strict=True)
+    ]
+
+
 def _rejection(calls: list[LlmToolCall]) -> str | None:
     return next((c.rejected for c in calls if c.rejected is not None), None)
 
@@ -508,22 +577,51 @@ async def _stream_reply(
                 full_response.append(chunk)
                 yield chunk
 
-    # A rejection left after the retry (or in a follow-up) gets one clear
-    # note for the whole reply instead of a malformed-call line.
-    rejected = any(c.rejected is not None for c in calls)
-    calls = [c for c in calls if c.rejected is None]
-    edits, failed = _validate_calls(calls) if cv is not None else ([], len(calls))
-    left_out: list[list[str]] = []
-    if cv is not None and edits:
-        edits, left_out = drop_unsupported_edits(
-            edits,
-            cv=cv.content,
-            user_texts=[m.content for m in history if m.role == "user"],
-            job_post=application.notes or "",
-        )
+    user_texts = [m.content for m in history if m.role == "user"]
+    job_post = application.notes or ""
+    outcome = _call_outcome(calls, cv, user_texts=user_texts, job_post=job_post)
+    if cv is not None and outcome.edits:
+        problems = structure_problems(cv.content, outcome.edits, user_content)
+        if any(problems):
+            # An edit breaks the CV structure the user did not ask to change.
+            # One repair call, never more, told what broke; it reuses the
+            # trimmed messages and is skipped if it would not fit. Still
+            # broken (or no usable edit came back): the cards keep a warning.
+            reply = "".join(full_response).strip()
+            found = [p for edit_problems in problems for p in edit_problems]
+            repair = _second_messages(messages, reply, repair_nudge(found))
+            estimate = request_tokens(system_prompt, repair, tools)
+            if estimate > budget:
+                logger.info(
+                    "chat_repair_skipped", estimated_tokens=estimate, budget=budget
+                )
+            else:
+                logger.info("chat_structure_repair", problems=[p.kind for p in found])
+                repair_calls: list[LlmToolCall] = []
+                async for chunk in _stream_second_call(
+                    system_prompt,
+                    repair,
+                    tools or [],
+                    has_text=bool(full_response),
+                    tool_choice="required",
+                    calls=repair_calls,
+                    event="chat_repair_failed",
+                ):
+                    full_response.append(chunk)
+                    yield chunk
+                repaired = _call_outcome(
+                    repair_calls, cv, user_texts=user_texts, job_post=job_post
+                )
+                if repaired.edits:
+                    outcome = repaired
+                    problems = structure_problems(
+                        cv.content, outcome.edits, user_content
+                    )
+            outcome.edits = with_structure_warnings(outcome.edits, problems, language)
+    edits, left_out = outcome.edits, outcome.left_out
     notes = (
-        [REJECTED_CALLS_NOTE[language]] * rejected
-        + [MALFORMED_CALL_NOTE] * failed
+        [REJECTED_CALLS_NOTE[language]] * outcome.rejected
+        + [MALFORMED_CALL_NOTE] * outcome.failed
         + [unsupported_names_note(names, language) for names in left_out]
     )
     streamed = "".join(full_response)

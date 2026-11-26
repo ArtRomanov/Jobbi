@@ -48,6 +48,35 @@ Online store for home goods, 2M monthly visitors.
 **Spanish:** intermediate (B1)
 """
 
+# The same person as text extracted from a PDF upload: no Markdown at all
+# (backlog #27, "Structure my CV").
+PLAIN_CV = """Alex Morgan
+Senior Frontend Engineer
+alex.morgan@example.com
+Lisbon, Portugal
+
+Profile
+Frontend engineer with 8 years of experience building web apps for fintech and e-commerce. Focus on performance, design systems and developer experience.
+
+Skills
+Frontend: TypeScript, JavaScript, Vue 3, React, HTML, CSS
+Tooling: Vite, Jest, Playwright, Storybook
+
+Experience
+Lead Frontend Engineer, Northwind Pay
+Mar 2021 – Present
+• Rebuilt the checkout widget in Vue 3: cut bundle size by 38%. Scope: 3 engineers, 40k daily users.
+• Set up Playwright end-to-end tests: caught 25 regressions before release. Scope: 2 web apps.
+
+Frontend Engineer, Bluefin Retail
+Jun 2017 – Feb 2021
+• Moved product pages to server-side rendering: improved LCP from 4.1s to 1.9s. Scope: 15k product pages.
+
+Languages
+English: fluent (C1)
+Portuguese: native
+"""
+
 VACANCY = """Senior Frontend Engineer (React) — Remote (EU)
 Brightlane is a B2B SaaS for logistics analytics.
 You will: build complex data-heavy dashboards in React + TypeScript, own our component library, improve performance of large tables and charts, work with Next.js, React Query, and Testing Library.

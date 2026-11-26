@@ -253,6 +253,7 @@ def add_cards(
             after_text=edit.after_text,
             position=edit.position,
             anchor_text=edit.anchor_text,
+            warning=edit.warning,
             state="pending",
             created_at=_utcnow(),
             decided_at=None,

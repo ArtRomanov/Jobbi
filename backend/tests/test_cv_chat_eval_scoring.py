@@ -2,8 +2,8 @@
 
 import pytest
 
-from evals.cv_chat.fixtures import CV, PROFILE_TEXT, VACANCY
-from evals.cv_chat.scenarios import SCENARIOS
+from evals.cv_chat.fixtures import CV, PLAIN_CV, PROFILE_TEXT, VACANCY
+from evals.cv_chat.scenarios import SCENARIOS, STRUCTURE_SCENARIO_IDS
 from evals.cv_chat.scoring import (
     Check,
     Request,
@@ -14,6 +14,7 @@ from evals.cv_chat.scoring import (
     foreign_tools,
     invented_facts,
     outline,
+    plain_words,
     reply_matches_cards,
     run_check,
     score_scenario,
@@ -63,6 +64,97 @@ def test_section_body_stops_at_the_next_section() -> None:
 )
 def test_run_check(check: Check, final: str, expected: bool) -> None:
     assert run_check(check, original=CV, final=final, last_reply="") is expected
+
+
+# ---------------------------------------------------------------------------
+# Structure checks (backlog #27)
+# ---------------------------------------------------------------------------
+
+_CERTS = (
+    "## CERTIFICATIONS\n\n- AWS Certified Cloud Practitioner (2022)\n"
+    "- Google UX Design Certificate (2020)\n\n"
+)
+_ARS_BULLET = (
+    "- **Mentored junior developers:** two were promoted within a year. "
+    "**Scope:** 4 mentees."
+)
+
+
+def test_fixture_cv_has_the_certifications_block() -> None:
+    assert _CERTS in CV
+
+
+@pytest.mark.parametrize(
+    ("check", "final", "expected"),
+    [
+        (Check("only_removed", "CERTIFICATIONS"), CV.replace(_CERTS, ""), True),
+        (Check("only_removed", "certifications"), CV.replace(_CERTS, ""), True),
+        (
+            Check("only_removed", "CERTIFICATIONS"),
+            CV.replace(_CERTS, "").replace("Vue 3, ", ""),
+            False,
+        ),
+        (Check("only_removed", "CERTIFICATIONS"), CV, False),
+        (Check("only_removed", "AWARDS"), CV, False),
+        (Check("ars_kept"), CV, True),
+        (
+            Check("ars_kept"),
+            CV.replace(
+                _ARS_BULLET, "- **Mentored juniors:** two promoted. **Scope:** 4."
+            ),
+            True,
+        ),
+        (Check("ars_kept"), CV.replace(_ARS_BULLET, "- Mentored juniors."), False),
+        (Check("ars_kept"), CV.replace(_ARS_BULLET, ""), True),
+    ],
+)
+def test_structure_checks(check: Check, final: str, expected: bool) -> None:
+    assert run_check(check, original=CV, final=final, last_reply="") is expected
+
+
+_MARKUP_BY_LINE = {
+    "Alex Morgan": "# ",
+    "Profile": "## ",
+    "Skills": "## ",
+    "Experience": "## ",
+    "Languages": "## ",
+    "Lead Frontend Engineer, Northwind Pay": "### ",
+    "Frontend Engineer, Bluefin Retail": "### ",
+}
+
+
+def _structured(plain: str) -> str:
+    """The plain fixture with markup added and no word changed."""
+    lines = plain.splitlines()
+    assert set(_MARKUP_BY_LINE) <= set(lines)
+    out = [_MARKUP_BY_LINE.get(line, "") + line for line in lines]
+    return "\n".join(out).replace("• ", "- ")
+
+
+def test_min_sections_and_wording_kept_on_the_plain_cv() -> None:
+    structured = _structured(PLAIN_CV)
+
+    def run(check: Check, final: str) -> bool:
+        return run_check(check, original=PLAIN_CV, final=final, last_reply="")
+
+    assert run(Check("min_sections", "4"), structured)
+    assert not run(Check("min_sections", "4"), PLAIN_CV)
+    assert not run(Check("min_sections", "5"), structured)
+    assert run(Check("wording_kept"), structured)
+    assert run(Check("wording_kept"), structured.replace("## Profile", "## PROFILE"))
+    assert run(Check("wording_kept"), PLAIN_CV)  # min_sections fails it instead
+    assert not run(Check("wording_kept"), structured.replace("fintech", "banking"))
+    assert not run(Check("wording_kept"), structured.replace("Portuguese: native", ""))
+
+
+def test_plain_words_ignores_markup_and_separators() -> None:
+    assert plain_words("## Skills\n- **React:** yes · no | • x") == [
+        "skills",
+        "react:",
+        "yes",
+        "no",
+        "x",
+    ]
 
 
 def test_present_ignores_whitespace_differences() -> None:
@@ -166,14 +258,16 @@ def test_score_scenario_on_the_live_failure() -> None:
 
 def test_scenarios_have_unique_ids_and_requests() -> None:
     ids = [s.id for s in SCENARIOS]
-    assert len(ids) == len(set(ids)) == 8
+    assert len(ids) == len(set(ids)) == 11
     assert all(s.requests and s.turns for s in SCENARIOS)
+    assert set(STRUCTURE_SCENARIO_IDS) <= set(ids)
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=lambda s: s.id)
 def test_untouched_cv_fails_every_change_scenario(scenario: Scenario) -> None:
     """Sanity: doing nothing never passes a scenario that asks for a change."""
     outcomes = [TurnOutcome(user=t.text, reply="Sure.") for t in scenario.turns]
-    scores = score_scenario(scenario, outcomes, original=CV, final=CV, vacancy=VACANCY)
+    cv = scenario.cv
+    scores = score_scenario(scenario, outcomes, original=cv, final=cv, vacancy=VACANCY)
     # "cannot_do" asks for no change, but "Sure." neither asks nor explains.
     assert scores["passed"] is False

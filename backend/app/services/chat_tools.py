@@ -150,6 +150,9 @@ class CvEdit:
     after_text: str
     position: Position | None
     anchor_text: str | None
+    # Set by the structure check (`cv_structure`) when the edit breaks the
+    # CV's sections and the user did not ask for it.
+    warning: str | None = None
 
 
 def parse_propose_cv_edit(name: str, arguments: str) -> CvEdit | None:
