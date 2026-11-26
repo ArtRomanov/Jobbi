@@ -231,3 +231,26 @@ async def test_accept_after_the_paragraph_was_rewritten_is_still_stale(
         select(ChatChangeCard.state).where(ChatChangeCard.id == card["id"])
     )
     assert state == "stale"
+
+
+def test_long_anchor_is_not_re_aimed_and_returns_fast() -> None:
+    """A model-written anchor is capped only at 20k chars; the line matcher is quadratic."""
+    import time
+
+    lines = [
+        f"- Built feature {i} with React, TypeScript and a lot of care"
+        for i in range(300)
+    ]
+    content = "\n".join(lines) + "\n"
+    anchor = "\n".join(line.replace("care", "kare") for line in lines[100:130])
+
+    start = time.perf_counter()
+    assert rebase_anchor(content, anchor) is None
+    assert time.perf_counter() - start < 0.5
+
+
+def test_edited_long_single_line_anchor_is_still_re_aimed() -> None:
+    line = "- " + "Led the migration of the payments platform to React. " * 7
+    content = f"# Jane\n\n## Experience\n{line.replace('Led', 'Drove', 1)}\n- jQuery\n"
+
+    assert rebase_anchor(content, line) == line.replace("Led", "Drove", 1)

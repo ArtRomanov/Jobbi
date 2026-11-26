@@ -37,6 +37,10 @@ _MIN_RUN_TOKENS = 3
 # An edited anchor: share of it still in the line, and overall likeness.
 MIN_ANCHOR_COVERAGE = 0.8
 MIN_ANCHOR_RATIO = 0.5
+# Longer anchors are not re-aimed (Accept marks the card stale): the anchor
+# comes from the model, and matching it costs about len(anchor)**2 per window,
+# on the event loop (a 30-line anchor took over 30 s).
+MAX_ANCHOR_CHARS = 500
 
 
 def _tokens(text: str) -> list[str]:
@@ -154,7 +158,7 @@ def rebase_replace(content: str, before: str, after: str) -> tuple[str, str] | N
 def rebase_anchor(content: str, anchor: str) -> str | None:
     """The one run of CV lines that is the anchor after an edit, or None."""
     anchor = anchor.strip("\n")
-    if not anchor:
+    if not anchor or len(anchor) > MAX_ANCHOR_CHARS:
         return None
     lines = content.split("\n")
     count = anchor.count("\n") + 1
@@ -162,6 +166,12 @@ def rebase_anchor(content: str, anchor: str) -> str | None:
     for i in range(len(lines) - count + 1):
         window = "\n".join(lines[i : i + count])
         matcher = SequenceMatcher(None, anchor, window, autojunk=False)
+        # Cheap upper bounds of ratio() first: most windows are far off.
+        if (
+            matcher.real_quick_ratio() < MIN_ANCHOR_RATIO
+            or matcher.quick_ratio() < MIN_ANCHOR_RATIO
+        ):
+            continue
         kept = sum(block.size for block in matcher.get_matching_blocks())
         if (
             kept / len(anchor) >= MIN_ANCHOR_COVERAGE
