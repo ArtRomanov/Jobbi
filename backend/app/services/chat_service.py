@@ -34,6 +34,7 @@ from app.services.chat_card_service import (
     cards_by_message,
     delete_application_cards,
     place_edit,
+    quote_diagnostics,
 )
 from app.services.chat_guard_notes import (
     Language,
@@ -329,15 +330,25 @@ def drop_unsupported_edits(
 def place_edits(cv: str, edits: Sequence[CvEdit]) -> tuple[list[CvEdit], int]:
     """The edits Accept can apply, quotes made exact, and how many were dropped.
 
-    A quote that differs from the CV only in whitespace (a hard-wrapped
-    paragraph quoted with spaces) is rewritten to the exact CV text, so the
-    structure check and the stored card see the real passage. An edit whose
-    passage is not in the CV at all is dropped (`place_edit`).
+    A quote that matches the CV only when read loosely (whitespace, dash or
+    quote-mark variants, Markdown line markers: `place_edit`) is rewritten to
+    the exact CV text, so the structure check and the stored card see the
+    real passage. An edit whose passage is not in the CV even so is dropped,
+    and logged with diagnostics only (`chat_quote_not_found`): never its text.
     """
     placed: list[CvEdit] = []
     for edit in edits:
         if (fixed := place_edit(cv, edit)) is not None:
             placed.append(fixed)
+            continue
+        field = "anchor" if edit.op == "insert" else "before"
+        quote = (edit.anchor_text if edit.op == "insert" else edit.before_text) or ""
+        logger.warning(
+            "chat_quote_not_found",
+            op=edit.op,
+            field=field,
+            **quote_diagnostics(cv, quote),
+        )
     return placed, len(edits) - len(placed)
 
 
@@ -641,6 +652,23 @@ def with_structure_warnings(
     ]
 
 
+QUOTE_RETRY_NUDGE = (
+    "Your propose_cv_edit calls above quote text that is not in the CV, so "
+    "none of them reached the user. Make the same edits again, one "
+    "propose_cv_edit call per edit, in this reply. Copy `before` (and "
+    "`anchor`) from the CV block in the first system message character for "
+    "character: the same words, dashes, quote marks and line breaks, without "
+    'list markers ("- ", "* ", "1. "), "> " quote marks or ** that '
+    "the CV does not have there. Quote a short passage that appears only "
+    "once. Do not repeat your earlier text."
+)
+
+
+def _all_unplaced(outcome: _CallOutcome) -> bool:
+    """Every edit of the reply was dropped because its quote is not in the CV."""
+    return outcome.unplaced > 0 and not outcome.edits and not outcome.left_out
+
+
 def _rejection(calls: list[LlmToolCall]) -> str | None:
     return next((c.rejected for c in calls if c.rejected is not None), None)
 
@@ -831,6 +859,43 @@ async def _stream_reply(
     job_post = application.notes or ""
     outcome = _call_outcome(calls, cv, user_texts=user_texts, job_post=job_post)
     outcome.failed += carried_failed
+    if cv is not None and _all_unplaced(outcome):
+        # No card would come of the reply: every quote missed the CV. One
+        # retry, never more, told to copy the quote exactly (the model's quote
+        # is not echoed back); it reuses the trimmed messages and is skipped
+        # if it would not fit. Still no card: the first notes stay.
+        reply = "".join(full_response).strip()
+        estimate, build = _second_build(turn, fit, reply, QUOTE_RETRY_NUDGE)
+        if estimate > (budget := turn.budget()):
+            logger.info(
+                "chat_quote_retry_skipped", estimated_tokens=estimate, budget=budget
+            )
+        else:
+            logger.info("chat_quote_retry", unplaced=outcome.unplaced)
+            retry_calls: list[LlmToolCall] = []
+            async for chunk in _stream_second_call(
+                turn,
+                build,
+                has_text=bool(full_response),
+                tool_choice="required",
+                calls=retry_calls,
+                event="chat_quote_retry_failed",
+            ):
+                full_response.append(chunk)
+                yield chunk
+            retried = _call_outcome(
+                retry_calls, cv, user_texts=user_texts, job_post=job_post
+            )
+            if retried.edits or retried.left_out:
+                # The retry's edits stand in for the unplaced ones; what the
+                # first reply's text already got (malformed, rejected) stays.
+                outcome = _CallOutcome(
+                    edits=retried.edits,
+                    rejected=outcome.rejected or retried.rejected,
+                    failed=outcome.failed + retried.failed,
+                    left_out=retried.left_out,
+                    unplaced=retried.unplaced,
+                )
     if cv is not None and outcome.edits:
         problems = structure_problems(cv.content, outcome.edits, user_content)
         if any(problems):

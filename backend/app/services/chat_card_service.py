@@ -9,6 +9,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
+from difflib import SequenceMatcher
 from typing import ClassVar, NoReturn
 
 from fastapi import status
@@ -117,41 +118,151 @@ def _find_once(content: str, needle: str) -> int:
     return first
 
 
-_WHITESPACE_OR_TEXT = re.compile(r"\s+|\S+")
+# Whitespace runs, soft hyphens (dropped when folding) and the text between.
+# The three classes never share a character, so the regex never backtracks.
+_WHITESPACE_OR_TEXT = re.compile(r"\s+|\xad+|[^\s\xad]+")
+_SOFT_HYPHEN = "\xad"
+
+# One character for one: the dash, quote and space variants a model rarely
+# types back (CVs from Word or PDFs carry them; "Full‑stack" uses U+2011).
+_FOLD = str.maketrans(
+    {
+        **dict.fromkeys("‐‑‒–—―−", "-"),
+        **dict.fromkeys("‘’‚‛′", "'"),
+        **dict.fromkeys("“”„‟″«»", '"'),
+        **dict.fromkeys("    ", " "),
+    }
+)
+_LIST_MARKERS = "-*+"
+_BOLD_MARKERS = ("**", "__")
 
 
-def _squeeze(text: str) -> tuple[str, list[int], list[int]]:
+def _marker_spans(text: str) -> list[tuple[int, int]]:
+    """The Markdown line markers of `text`, as (start, end) spans, in order.
+
+    Per line: leading indentation, `>` quote markers, then one `- ` / `* ` /
+    `+ ` bullet, `1. ` / `1) ` number or `#` heading, and a `**` / `__` bold
+    wrapper around the rest of the line (both ends). One pass over the text.
+    """
+    spans: list[tuple[int, int]] = []
+    line_start = 0
+    size = len(text)
+    while line_start <= size:
+        line_end = text.find("\n", line_start)
+        if line_end == -1:
+            line_end = size
+        i = line_start
+        while i < line_end and text[i] in " \t>":
+            i += 1
+        j = i
+        if j < line_end and text[j] in _LIST_MARKERS:
+            j += 1
+        elif j < line_end and text[j] == "#":
+            while j < line_end and text[j] == "#":
+                j += 1
+        else:
+            while j < line_end and j - i < 3 and text[j].isdigit():
+                j += 1
+            if j > i and j < line_end and text[j] in ".)":
+                j += 1
+            else:
+                j = i
+        if j > i and j < line_end and text[j] in " \t":
+            while j < line_end and text[j] in " \t":
+                j += 1
+            i = j
+        if i > line_start:
+            spans.append((line_start, i))
+        stripped_end = len(text[i:line_end].rstrip(" \t")) + i
+        bold = text[i : i + 2]
+        if (
+            bold in _BOLD_MARKERS
+            and stripped_end - i > 4
+            and text[stripped_end - 2 : stripped_end] == bold
+        ):
+            spans.append((i, i + 2))
+            spans.append((stripped_end - 2, stripped_end))
+        line_start = line_end + 1
+    return spans
+
+
+def _squeeze(
+    text: str, *, fold: bool = False, markers: bool = False
+) -> tuple[str, list[int], list[int]]:
     """`text` with each whitespace run as one space, and where each char came from.
 
     For every character of the squeezed text, `starts` / `ends` hold the start
     and end of what it stands for in `text` (a whole run for a squeezed space).
-    Linear time: a whitespace run and a non-whitespace run never share a
-    character, so the regex never backtracks.
+    With `fold`, dash, quote and space variants become their ASCII form and
+    soft hyphens are dropped (`_FOLD`); with `markers`, Markdown line markers
+    are dropped too (`_marker_spans`). Linear time.
     """
+    if fold:
+        text = text.translate(_FOLD)
+    skips = _marker_spans(text) if markers else []
+    pieces: list[tuple[int, int]] = []
+    position = 0
+    for lo, hi in skips:
+        if lo > position:
+            pieces.append((position, lo))
+        position = max(position, hi)
+    pieces.append((position, len(text)))
+
     parts: list[str] = []
     starts: list[int] = []
     ends: list[int] = []
-    for match in _WHITESPACE_OR_TEXT.finditer(text):
-        lo, hi = match.span()
-        if match.group().isspace():
-            parts.append(" ")
-            starts.append(lo)
-            ends.append(hi)
-        else:
-            parts.append(match.group())
-            starts.extend(range(lo, hi))
-            ends.extend(range(lo + 1, hi + 1))
+    for piece_start, piece_end in pieces:
+        for match in _WHITESPACE_OR_TEXT.finditer(text, piece_start, piece_end):
+            lo, hi = match.span()
+            token = match.group()
+            if token[0] == _SOFT_HYPHEN:
+                if not fold:
+                    parts.append(token)
+                    starts.extend(range(lo, hi))
+                    ends.extend(range(lo + 1, hi + 1))
+            elif token.isspace():
+                if parts and parts[-1] == " ":
+                    ends[-1] = hi  # A run split by a dropped marker.
+                else:
+                    parts.append(" ")
+                    starts.append(lo)
+                    ends.append(hi)
+            else:
+                parts.append(token)
+                starts.extend(range(lo, hi))
+                ends.extend(range(lo + 1, hi + 1))
     return "".join(parts), starts, ends
+
+
+# Ever looser ways of reading a quote, tried in order (`_locate_once`).
+_LEVELS: tuple[dict[str, bool], ...] = (
+    {},  # whitespace runs count as equal
+    {"fold": True},  # and dash / quote / space variants too
+    {"fold": True, "markers": True},  # and Markdown line markers are ignored
+)
+
+
+def _count_matches(haystack: str, needle: str) -> tuple[int, int]:
+    """(first index or -1, matches found: 0, 1 or 2 meaning "two or more")."""
+    first = haystack.find(needle) if needle else -1
+    if first == -1:
+        return -1, 0
+    return first, 1 if haystack.find(needle, first + 1) == -1 else 2
 
 
 def _locate_once(content: str, needle: str) -> tuple[int, int]:
     """(start, end) of the only passage of `content` that `needle` quotes.
 
-    An exact match comes first. When there is none, runs of whitespace
-    (spaces, tabs, line breaks) count as equal: the model often quotes a
-    hard-wrapped CV paragraph with spaces where the CV breaks its lines. That
-    looser match must be unique too, else the passage counts as missing (and
-    Accept may still re-aim it, `cv_rebase`).
+    An exact match comes first. When there is none, the quote is read ever
+    more loosely (`_LEVELS`): runs of whitespace (spaces, tabs, line breaks)
+    count as equal, as the model often quotes a hard-wrapped CV paragraph with
+    spaces; then dash, quote-mark and no-break-space variants count as their
+    ASCII form ("Full-stack" finds "Full‑stack"); then Markdown line markers
+    (`> `, `- `, `1. `, `## `, `**…**`) are ignored on both sides, as the
+    model may quote a plain paragraph as the list item it displayed. Each
+    looser match must be unique too: two or more matches mean the passage
+    counts as missing (and Accept may still re-aim it, `cv_rebase`). The span
+    is always of the exact CV text.
 
     Raises _PassageMissing, or _PassageNotUnique for an exact repeat.
     """
@@ -161,12 +272,59 @@ def _locate_once(content: str, needle: str) -> tuple[int, int]:
         pass
     else:
         return start, start + len(needle)
-    squeezed, starts, ends = _squeeze(content)
-    target = _squeeze(needle)[0]
-    first = squeezed.find(target)
-    if not target or first == -1 or squeezed.find(target, first + 1) != -1:
-        raise _PassageMissing
-    return starts[first], ends[first + len(target) - 1]
+    for level in _LEVELS:
+        squeezed, starts, ends = _squeeze(content, **level)
+        target = _squeeze(needle, **level)[0]
+        if level.get("markers"):
+            target = target.strip(" ")
+        first, count = _count_matches(squeezed, target)
+        if count == 1:
+            return starts[first], ends[first + len(target) - 1]
+        if count > 1:
+            break
+    raise _PassageMissing
+
+
+def quote_diagnostics(content: str, quote: str) -> dict[str, object]:
+    """Why a quote was not found, for the logs: flags and numbers, no text.
+
+    `matches_*` count the matches (0, 1, or 2 for "two or more") with
+    whitespace ignored, then dash/quote variants, then Markdown markers;
+    `found_ignoring_case` checks the loosest reading case-blind; the quote's
+    longest run of words found in the CV, as a share of its words, is
+    `best_overlap_ratio`. Bounded work: at most `_DIAG_MAX_WORDS` quote words.
+    """
+    content = normalize_newlines(content)
+    quote = normalize_newlines(quote)
+    flags: dict[str, object] = {"quote_chars": len(quote)}
+    names = ("matches_whitespace", "matches_folded", "matches_markers")
+    loose_cv = loose_quote = ""
+    for name, level in zip(names, _LEVELS, strict=True):
+        loose_cv = _squeeze(content, **level)[0]
+        loose_quote = _squeeze(quote, **level)[0]
+        if level.get("markers"):
+            loose_quote = loose_quote.strip(" ")
+        flags[name] = _count_matches(loose_cv, loose_quote)[1]
+    flags["found_ignoring_case"] = bool(loose_quote) and (
+        loose_quote.casefold() in loose_cv.casefold()
+    )
+    flags["quote_has_marker"] = bool(_marker_spans(quote))
+    flags["best_overlap_ratio"] = _longest_word_run_share(loose_cv, loose_quote)
+    return flags
+
+
+_DIAG_MAX_WORDS = 300
+
+
+def _longest_word_run_share(content: str, quote: str) -> float:
+    """Share of the quote's words in its longest run found as is in the CV."""
+    words = quote.casefold().split()[:_DIAG_MAX_WORDS]
+    if not words:
+        return 0.0
+    cv_words = content.casefold().split()
+    matcher = SequenceMatcher(None, cv_words, words, autojunk=False)
+    longest = matcher.find_longest_match(0, len(cv_words), 0, len(words)).size
+    return round(longest / len(words), 2)
 
 
 def normalize_newlines(text: str) -> str:
