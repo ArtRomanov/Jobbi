@@ -170,12 +170,14 @@ def test_quote_without_markers_finds_a_bulleted_cv_list() -> None:
     placed = place_edit(CV, _edit(before_text=quote, after_text="Python, TypeScript"))
 
     assert placed is not None
-    assert placed.before_text == "Python\n- **TypeScript"
-    # A bold wrapper is kept or dropped on both sides together.
+    # The span never cuts a bold pair: the closing ** goes with its opening.
+    assert placed.before_text == "Python\n- **TypeScript**"
+    assert _apply(CV, placed).endswith("## Skills\n- Python, TypeScript\n")
     lines = "- Python\n- TypeScript"
     placed = place_edit(CV, _edit(op="remove", before_text=lines))
     assert placed is not None
-    assert placed.before_text == "Python\n- **TypeScript"
+    assert placed.before_text == "Python\n- **TypeScript**"
+    assert "**" not in _apply(CV, placed)
 
 
 def test_heading_and_bold_markers_are_ignored() -> None:
@@ -186,7 +188,32 @@ def test_heading_and_bold_markers_are_ignored() -> None:
     )
 
     assert placed is not None
-    assert placed.before_text == "Skills\n**Languages: Python, Go"
+    assert placed.before_text == "Skills\n**Languages: Python, Go**"
+    assert _apply(cv, placed) == "# Jane\n\n## x\n"
+
+
+@pytest.mark.parametrize(
+    ("cv", "quote"),
+    [
+        # The quote starts inside a bold line and goes past its end: widening
+        # to the opening ** would also replace "Led", which it never quoted.
+        (
+            "# Jane\n\n- **Led the team of five**\nShipped v2.\n",
+            "the team of five Shipped",
+        ),
+        # The quote ends inside a bold line that started before it.
+        (
+            "# Jane\n\nShipped v2.\n**Led the team of five**\n",
+            "Shipped v2. Led the team",
+        ),
+    ],
+)
+def test_a_loose_match_that_cuts_a_bold_pair_is_not_placed(cv: str, quote: str) -> None:
+    edit = _edit(before_text=quote, after_text="x")
+
+    assert place_edit(cv, edit) is None
+    with pytest.raises(_PassageMissing):
+        _apply(cv, edit)
 
 
 def test_ambiguous_after_folding_is_not_placed() -> None:

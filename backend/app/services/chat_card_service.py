@@ -137,14 +137,23 @@ _LIST_MARKERS = "-*+"
 _BOLD_MARKERS = ("**", "__")
 
 
-def _marker_spans(text: str) -> list[tuple[int, int]]:
+_Span = tuple[int, int]
+
+
+def _marker_spans(text: str) -> list[_Span]:
     """The Markdown line markers of `text`, as (start, end) spans, in order.
 
     Per line: leading indentation, `>` quote markers, then one `- ` / `* ` /
     `+ ` bullet, `1. ` / `1) ` number or `#` heading, and a `**` / `__` bold
     wrapper around the rest of the line (both ends). One pass over the text.
     """
-    spans: list[tuple[int, int]] = []
+    return _line_markers(text)[0]
+
+
+def _line_markers(text: str) -> tuple[list[_Span], list[tuple[_Span, _Span]]]:
+    """`_marker_spans`, and each bold wrapper as its (opening, closing) pair."""
+    spans: list[_Span] = []
+    bold_pairs: list[tuple[_Span, _Span]] = []
     line_start = 0
     size = len(text)
     while line_start <= size:
@@ -180,10 +189,35 @@ def _marker_spans(text: str) -> list[tuple[int, int]]:
             and stripped_end - i > 4
             and text[stripped_end - 2 : stripped_end] == bold
         ):
-            spans.append((i, i + 2))
-            spans.append((stripped_end - 2, stripped_end))
+            opening, closing = (i, i + 2), (stripped_end - 2, stripped_end)
+            spans.extend((opening, closing))
+            bold_pairs.append((opening, closing))
         line_start = line_end + 1
-    return spans
+    return spans, bold_pairs
+
+
+def _keep_bold_pairs_whole(content: str, start: int, end: int) -> _Span:
+    """The span of a marker-level match, widened so it cuts no `**` pair.
+
+    The match skips bold markers, so its span may hold one marker of a pair
+    and not the other: Accept would leave a lone `**`. A missing marker right
+    next to the span is taken in; one with quoted-for-nothing text between
+    (the quote starts or ends inside the bold line) means no match.
+    """
+    for (open_lo, open_hi), (close_lo, close_hi) in _line_markers(
+        content.translate(_FOLD)
+    )[1]:
+        has_open = start <= open_lo and open_hi <= end
+        has_close = start <= close_lo and close_hi <= end
+        if has_open == has_close:
+            continue
+        if has_open and close_lo == end:
+            end = close_hi
+        elif has_close and open_hi == start:
+            start = open_lo
+        else:
+            raise _PassageMissing
+    return start, end
 
 
 def _squeeze(
@@ -279,7 +313,10 @@ def _locate_once(content: str, needle: str) -> tuple[int, int]:
             target = target.strip(" ")
         first, count = _count_matches(squeezed, target)
         if count == 1:
-            return starts[first], ends[first + len(target) - 1]
+            start, end = starts[first], ends[first + len(target) - 1]
+            if level.get("markers"):
+                return _keep_bold_pairs_whole(content, start, end)
+            return start, end
         if count > 1:
             break
     raise _PassageMissing
