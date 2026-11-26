@@ -38,9 +38,9 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
   const editButtonsRef = useRef(new Map<string, HTMLButtonElement>());
   // A replaced source gets a new row, so the Modal can't return focus to its Edit
   const [focusEditId, setFocusEditId] = useState<string | null>(null);
-  // A finished Remove: its focus target is picked once the list without it is committed
+  // A Remove: its focus target is picked once the list without the row is committed
   const [removeFocus, setRemoveFocus] = useState<RemoveFocusRequest | null>(null);
-  // The picked Remove may sit on another page: focused after that page renders
+  // Remove to focus once its page renders: the picked target, or a row Undo brought back
   const [focusRemoveId, setFocusRemoveId] = useState<string | null>(null);
   const {
     sources,
@@ -48,11 +48,11 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
     setSettings,
     status,
     loadState,
-    removingIds,
     isAddDisabled,
     appendSource,
     replaceSource,
     removeSource,
+    flushRemovals,
     retryLoad,
   } = useManageSources(onScanFinished, onSourcesChange);
   // Paging is view-only: `onSourcesChange` above still gets the FULL list
@@ -78,7 +78,7 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
     save,
     addBoard,
     cancelPreview,
-  } = useAddSource(isAddDisabled, appendAndReveal);
+  } = useAddSource(isAddDisabled, appendAndReveal, flushRemovals);
 
   const registerRemoveButton = useCallback(
     (id: string, element: HTMLButtonElement | null): void => {
@@ -105,18 +105,16 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
     setFocusEditId(null);
   }, [focusEditId]);
 
-  // Against the CURRENT list (other removes may have finished meanwhile): the
-  // next row in full-list order (it slides into the removed row's place), else
-  // the previous one (maybe on the previous page), else the input
+  // Against the CURRENT visible list (other removes may have hidden rows
+  // meanwhile): the next row in full-list order (it slides into the removed
+  // row's place), else the previous one (maybe on the previous page), else the input
   useEffect(() => {
     if (removeFocus === null) return;
     const currentIds = new Set(sources.map((source) => source.id));
     if (currentIds.has(removeFocus.removedId)) return;
     setRemoveFocus(null);
-    const targetId = pickFocusAfterRemove(
-      removeFocus.orderedIds,
-      removeFocus.removedId,
-      (candidate) => currentIds.has(candidate) && !removingIds.has(candidate),
+    const targetId = pickFocusAfterRemove(removeFocus.orderedIds, removeFocus.removedId, (candidate) =>
+      currentIds.has(candidate),
     );
     if (targetId === null) {
       inputRef.current?.focus();
@@ -124,7 +122,7 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
     }
     revealSource(targetId);
     setFocusRemoveId(targetId);
-  }, [removeFocus, sources, removingIds, revealSource]);
+  }, [removeFocus, sources, revealSource]);
 
   useEffect(() => {
     if (focusRemoveId === null) return;
@@ -171,19 +169,23 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
     [replaceSource, onSourceEdited],
   );
 
-  // After a removal, move focus (see the `removeFocus` effect) unless the user
-  // has moved on: focus is still on this row's Remove, or nowhere (<body>)
+  // The row hides at once (Undo toast; the DELETE goes when it ends) and focus
+  // moves (see the `removeFocus` effect) unless the user has moved on: focus is
+  // neither on this row's Remove nor nowhere (<body>). Undo shows the row again
+  // on its page and focuses its Remove.
   const handleRemove = useCallback(
-    async (id: string): Promise<void> => {
+    (id: string): void => {
       const orderedIds = sources.map((source) => source.id);
       const removeButton = removeButtonsRef.current.get(id);
-      const isRemoved = await removeSource(id);
-      if (!isRemoved) return;
       const active = document.activeElement;
-      if (active !== null && active !== document.body && active !== removeButton) return;
-      setRemoveFocus({ orderedIds, removedId: id });
+      const isFocusHere = active === null || active === document.body || active === removeButton;
+      removeSource(id, () => {
+        revealSource(id);
+        setFocusRemoveId(id);
+      });
+      if (isFocusHere) setRemoveFocus({ orderedIds, removedId: id });
     },
-    [sources, removeSource],
+    [sources, removeSource, revealSource],
   );
 
   let list: ReactNode;
@@ -212,9 +214,9 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
         <>
           <SourceList
             sources={pageSources}
-            removingIds={removingIds}
-            onRemove={(id) => void handleRemove(id)}
+            onRemove={handleRemove}
             onEdited={handleEdited}
+            onBeforeLinkChange={flushRemovals}
             onRegisterRemoveButton={registerRemoveButton}
             onRegisterEditButton={registerEditButton}
           />

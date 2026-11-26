@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import type { VacancySource } from "@/entities/vacancy-source";
@@ -35,6 +35,10 @@ async function waitForList(): Promise<void> {
 }
 
 describe("InboxPage", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("renders the heading, empty state and Sources panel", async () => {
     renderWithProviders(<InboxPage />);
 
@@ -173,7 +177,8 @@ describe("InboxPage", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("removes a source", async () => {
+  it("removes a source once its Undo window ends", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
     const deleted: string[] = [];
     serveSources([
       { ...mockVacancySource, id: "keep", display_name: "@keep_me" },
@@ -185,14 +190,17 @@ describe("InboxPage", () => {
         return new HttpResponse(null, { status: 204 });
       }),
     );
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     renderWithProviders(<InboxPage />);
 
     await user.click(await screen.findByRole("button", { name: "Remove @remove_me" }));
 
-    await waitFor(() => expect(screen.queryByText("@remove_me")).not.toBeInTheDocument());
+    expect(screen.queryByText("@remove_me", OUTSIDE_SOURCE_FILTER)).not.toBeInTheDocument();
     expect(screen.getByText("@keep_me", OUTSIDE_SOURCE_FILTER)).toBeInTheDocument();
-    expect(deleted).toEqual(["gone"]);
+    expect(deleted).toEqual([]);
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    await waitFor(() => expect(deleted).toEqual(["gone"]));
+    expect(screen.queryByText("@remove_me", OUTSIDE_SOURCE_FILTER)).not.toBeInTheDocument();
   });
 
   it("shows a load error with a retry", async () => {
@@ -307,7 +315,7 @@ describe("InboxPage", () => {
     renderWithProviders(<InboxPage />);
 
     await user.click(await screen.findByRole("button", { name: "Remove @first_one" }));
-    await waitFor(() => expect(screen.queryByText("@first_one")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("@first_one", OUTSIDE_SOURCE_FILTER)).not.toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Remove @second_one" })).toHaveFocus();
 
     await user.click(screen.getByRole("button", { name: "Remove @second_one" }));
@@ -316,14 +324,16 @@ describe("InboxPage", () => {
   });
 
   it("keeps the source and shows a toast when removing fails", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
     serveSources([{ ...mockVacancySource, id: "stuck", display_name: "@stuck_one" }]);
     server.use(
       http.delete(SOURCE_URL, () => HttpResponse.json({ detail: "boom" }, { status: 500 })),
     );
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     renderWithProviders(<InboxPage />);
 
     await user.click(await screen.findByRole("button", { name: "Remove @stuck_one" }));
+    await act(() => vi.advanceTimersByTimeAsync(5000));
 
     expect(await screen.findByText("Something went wrong. Please try again.")).toBeInTheDocument();
     expect(screen.getByText("@stuck_one", OUTSIDE_SOURCE_FILTER)).toBeInTheDocument();

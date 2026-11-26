@@ -25,6 +25,8 @@ interface EditSourceDialogProps {
   onClose: () => void;
   /** Gets the server's copy (a replaced source has a new id); the caller closes the dialog. */
   onSaved: SourceEditedHandler;
+  /** Awaited before a changed link / pattern is checked (sends pending removals first). */
+  onBeforeLinkChange?: () => Promise<void>;
 }
 
 /**
@@ -35,9 +37,9 @@ interface EditSourceDialogProps {
  * until a field differs from its starting value after trimming. Escape /
  * backdrop are blocked while a request runs; errors show inline.
  */
-export function EditSourceDialog({ source, onClose, onSaved }: EditSourceDialogProps) {
+export function EditSourceDialog({ source, onClose, onSaved, onBeforeLinkChange }: EditSourceDialogProps) {
   const { busyAction, isBusy, error, preview, previewError, submit, recheck, savePreview, closePreview } =
-    useEditSource(source, onSaved);
+    useEditSource(source, onSaved, onBeforeLinkChange);
   const isWeb = source.kind === "web";
   // The dialog's starting values (it re-mounts on open); edits are measured against these
   const [initialValues] = useState<EditSourceFormInput>(() => ({

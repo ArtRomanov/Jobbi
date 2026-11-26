@@ -17,6 +17,11 @@ export interface ToastOptions {
   link?: ToastLink;
   /** How long the toast stays, in ms. Defaults to 3000. */
   durationMs?: number;
+  /**
+   * Runs when the toast closes by its own timer (after any hover/focus pause),
+   * not when its action / link is used or `dismissToast` closes it.
+   */
+  onTimeout?: () => void;
 }
 
 export interface ToastData {

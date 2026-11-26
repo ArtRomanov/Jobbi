@@ -133,4 +133,31 @@ describe("Toast", () => {
     expect(screen.getByRole("alert")).toContainElement(messages[1] ?? null);
     expect(messages[0]?.closest("[aria-live='polite']")).not.toBeNull();
   });
+
+  it("runs onTimeout only when the toast closes by its own timer", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    const onTimeout = vi.fn();
+    const onUndo = vi.fn();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderWithProviders(
+      <Trigger
+        type="info"
+        options={{ durationMs: 5000, action: { label: "Undo", onClick: onUndo }, onTimeout }}
+      />,
+    );
+
+    // Closed by its action: no onTimeout
+    await user.click(screen.getByRole("button", { name: "Show" }));
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    await act(() => vi.advanceTimersByTimeAsync(6000));
+    expect(onTimeout).not.toHaveBeenCalled();
+
+    // Closed by its timer: onTimeout once
+    await user.click(screen.getByRole("button", { name: "Show" }));
+    await act(() => vi.advanceTimersByTimeAsync(5000));
+    expect(screen.queryByText("Hello")).not.toBeInTheDocument();
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+    await act(() => vi.advanceTimersByTimeAsync(6000));
+    expect(onTimeout).toHaveBeenCalledTimes(1);
+  });
 });

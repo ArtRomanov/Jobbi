@@ -80,3 +80,9 @@ export const KEYWORD_FILTER_HELP =
 export const FILTERED_LAST_24H_PREFIX = "Skipped by the filter in the last 24 hours:";
 /** localStorage key: "true" while the Sources panel is collapsed. */
 export const SOURCES_COLLAPSED_STORAGE_KEY = "jobbi:inbox:sourcesCollapsed";
+
+// --- Remove with Undo (backlog #10) ---
+/** How long "Source removed · Undo" stays; the DELETE is sent when it ends (pauses on hover / focus). */
+export const REMOVE_UNDO_WINDOW_MS = 5000;
+export const SOURCE_REMOVED_MESSAGE = "Source removed";
+export const UNDO_LABEL = "Undo";

@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { InboxPage } from "@/pages/inbox";
@@ -58,6 +58,10 @@ async function renderInbox() {
 }
 
 describe("Inbox filters", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("lists all sources, live sources, removed (removed) and forwarded (forwarded) sources", async () => {
     serveSources();
     recordListRequests();
@@ -185,12 +189,18 @@ describe("Inbox filters", () => {
       }),
     );
     recordListRequests();
-    const user = await renderInbox();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderWithProviders(<InboxPage />);
+    await screen.findByRole("heading", { name: "Senior React Developer" });
     const select = screen.getByRole("combobox", { name: "Source" });
     expect(await within(select).findByRole("option", { name: "@frontend_jobs" })).toBeInTheDocument();
 
     const sources = screen.getByRole("list", { name: "Watched sources" });
     await user.click(within(sources).getByRole("button", { name: /Remove/ }));
+    // Still live while its Undo toast is open; the DELETE goes when the toast ends
+    expect(within(select).getByRole("option", { name: "@frontend_jobs" })).toBeInTheDocument();
+    await act(() => vi.advanceTimersByTimeAsync(5000));
 
     expect(
       await within(select).findByRole("option", { name: "@frontend_jobs (removed)" }),

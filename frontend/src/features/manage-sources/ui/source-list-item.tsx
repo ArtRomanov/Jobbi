@@ -18,10 +18,11 @@ const BLOCKED_BUTTON_STYLE = { opacity: 0.6, cursor: "not-allowed" } as const;
 
 interface SourceListItemProps {
   source: VacancySource;
-  isRemoving: boolean;
   onRemove: (id: string) => void;
   /** Called with this row's id and the server's copy (a new id after a replace). */
   onEdited: SourceSavedHandler;
+  /** Awaited before the Edit dialog sends a changed link. */
+  onBeforeLinkChange?: () => Promise<void>;
   /** Called with the Remove button element (null on unmount) for focus management. */
   onRegisterRemoveButton: (id: string, element: HTMLButtonElement | null) => void;
   /** Called with the Edit button element (null on unmount) for focus management. */
@@ -37,9 +38,9 @@ interface SourceListItemProps {
  */
 export function SourceListItem({
   source,
-  isRemoving,
   onRemove,
   onEdited,
+  onBeforeLinkChange,
   onRegisterRemoveButton,
   onRegisterEditButton,
 }: SourceListItemProps) {
@@ -135,13 +136,19 @@ export function SourceListItem({
         type="button"
         variant="secondary"
         aria-label={`Remove ${source.display_name}`}
-        loading={isRemoving}
         onClick={() => onRemove(source.id)}
         style={{ flexShrink: 0 }}
       >
         Remove
       </Button>
-      {isEditing ? <EditSourceDialog source={source} onClose={closeEdit} onSaved={handleSaved} /> : null}
+      {isEditing ? (
+        <EditSourceDialog
+          source={source}
+          onClose={closeEdit}
+          onSaved={handleSaved}
+          onBeforeLinkChange={onBeforeLinkChange}
+        />
+      ) : null}
     </li>
   );
 }

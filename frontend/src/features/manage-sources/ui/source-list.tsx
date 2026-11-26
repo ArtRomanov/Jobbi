@@ -6,9 +6,10 @@ import { SourceListItem } from "./source-list-item";
 
 interface SourceListProps {
   sources: readonly VacancySource[];
-  removingIds: ReadonlySet<string>;
   onRemove: (id: string) => void;
   onEdited: SourceSavedHandler;
+  /** Awaited before an Edit sends a changed link (sends pending removals first). */
+  onBeforeLinkChange?: () => Promise<void>;
   onRegisterRemoveButton: (id: string, element: HTMLButtonElement | null) => void;
   onRegisterEditButton: (id: string, element: HTMLButtonElement | null) => void;
 }
@@ -16,9 +17,9 @@ interface SourceListProps {
 /** Watched sources, or a short hint when there are none. */
 export function SourceList({
   sources,
-  removingIds,
   onRemove,
   onEdited,
+  onBeforeLinkChange,
   onRegisterRemoveButton,
   onRegisterEditButton,
 }: SourceListProps) {
@@ -32,9 +33,9 @@ export function SourceList({
         <SourceListItem
           key={source.id}
           source={source}
-          isRemoving={removingIds.has(source.id)}
           onRemove={onRemove}
           onEdited={onEdited}
+          onBeforeLinkChange={onBeforeLinkChange}
           onRegisterRemoveButton={onRegisterRemoveButton}
           onRegisterEditButton={onRegisterEditButton}
         />

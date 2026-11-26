@@ -265,41 +265,70 @@ describe("Sources panel pagination", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Remove @source_8" })).toHaveFocus());
   });
 
-  it("two removes in flight: the later one focuses the row before both, not the input", async () => {
+  it("two removes in a row: the later one focuses the row before both, not the input; the DELETEs move nothing", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
     serveSources(makeSources(9));
     const release = holdDeletes(["s8"]);
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     renderWithProviders(<InboxPage />);
     await waitForSources();
     await user.click(within(getPager()).getByRole("button", { name: "Next" }));
 
     await user.click(screen.getByRole("button", { name: "Remove @source_8" }));
     await user.click(screen.getByRole("button", { name: "Remove @source_9" }));
-    await waitFor(() =>
-      expect(screen.queryByRole("button", { name: "Remove @source_9" })).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(visibleNames()).toEqual(names(1, 7)));
     await waitFor(() => expect(screen.getByRole("button", { name: "Remove @source_7" })).toHaveFocus());
 
+    // Undo windows end: s9's DELETE lands at once, s8's is held, then lands
+    await act(() => vi.advanceTimersByTimeAsync(5000));
     act(() => release.get("s8")?.());
-    await waitFor(() => expect(visibleNames()).toEqual(names(1, 7)));
+    await waitFor(() => expect(screen.queryByText("Source removed")).not.toBeInTheDocument());
+    await act(() => vi.advanceTimersByTimeAsync(100));
+    expect(visibleNames()).toEqual(names(1, 7));
     expect(screen.getByRole("button", { name: "Remove @source_7" })).toHaveFocus();
   });
 
   it("leaves focus alone when the user moved on (pressed Next) before the DELETE returned", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
     serveSources(makeSources(9));
     const release = holdDeletes(["s3"]);
-    const user = userEvent.setup();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     renderWithProviders(<InboxPage />);
     await waitForSources();
 
     await user.click(screen.getByRole("button", { name: "Remove @source_3" }));
+    expect(screen.getByRole("button", { name: "Remove @source_4" })).toHaveFocus();
     const next = within(getPager()).getByRole("button", { name: "Next" });
     await user.click(next);
     expect(next).toHaveFocus();
 
+    // The Undo window ends while the user is on page 2; the held DELETE then lands
+    await act(() => vi.advanceTimersByTimeAsync(5000));
     act(() => release.get("s3")?.());
-    await waitFor(() => expect(visibleNames()).toEqual(["@source_9"]));
+    await waitFor(() => expect(screen.queryByText("Source removed")).not.toBeInTheDocument());
+    await act(() => vi.advanceTimersByTimeAsync(100));
+    expect(visibleNames()).toEqual(["@source_9"]);
     expect(next).toHaveFocus();
+  });
+
+  it("Undo of a row on page 2 while viewing page 1 opens page 2 and focuses its Remove", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"], shouldAdvanceTime: true });
+    serveSources(makeSources(10));
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    renderWithProviders(<InboxPage />);
+    await waitForSources();
+    await user.click(within(getPager()).getByRole("button", { name: "Next" }));
+
+    await user.click(screen.getByRole("button", { name: "Remove @source_9" }));
+    expect(visibleNames()).toEqual(["@source_8", "@source_10"]);
+    await user.click(within(getPager()).getByRole("button", { name: "Page 1" }));
+    expect(visibleNames()).toEqual(names(1, 7));
+
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+
+    expect(visibleNames()).toEqual(names(8, 10));
+    expect(within(getPager()).getByRole("button", { name: "Page 2" })).toHaveAttribute("aria-current", "page");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Remove @source_9" })).toHaveFocus());
   });
 
   describe("polling", () => {

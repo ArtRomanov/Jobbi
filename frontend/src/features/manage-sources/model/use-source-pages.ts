@@ -6,7 +6,7 @@ import type { UseSourcePagesResult } from "./types";
 
 /**
  * Client-side paging of the Sources list (`SOURCES_PAGE_SIZE` per page) over
- * the full list from `useManageSources`. Pass the list to page over: a future
+ * the visible list from `useManageSources` (rows pending removal left out). A future
  * in-panel search / filter passes its filtered list and calls `setPage(0)`
  * when the query changes.
  *
