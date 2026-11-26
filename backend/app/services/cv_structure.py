@@ -27,8 +27,10 @@ from app.services.chat_guard_notes import Language
 from app.services.chat_tools import CvEdit
 
 # CommonMark ATX heading: up to 3 spaces in, 1-6 "#", a space, the text, and
-# an optional closing run of "#".
-_HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$")
+# an optional closing run of "#". The closing run is cut in `_heading_text`:
+# a lazy text group followed by optional whitespace runs backtracks
+# quadratically on a long run of spaces (a 20k-char line took seconds).
+_HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+)$")
 _BULLET = re.compile(r"^\s*[-*+][ \t]+\S")
 
 ProblemKind = Literal["section_removed", "section_renamed", "entry_lost", "header_lost"]
@@ -53,6 +55,15 @@ class Problem:
     new_name: str | None = None  # section_renamed: the new heading
 
 
+def _heading_text(raw: str) -> str:
+    """The heading text without its optional closing `#` run (`## Skills ##`)."""
+    text = raw.rstrip(" \t")
+    without_hashes = text.rstrip("#")
+    if without_hashes != text and without_hashes[-1:] in (" ", "\t"):
+        text = without_hashes
+    return text.strip()
+
+
 def read_outline(cv: str) -> CvOutline:
     header: str | None = None
     sections: list[str] = []
@@ -60,7 +71,7 @@ def read_outline(cv: str) -> CvOutline:
     bullets = 0
     for line in cv.splitlines():
         if heading := _HEADING.match(line):
-            level, text = len(heading.group(1)), heading.group(2).strip()
+            level, text = len(heading.group(1)), _heading_text(heading.group(2))
             if level == 1 and header is None:
                 header = text
             elif level == 2:

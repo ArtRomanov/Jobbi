@@ -99,6 +99,41 @@ def test_read_outline_ignores_non_headings(line: str) -> None:
     assert outline.sections == () and outline.header is None
 
 
+@pytest.mark.parametrize(
+    ("line", "level_text"),
+    [
+        ("## Skills\t#", ("sections", "Skills")),
+        ("## C# ##", ("sections", "C#")),
+        ("## C#", ("sections", "C#")),
+        ("## ##", ("sections", "##")),
+        ("### Lead   Engineer   ", ("entries", "Lead   Engineer")),
+    ],
+)
+def test_read_outline_closing_hashes_and_trailing_space(
+    line: str, level_text: tuple[str, str]
+) -> None:
+    field, text = level_text
+    assert getattr(read_outline(line), field) == (text,)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "# a" + " " * 20_000 + "b",  # CV_CONTENT_MAX_CHARS of spaces inside a heading
+        "## " + "\t " * 10_000 + "x",
+        "### x" + " #" * 10_000 + "y",
+    ],
+    ids=["spaces", "tabs-and-spaces", "hash-runs"],
+)
+def test_read_outline_is_linear_on_long_whitespace_runs(line: str) -> None:
+    """A 20k-char heading line was quadratic in the regex (3 s of CPU on the event loop)."""
+    import time
+
+    start = time.perf_counter()
+    read_outline(line)
+    assert time.perf_counter() - start < 0.2
+
+
 def test_plain_text_cv_has_an_empty_outline() -> None:
     outline = read_outline("Alex Morgan\nExperience\nLead engineer at Northwind")
     assert (outline.header, outline.sections, outline.entries) == (None, (), ())
