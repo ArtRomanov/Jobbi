@@ -18,7 +18,7 @@ import { getSourceLink } from "../lib/helpers";
 import { editSourceSchema, type EditSourceFormInput, type EditSourceValues } from "../model/schemas";
 import type { SourceEditedHandler } from "../model/types";
 import { useEditSource } from "../model/use-edit-source";
-import { SourcePreview } from "./source-preview";
+import { SourcePreview, type PreviewDraft } from "./source-preview";
 
 interface EditSourceDialogProps {
   source: VacancySource;
@@ -86,6 +86,14 @@ export function EditSourceDialog({ source, onClose, onSaved }: EditSourceDialogP
     void handleSubmit(handleValidSubmit)(event);
   };
 
+  // The preview's Save: the link it was made for plus its drafts vs the starting values
+  const previewInput = preview?.input ?? "";
+  const hasPreviewChanges = useCallback(
+    (draft: PreviewDraft): boolean =>
+      hasEditSourceChanges({ ...draft, link: previewInput }, initialValues, true),
+    [previewInput, initialValues],
+  );
+
   const handleBack = useCallback((): void => {
     closePreview();
     // The form is only hidden, so its drafts are kept; wait for it to show again
@@ -110,6 +118,7 @@ export function EditSourceDialog({ source, onClose, onSaved }: EditSourceDialogP
             onRecheck={recheck}
             onSave={savePreview}
             onCancel={handleBack}
+            hasChanges={hasPreviewChanges}
           />
         </>
       ) : null}

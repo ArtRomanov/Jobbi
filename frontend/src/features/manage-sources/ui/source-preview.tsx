@@ -34,6 +34,18 @@ interface SourcePreviewProps {
   onCancel: () => void;
   /** Adds the board from `result.ats_hint`; without it the hint is not shown. */
   onAddBoard?: (boardInput: string) => Promise<boolean>;
+  /**
+   * Edit flow only: whether the drafts would change the saved source. While it
+   * returns false, Save is off (aria-disabled, still focusable) and Enter sends
+   * nothing. Left out (add flow), Save does not depend on the drafts.
+   */
+  hasChanges?: (draft: PreviewDraft) => boolean;
+}
+
+/** Raw field values of the preview (before validation). */
+export interface PreviewDraft {
+  jobLinkContains: string;
+  name: string;
 }
 
 /**
@@ -54,6 +66,7 @@ export function SourcePreview({
   onSave,
   onCancel,
   onAddBoard,
+  hasChanges,
 }: SourcePreviewProps) {
   const headingId = useId();
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -65,6 +78,7 @@ export function SourcePreview({
   const foundCount = result.found_count ?? 0;
   // Zero jobs only comes back with an ATS hint; saving such a page would fail
   const hasNoVacancies = foundCount === 0;
+  const isUnchanged = hasChanges ? !hasChanges({ jobLinkContains, name }) : false;
   const titles = hasNoVacancies ? [] : (result.titles ?? []).slice(0, PREVIEW_TITLES_LIMIT);
 
   useEffect(() => {
@@ -106,7 +120,8 @@ export function SourcePreview({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
-    if (busy || hasNoVacancies) return;
+    // Enter in the name field submits too; nothing to save means nothing to send
+    if (busy || hasNoVacancies || isUnchanged) return;
     const values = validate();
     if (!values) return;
     // On failure the loading Save button was disabled (focus dropped); bring it back
@@ -211,7 +226,9 @@ export function SourcePreview({
             ref={saveButtonRef}
             type="submit"
             loading={busyAction === "save"}
-            disabled={hasNoVacancies || (busy && busyAction !== "save")}
+            disabled={hasNoVacancies || isUnchanged || (busy && busyAction !== "save")}
+            // Edit flow: like the dialog's Save, it stays focusable while off
+            keepFocusable={hasChanges !== undefined}
           >
             Save
           </Button>

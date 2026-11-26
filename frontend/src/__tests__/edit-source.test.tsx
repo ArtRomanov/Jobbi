@@ -22,6 +22,7 @@ const GREENHOUSE: VacancySource = {
   display_name: "Acme",
 };
 const WEB: VacancySource = { ...mockWebSource, name_is_custom: true, display_name: "Geekjob React" };
+const WEB_WITH_PATTERN: VacancySource = { ...WEB, job_link_contains: "/vacancy/" };
 
 function serveSources(sources: VacancySource[]): void {
   server.use(http.get(SOURCES_URL, () => HttpResponse.json({ ...mockVacancySourcesEmpty, sources })));
@@ -242,7 +243,7 @@ describe("Edit source: links and patterns", () => {
   });
 
   it("prefills the link per kind; only web pages have 'Job link contains'", async () => {
-    serveSources([TELEGRAM, LEVER, { ...WEB, job_link_contains: "/vacancy/" }]);
+    serveSources([TELEGRAM, LEVER, WEB_WITH_PATTERN]);
     const user = userEvent.setup();
     renderWithProviders(<InboxPage />);
 
@@ -640,6 +641,63 @@ describe("Edit source: Save is active only with changes", () => {
     expect(screen.getByRole("dialog", { name: "Edit source" })).toBeInTheDocument();
     expect(requests.patches).toEqual([]);
     expect(requests.previews).toEqual([]);
+  });
+
+  it("preview Save is off when the pattern is put back; Save and Enter then send nothing", async () => {
+    serveSources([WEB_WITH_PATTERN]);
+    const requests = recordRequests();
+    const user = userEvent.setup();
+    renderWithProviders(<InboxPage />);
+
+    const dialog = await openEdit(user, "Geekjob React");
+    const formPattern = within(dialog).getByLabelText("Job link contains (optional)");
+    await user.clear(formPattern);
+    await user.type(formPattern, "/job/");
+    await user.click(getSave(dialog));
+    await within(dialog).findByRole("heading", { name: "Found 7 vacancies" });
+    // The pattern change is still there: Save is on
+    expect(getSave(dialog)).not.toHaveAttribute("aria-disabled");
+
+    const pattern = within(dialog).getByRole("textbox", { name: "Job link contains (optional)" });
+    await user.clear(pattern);
+    await user.type(pattern, " /vacancy/ ");
+    expect(getSave(dialog)).toHaveAttribute("aria-disabled", "true");
+
+    await user.click(getSave(dialog));
+    await user.type(within(dialog).getByRole("textbox", { name: "Name (optional)" }), "{Enter}");
+    await act(() => Promise.resolve());
+    expect(within(dialog).getByRole("heading", { name: "Found 7 vacancies" })).toBeInTheDocument();
+    expect(requests.patches).toEqual([]);
+
+    // A name change counts again
+    await user.type(within(dialog).getByRole("textbox", { name: "Name (optional)" }), "!");
+    expect(getSave(dialog)).not.toHaveAttribute("aria-disabled");
+    await user.click(getSave(dialog));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(requests.patches).toEqual([
+      { input: mockWebSource.url, job_link_contains: "/vacancy/", name: "Geekjob React!" },
+    ]);
+  });
+
+  it("preview Save stays on for a changed link even with pattern and name as they were", async () => {
+    serveSources([WEB]);
+    const requests = recordRequests();
+    const user = userEvent.setup();
+    renderWithProviders(<InboxPage />);
+
+    const dialog = await openEdit(user, "Geekjob React");
+    const link = within(dialog).getByLabelText("Link");
+    await user.clear(link);
+    await user.type(link, "https://geekjob.ru/vacancies?q=vue");
+    await user.click(getSave(dialog));
+    await within(dialog).findByRole("heading", { name: "Found 7 vacancies" });
+
+    expect(getSave(dialog)).not.toHaveAttribute("aria-disabled");
+    await user.click(getSave(dialog));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(requests.patches).toEqual([
+      { input: "https://geekjob.ru/vacancies?q=vue", job_link_contains: null, name: "Geekjob React" },
+    ]);
   });
 
   it("is off again when reopened after a successful save", async () => {
