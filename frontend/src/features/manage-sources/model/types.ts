@@ -18,7 +18,23 @@ export type SourcesChangeHandler = (
   removedSources: readonly RemovedVacancySource[],
 ) => void;
 
+/** Sends a removal's DELETE and applies the result; never rejects. */
+export type SendRemove = (
+  id: string,
+  options: { keepalive: boolean; authToken: string | null },
+) => Promise<void>;
+
+export interface UseDeferredRemoveResult {
+  /** Rows hidden by a removal that is waiting for its Undo window or its DELETE. */
+  pendingIds: ReadonlySet<string>;
+  /** Hide the row and open its Undo toast; `onUndo` runs after Undo shows it again. */
+  scheduleRemove: (id: string, onUndo?: () => void) => void;
+  /** Send every pending removal now (closes their toasts); resolves when all settled. */
+  flushRemovals: () => Promise<void>;
+}
+
 export interface UseManageSourcesResult {
+  /** Sources to show: rows whose removal is pending (Undo window / DELETE in flight) are left out. */
   sources: readonly VacancySource[];
   /** Saved search settings; null until the initial load succeeds. */
   settings: VacancySearchSettings | null;
@@ -27,8 +43,6 @@ export interface UseManageSourcesResult {
   /** Daily limit / AI availability; null until the initial load succeeds. */
   status: DiscoveryStatus | null;
   loadState: SourcesLoadState;
-  /** Ids of sources with a delete request in flight. */
-  removingIds: ReadonlySet<string>;
   /** True until the initial list has loaded; adding is blocked meanwhile. */
   isAddDisabled: boolean;
   /** Append a just-created source to the local list. */
@@ -38,9 +52,33 @@ export interface UseManageSourcesResult {
    * id means the source was replaced: the removed list is re-fetched too.
    */
   replaceSource: (previousId: string, source: VacancySource) => void;
-  /** Resolves true when the source was removed. */
-  removeSource: (id: string) => Promise<boolean>;
+  /**
+   * Hide the source with an Undo toast; the DELETE goes when the toast ends.
+   * `onUndo` runs after Undo puts the row back (e.g. to focus it).
+   */
+  removeSource: (id: string, onUndo?: () => void) => void;
+  /** Send pending removals now (e.g. before an add, so the server sees them gone). */
+  flushRemovals: () => Promise<void>;
   retryLoad: () => void;
+}
+
+/** A finished Remove waiting for its focus target (picked after the list updates). */
+export interface RemoveFocusRequest {
+  /** Full-list order when Remove was pressed. */
+  orderedIds: readonly string[];
+  removedId: string;
+}
+
+export interface UseSourcePagesResult {
+  /** Current page (0-based), always valid for the list. */
+  page: number;
+  pageCount: number;
+  /** The sources shown on the current page. */
+  pageSources: readonly VacancySource[];
+  /** Go to a page (clamped). */
+  setPage: (page: number) => void;
+  /** Open the page that shows this source once it is in the list (e.g. right after adding it). */
+  revealSource: (id: string) => void;
 }
 
 export interface UseSearchSettingsFormResult {

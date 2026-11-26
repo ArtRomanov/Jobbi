@@ -28,6 +28,9 @@ export const AI_UNAVAILABLE_NOTICE =
   "Vacancy search is temporarily unavailable — new posts will be checked when it's back";
 export const LOAD_ERROR_MESSAGE = "Could not load your sources.";
 export const NO_SOURCES_MESSAGE = "You are not watching any sources yet.";
+/** Sources per page in the panel; the pager shows only above this. */
+export const SOURCES_PAGE_SIZE = 7;
+export const SOURCES_PAGER_LABEL = "Sources pages";
 export const SOURCE_INPUT_PLACEHOLDER =
   "@channel, t.me/channel, a job board or a job page link";
 export const SOURCE_INPUT_LABEL = "Add a channel, job board or page";
@@ -77,3 +80,9 @@ export const KEYWORD_FILTER_HELP =
 export const FILTERED_LAST_24H_PREFIX = "Skipped by the filter in the last 24 hours:";
 /** localStorage key: "true" while the Sources panel is collapsed. */
 export const SOURCES_COLLAPSED_STORAGE_KEY = "jobbi:inbox:sourcesCollapsed";
+
+// --- Remove with Undo (backlog #10) ---
+/** How long "Source removed · Undo" stays; the DELETE is sent when it ends (pauses on hover / focus). */
+export const REMOVE_UNDO_WINDOW_MS = 5000;
+export const SOURCE_REMOVED_MESSAGE = "Source removed";
+export const UNDO_LABEL = "Undo";

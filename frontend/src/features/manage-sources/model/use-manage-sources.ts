@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import { handleApiError } from "@/shared/api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { handleApiError, isApiError } from "@/shared/api";
 import { useToast } from "@/shared/ui";
 import { deleteVacancySource, getVacancySources } from "@/entities/vacancy-source";
 import { notifyVacanciesChanged } from "@/entities/vacancy";
@@ -11,6 +11,7 @@ import type {
 } from "@/entities/vacancy-source";
 import { getPollInterval, hasScanFinished, mergePolledSources } from "../lib/helpers";
 import type { SourcesChangeHandler, SourcesLoadState, UseManageSourcesResult } from "./types";
+import { useDeferredRemove } from "./use-deferred-remove";
 
 /**
  * Owns the Sources panel: initial load (with retry) of sources and the saved
@@ -29,6 +30,11 @@ import type { SourcesChangeHandler, SourcesLoadState, UseManageSourcesResult } f
  * `onSourcesChange` receives the live sources and the removed sources that
  * cards still reference whenever either changes (the Inbox source filter).
  * After a removal, the removed list is re-fetched in the background.
+ *
+ * Remove has Undo (`useDeferredRemove`): the row is only hidden until its toast
+ * ends, then the DELETE is sent. A hidden row stays in the list state, so polls
+ * keep updating it, Undo puts it back as it is now, and the Inbox filter
+ * (`onSourcesChange`) still counts it live until the DELETE succeeds.
  */
 export function useManageSources(
   onScanFinished?: () => void,
@@ -41,7 +47,6 @@ export function useManageSources(
   const [status, setStatus] = useState<DiscoveryStatus | null>(null);
   const [loadState, setLoadState] = useState<SourcesLoadState>("loading");
   const [reloadKey, setReloadKey] = useState(0);
-  const [removingIds, setRemovingIds] = useState<ReadonlySet<string>>(() => new Set());
   const isReady = loadState === "ready";
   const isAddDisabled = !isReady;
   const isAnyScanning = sources.some((source) => source.scanning);
@@ -59,12 +64,14 @@ export function useManageSources(
   const editedSinceRef = useRef<Set<string>>(new Set());
   // Latest removed-list refetch wins; bumped on unmount to drop late responses
   const removedRequestRef = useRef(0);
-  useEffect(
-    () => () => {
+  const isMountedRef = useRef(false);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
       removedRequestRef.current += 1;
-    },
-    [],
-  );
+    };
+  }, []);
 
   useEffect(() => {
     onSourcesChangeRef.current?.(sources, removedSources);
@@ -189,27 +196,37 @@ export function useManageSources(
     [refreshRemovedSources],
   );
 
-  const removeSource = useCallback(
-    async (id: string): Promise<boolean> => {
-      setRemovingIds((prev) => new Set(prev).add(id));
-      try {
-        await deleteVacancySource(id);
+  // Runs when a removal's Undo window ends (or it is flushed): the real DELETE
+  const sendRemove = useCallback(
+    async (
+      id: string,
+      { keepalive, authToken }: { keepalive: boolean; authToken: string | null },
+    ): Promise<void> => {
+      const dropSource = (): void => {
         setSources((prev) => prev.filter((source) => source.id !== id));
         // Its cards now belong to a removed source; the server knows which remain
-        void refreshRemovedSources();
-        return true;
+        if (isMountedRef.current) void refreshRemovedSources();
+      };
+      try {
+        await deleteVacancySource(id, { keepalive, authToken });
+        dropSource();
       } catch (error: unknown) {
-        handleApiError(error, showToast);
-        return false;
-      } finally {
-        setRemovingIds((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
+        // Already gone (e.g. removed in another tab): same as removed here
+        if (isApiError(error) && error.status === 404) dropSource();
+        else handleApiError(error, showToast);
       }
     },
     [showToast, refreshRemovedSources],
+  );
+
+  const {
+    pendingIds,
+    scheduleRemove: removeSource,
+    flushRemovals,
+  } = useDeferredRemove(sendRemove);
+  const visibleSources = useMemo(
+    () => (pendingIds.size === 0 ? sources : sources.filter((source) => !pendingIds.has(source.id))),
+    [sources, pendingIds],
   );
 
   const retryLoad = useCallback((): void => {
@@ -218,16 +235,16 @@ export function useManageSources(
   }, []);
 
   return {
-    sources,
+    sources: visibleSources,
     settings,
     setSettings,
     status,
     loadState,
-    removingIds,
     isAddDisabled,
     appendSource,
     replaceSource,
     removeSource,
+    flushRemovals,
     retryLoad,
   };
 }
