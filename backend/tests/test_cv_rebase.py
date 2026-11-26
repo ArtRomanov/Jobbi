@@ -254,3 +254,33 @@ def test_edited_long_single_line_anchor_is_still_re_aimed() -> None:
     content = f"# Jane\n\n## Experience\n{line.replace('Led', 'Drove', 1)}\n- jQuery\n"
 
     assert rebase_anchor(content, line) == line.replace("Led", "Drove", 1)
+
+
+def test_long_repetitive_replace_is_not_re_aimed_and_returns_fast() -> None:
+    """The token matcher is about cubic on repetitive text; before/after come
+    from the model (a prompt-injected job post can ask for this), and
+    `place_edit` dry-runs every edit on the event loop (1000 chars took 3 s,
+    4000 chars over 3 min)."""
+    import time
+
+    content = "a " * 500
+    before = ("a " * 500)[:-2] + " b"  # one double space, then "b"
+    after = "b " * 500
+
+    start = time.perf_counter()
+    assert rebase_replace(content, before, after) is None
+    assert time.perf_counter() - start < 0.5
+
+
+def test_edited_paragraph_of_normal_length_is_still_re_aimed() -> None:
+    paragraph = " ".join(
+        f"Led migration {i} of the payments platform to React and Vite."
+        for i in range(12)
+    )  # ~730 chars, ~300 tokens
+    content = f"# Jane\n\n## Experience\n{paragraph.replace('Led', 'Drove', 1)}\n"
+    after = paragraph.replace("migration 11 of", "migration 11 (final) of")
+
+    placed = rebase_replace(content, paragraph, after)
+
+    assert placed is not None
+    assert "Drove migration 0" in placed[1] and "11 (final) of" in placed[1]

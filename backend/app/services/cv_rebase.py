@@ -41,6 +41,13 @@ MIN_ANCHOR_RATIO = 0.5
 # comes from the model, and matching it costs about len(anchor)**2 per window,
 # on the event loop (a 30-line anchor took over 30 s).
 MAX_ANCHOR_CHARS = 500
+# A replace whose before or after has more tokens than this is not re-aimed
+# (Accept marks the card stale; at proposal it is not placed). Both come from
+# the model, the token matcher is about cubic on repetitive text, and
+# `place_edit` dry-runs every edit on the event loop: 1000 chars of "a a ..."
+# took 3 s, 4000 chars over 3 min. At this cap the worst case is ~0.2 s;
+# ordinary prose of this size (~1100 chars) takes a few ms.
+MAX_REPLACE_TOKENS = 400
 
 
 def _tokens(text: str) -> list[str]:
@@ -118,6 +125,11 @@ def rebase_replace(content: str, before: str, after: str) -> tuple[str, str] | N
     The new before is a passage found exactly once in `content`; None when
     the change cannot be placed cleanly.
     """
+    if (
+        len(_tokens(before)) > MAX_REPLACE_TOKENS
+        or len(_tokens(after)) > MAX_REPLACE_TOKENS
+    ):
+        return None
     hunks = _hunks(before, after)
     if not hunks or not before:
         return None
