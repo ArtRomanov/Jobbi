@@ -490,3 +490,9 @@ async def test_missing_key_is_a_user_message_not_a_crash(
         f"{APPS}/{setup['app_id']}/chat", headers=_h(setup["token"])
     )
     assert history.json() == []  # the failed send left no trace
+
+
+def test_parse_too_long_with_a_huge_number_gives_no_numbers() -> None:
+    message = f"The input token count ({'9' * 5_000}) exceeds ... allowed (1048576)."
+
+    assert parse_too_long({"error": {"message": message}}) == NO_LIMIT_NUMBERS

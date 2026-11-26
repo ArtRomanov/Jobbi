@@ -24,6 +24,7 @@ from app.services.llm_stream import (
     LlmRequestTooLargeError,
     LlmToolCall,
     ToolChoice,
+    limit_number,
     tool_kwargs,
 )
 
@@ -100,9 +101,10 @@ def parse_too_long(body: object) -> LlmLimit | None:
     found = _TOO_LONG.search(message)
     if found is None:
         return NO_LIMIT_NUMBERS
-    return LlmLimit(
-        kind="input", limit=int(found.group(2)), requested=int(found.group(1))
-    )
+    limit, requested = limit_number(found.group(2)), limit_number(found.group(1))
+    if limit is None or requested is None:
+        return NO_LIMIT_NUMBERS
+    return LlmLimit(kind="input", limit=limit, requested=requested)
 
 
 def _log_error(

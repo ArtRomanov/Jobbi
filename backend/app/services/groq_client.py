@@ -18,6 +18,7 @@ from app.services.llm_stream import (
     LlmRequestTooLargeError,
     LlmToolCall,
     ToolChoice,
+    limit_number,
     tool_kwargs,
 )
 
@@ -44,7 +45,7 @@ def parse_groq_limit(body: object) -> GroqLimit:
 
     def number(pattern: re.Pattern[str]) -> int | None:
         found = pattern.search(message)
-        return int(found.group(1)) if found else None
+        return limit_number(found.group(1)) if found else None
 
     kind = _LIMIT_KIND.search(message)
     return GroqLimit(

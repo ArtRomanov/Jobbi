@@ -471,3 +471,10 @@ async def test_midstream_413_before_any_output_retries_once_smaller(
     assert fake.calls[1]["max_tokens"] < fake.calls[0]["max_tokens"]
     assert [name for name, _ in events] == ["token", "cards", "done"]
     assert "org_secret" not in repr(logs)
+
+
+def test_groq_limit_with_a_huge_number_is_not_parsed() -> None:
+    # int() refuses over 4300 digits: that must not escape the error handler.
+    huge = GPT_OSS_413.replace("Requested 11950", "Requested " + "9" * 5_000)
+
+    assert parse_groq_limit(_body(huge)) == GroqLimit("TPM", 8000, None)

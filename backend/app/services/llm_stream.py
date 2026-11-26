@@ -46,6 +46,14 @@ class LlmLimit:
 
 NO_LIMIT_NUMBERS = LlmLimit(kind=None, limit=None, requested=None)
 
+# Longer digit runs are no real token count (and int() refuses > 4300 digits).
+_MAX_LIMIT_DIGITS = 12
+
+
+def limit_number(digits: str) -> int | None:
+    """A limit number from an error message; None when it is implausibly long."""
+    return int(digits) if len(digits) <= _MAX_LIMIT_DIGITS else None
+
 
 class LlmRateLimitError(RuntimeError):
     """429: the model's per-minute (or per-day) quota is used up."""
