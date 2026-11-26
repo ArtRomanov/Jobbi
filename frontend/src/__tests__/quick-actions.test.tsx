@@ -11,7 +11,7 @@ beforeEach(() => {
 });
 
 describe("QuickActionBar", () => {
-  it("renders three quick action buttons", () => {
+  it("renders four quick action buttons when a CV is linked", () => {
     renderWithProviders(
       <QuickActionBar
         onAction={mockOnAction}
@@ -22,8 +22,9 @@ describe("QuickActionBar", () => {
     );
 
     const buttons = screen.getAllByRole("button");
-    expect(buttons).toHaveLength(3);
+    expect(buttons).toHaveLength(4);
     expect(screen.getByText("Refine my CV")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Structure my CV" })).toBeEnabled();
     expect(screen.getByText("Write a cover letter")).toBeInTheDocument();
     expect(screen.getByText("Prep for interview")).toBeInTheDocument();
   });
@@ -83,5 +84,57 @@ describe("QuickActionBar", () => {
 
     expect(mockOnAction).toHaveBeenCalledTimes(1);
     expect(mockOnAction).toHaveBeenCalledWith(expected);
+  });
+
+  it("hides 'Structure my CV' when no CV is linked", () => {
+    renderWithProviders(
+      <QuickActionBar
+        onAction={mockOnAction}
+        hasCv={false}
+        companyName="Acme Corp"
+        roleTitle="Senior Engineer"
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Structure my CV" })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button")).toHaveLength(3);
+  });
+
+  it("sends the 'Structure my CV' message as is", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <QuickActionBar
+        onAction={mockOnAction}
+        hasCv
+        companyName="Acme Corp"
+        roleTitle="Senior Engineer"
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Structure my CV" }));
+
+    expect(mockOnAction).toHaveBeenCalledTimes(1);
+    expect(mockOnAction).toHaveBeenCalledWith(
+      "Structure my CV: add Markdown headings, sections and bullets without changing the wording.",
+    );
+  });
+
+  it("disables every action while a message is being sent", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <QuickActionBar
+        onAction={mockOnAction}
+        hasCv
+        disabled
+        companyName="Acme Corp"
+        roleTitle="Senior Engineer"
+      />,
+    );
+
+    const buttons = screen.getAllByRole("button");
+    expect(buttons).toHaveLength(4);
+    for (const button of buttons) expect(button).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Structure my CV" }));
+    expect(mockOnAction).not.toHaveBeenCalled();
   });
 });

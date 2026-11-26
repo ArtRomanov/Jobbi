@@ -52,3 +52,6 @@ export function getCardActionLabel(
 ): string {
   return `${action} change ${number}`;
 }
+
+/** Visible prefix of a card's warning (readable without colour). */
+export const CARD_WARNING_PREFIX = "Check before accepting: ";

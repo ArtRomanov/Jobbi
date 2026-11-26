@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { useLocation } from "react-router-dom";
 import { delay, http, HttpResponse } from "msw";
 import { ChatPage } from "@/pages/chat/ui/chat-page";
-import { mockChangeCards } from "./mocks/handlers";
+import { mockApplicationDetail, mockChangeCards } from "./mocks/handlers";
 import { server } from "./setup";
 import { renderWithProviders } from "./utils";
 
@@ -70,6 +70,51 @@ describe("ChatPage", () => {
         screen.getByText(/No messages yet/),
       ).toBeInTheDocument();
     });
+  });
+});
+
+describe("ChatPage 'Structure my CV' quick action", () => {
+  const STRUCTURE_PROMPT =
+    "Structure my CV: add Markdown headings, sections and bullets without changing the wording.";
+
+  function withLinkedCv(): void {
+    server.use(
+      http.get(`${BASE_URL}/api/v1/applications/:id`, () =>
+        HttpResponse.json({ ...mockApplicationDetail, cv_id: "cv-1" }),
+      ),
+    );
+  }
+
+  it("is not offered when no CV is linked", async () => {
+    renderChatPage("app-1");
+    await screen.findByText(/Acme Corp — Senior Engineer/);
+    expect(screen.queryByRole("button", { name: "Structure my CV" })).not.toBeInTheDocument();
+  });
+
+  it("sends one normal chat message and waits while it streams", async () => {
+    const posted: string[] = [];
+    withLinkedCv();
+    server.use(
+      // The reply never arrives: the stream is still running
+      http.post(`${BASE_URL}/api/v1/applications/:id/chat`, async ({ request }) => {
+        const body = (await request.json()) as { content: string };
+        posted.push(body.content);
+        await delay("infinite");
+        return new HttpResponse(null);
+      }),
+    );
+    const user = userEvent.setup();
+    renderChatPage("app-1");
+
+    const button = await screen.findByRole("button", { name: "Structure my CV" });
+    await user.click(button);
+
+    // Shown as the user's own message, like a typed one
+    expect(await screen.findByText(STRUCTURE_PROMPT)).toBeInTheDocument();
+    await waitFor(() => expect(posted).toEqual([STRUCTURE_PROMPT]));
+    expect(button).toBeDisabled();
+    await user.click(button);
+    expect(posted).toHaveLength(1);
   });
 });
 

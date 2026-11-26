@@ -37,6 +37,8 @@ export type {
   CvLayoutSection,
   CvLayoutBlock,
   CvLayoutEntry,
+  CvLayoutProject,
+  CvLayoutTitled,
   CvLayoutItem,
 } from "./lib/cv-layout";
 export { isDateRangeLine } from "./lib/cv-date-range";

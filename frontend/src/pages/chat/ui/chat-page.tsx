@@ -379,6 +379,7 @@ export function ChatPage() {
         <QuickActionBar
           onAction={handleSend}
           hasCv={hasCv}
+          disabled={isSending}
           companyName={companyName}
           roleTitle={roleTitle}
         />

@@ -31,7 +31,9 @@ export function isChangeCard(value: unknown): value is ChangeCard {
     isNullableString(card.anchor_text ?? null) &&
     STATES.has(card.state) &&
     typeof card.cv_id === "string" &&
-    typeof card.message_id === "string"
+    typeof card.message_id === "string" &&
+    // `warning` may be missing from an older server: read as null
+    isNullableString(card.warning ?? null)
   );
 }
 
@@ -42,7 +44,8 @@ export function isChangeCard(value: unknown): value is ChangeCard {
 export function parseCardsEvent(data: string): ChangeCard[] {
   try {
     const parsed: unknown = JSON.parse(data);
-    return Array.isArray(parsed) ? parsed.filter(isChangeCard) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isChangeCard).map((card) => ({ ...card, warning: card.warning ?? null }));
   } catch {
     return [];
   }

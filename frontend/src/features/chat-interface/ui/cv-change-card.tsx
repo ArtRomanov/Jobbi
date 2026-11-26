@@ -10,6 +10,7 @@ import { CARD_BORDER, CARD_BUTTON_STYLE } from "../lib/card-styles";
 import { useCardDecision, type CardDecision } from "../model/use-card-decision";
 import { CardBody } from "./card-body";
 import { CardStateBadge } from "./card-state-badge";
+import { CardWarning } from "./card-warning";
 
 interface CvChangeCardProps {
   applicationId: string;
@@ -26,8 +27,9 @@ interface CvChangeCardProps {
 
 /**
  * A proposed CV text edit in the chat (spec 011 §2.7): before/after with a
- * line diff, Accept/Reject while Pending (Reject only while Stale), and an
- * inline error under the card when a decision fails. Cards of an older reply
+ * line diff, the server's warning if any (Accept stays enabled), Accept/Reject
+ * while Pending (Reject only while Stale), and an inline error under the card
+ * when a decision fails. Cards of an older reply
  * (`outdated`) have no buttons.
  */
 export const CvChangeCard = memo(function CvChangeCard({
@@ -38,6 +40,7 @@ export const CvChangeCard = memo(function CvChangeCard({
   onCardUpdated,
 }: CvChangeCardProps) {
   const titleId = useId();
+  const warningId = useId();
   const titleRef = useRef<HTMLSpanElement>(null);
   const { running, error, decide } = useCardDecision(
     applicationId,
@@ -109,11 +112,14 @@ export const CvChangeCard = memo(function CvChangeCard({
         <CardBody card={card} />
       </div>
 
+      {card.warning ? <CardWarning id={warningId} text={card.warning} /> : null}
+
       {isOpen && (
         <div style={{ display: "flex", gap: "0.5rem" }}>
           <Button
             style={CARD_BUTTON_STYLE}
             aria-label={getCardActionLabel("Accept", number)}
+            aria-describedby={card.warning ? warningId : undefined}
             disabled={card.state === "stale" || running !== null}
             loading={running === "accept"}
             onClick={() => void handleDecision("accept")}

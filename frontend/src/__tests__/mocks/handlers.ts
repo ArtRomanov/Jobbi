@@ -120,6 +120,7 @@ export const mockChangeCards = {
     message_id: "msg-2",
     created_at: "2026-03-01T10:01:00Z",
     decided_at: null,
+    warning: null,
   },
   insert: {
     id: "card-insert",
@@ -133,6 +134,7 @@ export const mockChangeCards = {
     message_id: "msg-2",
     created_at: "2026-03-01T10:01:00Z",
     decided_at: null,
+    warning: null,
   },
   remove: {
     id: "card-remove",
@@ -146,6 +148,22 @@ export const mockChangeCards = {
     message_id: "msg-2",
     created_at: "2026-03-01T10:01:00Z",
     decided_at: null,
+    warning: null,
+  },
+  // A card the server flagged (backlog #27): Accept stays enabled
+  warned: {
+    id: "card-warned",
+    op: "replace",
+    before_text: "Led a team of 5 engineers.",
+    after_text: "Managed engineering.",
+    position: null,
+    anchor_text: null,
+    state: "pending",
+    cv_id: "cv-1",
+    message_id: "msg-2",
+    created_at: "2026-03-01T10:01:00Z",
+    decided_at: null,
+    warning: "This change rewrites your wording, not only the formatting.",
   },
 } as const satisfies Record<string, ChangeCard>;
 
