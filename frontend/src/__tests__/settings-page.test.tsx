@@ -157,6 +157,8 @@ describe("SettingsPage — timezone and daily summary", () => {
       ),
     ).toBeInTheDocument();
 
+    // The unsaved detected timezone counts as a change
+    expect(screen.getByRole("button", { name: "Save Changes" })).not.toHaveAttribute("aria-disabled");
     await user.click(screen.getByRole("button", { name: "Save Changes" }));
 
     await waitFor(() => expect(patches).toHaveLength(2));
@@ -191,6 +193,8 @@ describe("SettingsPage — timezone and daily summary", () => {
       within(timezone).getByRole("option", { name: "Select timezone..." }),
     ).toBeInTheDocument();
 
+    // Save needs a change first; any other field will do
+    await user.type(screen.getByLabelText("Desired Role"), "x");
     await user.click(screen.getByRole("button", { name: "Save Changes" }));
 
     expect(
@@ -217,5 +221,57 @@ describe("SettingsPage — timezone and daily summary", () => {
 
     expect(await screen.findByText("Profile updated.")).toBeInTheDocument();
     expect(patches).toEqual([{ timezone: "America/New_York", summary_time: "08:30" }]);
+  });
+});
+
+describe("SettingsPage — Save is active only with changes", () => {
+  function getSave(): HTMLElement {
+    return screen.getByRole("button", { name: "Save Changes" });
+  }
+
+  it("is off after load, on after an edit and off again after reverting it", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    await waitForForm();
+
+    expect(getSave()).toHaveAttribute("aria-disabled", "true");
+    await user.type(screen.getByLabelText("Full Name *"), "x");
+    expect(getSave()).not.toHaveAttribute("aria-disabled");
+    await user.type(screen.getByLabelText("Full Name *"), "{Backspace}");
+    expect(getSave()).toHaveAttribute("aria-disabled", "true");
+
+    await user.selectOptions(screen.getByLabelText("Timezone"), "America/New_York");
+    expect(getSave()).not.toHaveAttribute("aria-disabled");
+    await user.selectOptions(screen.getByLabelText("Timezone"), "Europe/Berlin");
+    expect(getSave()).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("is off again after a successful save and keeps focus", async () => {
+    const patches = capturePatches();
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    await waitForForm();
+
+    await user.type(screen.getByLabelText("Desired Role"), "Lead");
+    await user.click(getSave());
+
+    expect(await screen.findByText("Profile updated.")).toBeInTheDocument();
+    expect(patches).toHaveLength(1);
+    expect(getSave()).toHaveAttribute("aria-disabled", "true");
+    expect(getSave()).toHaveFocus();
+  });
+
+  it("sends nothing when the aria-disabled Save is pressed", async () => {
+    const patches = capturePatches();
+    const user = userEvent.setup();
+    renderWithProviders(<SettingsPage />);
+    await waitForForm();
+
+    await user.click(getSave());
+    await user.type(screen.getByLabelText("Desired Role"), "{Enter}");
+    await flushEffects();
+
+    expect(patches).toHaveLength(0);
+    expect(screen.queryByText("No changes to save.")).not.toBeInTheDocument();
   });
 });

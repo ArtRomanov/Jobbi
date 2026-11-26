@@ -35,7 +35,7 @@ export function SettingsPage() {
     handleSubmit,
     reset,
     setValue,
-    formState: { errors, dirtyFields },
+    formState: { errors, dirtyFields, isDirty },
   } = useForm<SettingsFormData>({
     resolver: zodResolver(settingsSchema),
   });
@@ -89,7 +89,8 @@ export function SettingsPage() {
   const timezoneOptions = useMemo(() => getTimezoneOptions(savedTimezone), [savedTimezone]);
 
   const onSubmit = async (data: SettingsFormData) => {
-    if (isSaving) return;
+    // Save is soft-disabled (aria-disabled) while clean, so it can't submit
+    if (isSaving || !isDirty) return;
     // Only send fields the user actually changed (exclude_unset pattern)
     const changed: Record<string, unknown> = {};
     for (const key of Object.keys(dirtyFields) as Array<keyof SettingsFormData>) {
@@ -99,12 +100,6 @@ export function SettingsPage() {
       } else {
         changed[key] = value || null;
       }
-    }
-
-    // Nothing changed — skip the request
-    if (Object.keys(changed).length === 0) {
-      showToast("No changes to save.", "success");
-      return;
     }
 
     setIsSaving(true);
@@ -266,9 +261,13 @@ export function SettingsPage() {
           {...register("summary_time")}
         />
 
+        {/* Off until a field differs from the saved profile; stays focusable
+            (aria-disabled) so focus is not lost after a save */}
         <Button
           type="submit"
           loading={isSaving}
+          disabled={!isDirty}
+          keepFocusable
           style={{ width: "100%", marginTop: "0.5rem" }}
         >
           Save Changes
