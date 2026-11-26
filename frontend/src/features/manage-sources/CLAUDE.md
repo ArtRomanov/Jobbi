@@ -2,6 +2,7 @@
 
 Inbox "Sources" panel (`SourcesPanel`): add a Telegram channel (`@name` / `t.me/name`), a Greenhouse / Lever / Teamtailor / Ashby board link or any other http(s) page as a "Web page" (kind labels in `SOURCE_KIND_LABELS`), list watched sources with "Scanning…" / "Unavailable" + reason, remove a source (no confirm), and the "What are you looking for?" form (search description, pre-AI keywords + filter switch, "skipped in the last 24 hours" counter).
 
+- Collapsible (backlog #9): a `SectionToggle` in the heading row ("Hide Sources" / "Show Sources") hides everything under the heading + subtitle. Saved per browser (`SOURCES_COLLAPSED_STORAGE_KEY` = `jobbi:inbox:sourcesCollapsed`, via shared `useCollapsibleSection`). Collapsed = the `hidden` attribute (stays mounted): add-form / preview / search-settings drafts survive, polling and `onSourcesChange` keep feeding the Inbox filter. The focus moves below only happen while it is expanded (the user acts inside it); `SourcesNotices` is not announced while hidden.
 - State lives in `model/use-manage-sources.ts` (list, polling, remove) and `model/use-add-source.ts` (input + add flow). Add errors are shown inline under the input (`getErrorMessage` — the backend's 400/409 `detail` text is user-facing); remove errors go to a toast.
 - The add form stays disabled until the initial list loads, so a late GET can't overwrite a just-added source.
 - Focus: after Add (success or error) it returns to the input; after Remove it moves to the next Remove button, else the previous one, else the input (`lib/helpers.ts`).

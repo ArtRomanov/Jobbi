@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { VacancySource } from "@/entities/vacancy-source";
-import { Button, SectionHeader, colors } from "@/shared/ui";
-import { LOAD_ERROR_MESSAGE, NO_DESCRIPTION_HINT } from "../lib/constants";
+import { useCollapsibleSection } from "@/shared/lib";
+import { Button, SectionHeader, SectionToggle, colors } from "@/shared/ui";
+import { LOAD_ERROR_MESSAGE, NO_DESCRIPTION_HINT, SOURCES_COLLAPSED_STORAGE_KEY } from "../lib/constants";
 import { pickFocusAfterRemove } from "../lib/helpers";
 import type { WebSourceOptions } from "../model/schemas";
 import { useAddSource } from "../model/use-add-source";
@@ -29,6 +30,7 @@ interface SourcesPanelProps {
  */
 export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }: SourcesPanelProps) {
   const headingId = useId();
+  const collapsible = useCollapsibleSection(SOURCES_COLLAPSED_STORAGE_KEY);
   const inputRef = useRef<HTMLInputElement>(null);
   const removeButtonsRef = useRef(new Map<string, HTMLButtonElement>());
   const editButtonsRef = useRef(new Map<string, HTMLButtonElement>());
@@ -180,46 +182,57 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
         id={headingId}
         title="Sources"
         subtitle="Telegram channels, Greenhouse, Lever, Teamtailor or Ashby boards and job pages Jobbi watches for vacancies"
+        action={
+          <SectionToggle
+            label="Sources"
+            isExpanded={collapsible.isExpanded}
+            controlsId={collapsible.regionId}
+            onToggle={collapsible.toggle}
+          />
+        }
       />
-      {/* Based on the saved description, not the unsaved draft */}
-      {settings !== null && !settings.description ? (
-        <p style={{ fontSize: "0.875rem", color: colors.textSecondary, marginBottom: "1rem" }}>
-          {NO_DESCRIPTION_HINT}
-        </p>
-      ) : null}
-      <AddSourceForm
-        value={input}
-        error={addError}
-        isBusy={isBusy}
-        isAdding={busyAction === "submit"}
-        isDisabled={isAddDisabled}
-        inputRef={inputRef}
-        onChange={setInput}
-        onSubmit={() => void handleAdd()}
-      />
-      {preview ? (
-        // A new Add re-mounts the preview: fresh fields, heading focused again
-        <SourcePreview
-          key={preview.id}
-          result={preview.result}
-          busy={isBusy}
-          busyAction={busyAction === "submit" ? null : busyAction}
-          error={previewError}
-          onRecheck={recheck}
-          onSave={handleSave}
-          onCancel={handleCancel}
-          onAddBoard={handleAddBoard}
+      {/* `hidden`, not unmount: drafts, open preview and polling (feeds the Inbox filter) go on */}
+      <div id={collapsible.regionId} hidden={!collapsible.isExpanded}>
+        {/* Based on the saved description, not the unsaved draft */}
+        {settings !== null && !settings.description ? (
+          <p style={{ fontSize: "0.875rem", color: colors.textSecondary, marginBottom: "1rem" }}>
+            {NO_DESCRIPTION_HINT}
+          </p>
+        ) : null}
+        <AddSourceForm
+          value={input}
+          error={addError}
+          isBusy={isBusy}
+          isAdding={busyAction === "submit"}
+          isDisabled={isAddDisabled}
+          inputRef={inputRef}
+          onChange={setInput}
+          onSubmit={() => void handleAdd()}
         />
-      ) : null}
-      <SourcesNotices status={status} />
-      {list}
-      {/* Re-mounts once settings load so the drafts start from the saved values */}
-      <SearchSettingsForm
-        key={settings === null ? "loading" : "loaded"}
-        initialSettings={settings}
-        onSaved={setSettings}
-        filteredLast24h={status?.filtered_last_24h ?? null}
-      />
+        {preview ? (
+          // A new Add re-mounts the preview: fresh fields, heading focused again
+          <SourcePreview
+            key={preview.id}
+            result={preview.result}
+            busy={isBusy}
+            busyAction={busyAction === "submit" ? null : busyAction}
+            error={previewError}
+            onRecheck={recheck}
+            onSave={handleSave}
+            onCancel={handleCancel}
+            onAddBoard={handleAddBoard}
+          />
+        ) : null}
+        <SourcesNotices status={status} />
+        {list}
+        {/* Re-mounts once settings load so the drafts start from the saved values */}
+        <SearchSettingsForm
+          key={settings === null ? "loading" : "loaded"}
+          initialSettings={settings}
+          onSaved={setSettings}
+          filteredLast24h={status?.filtered_last_24h ?? null}
+        />
+      </div>
     </section>
   );
 }
