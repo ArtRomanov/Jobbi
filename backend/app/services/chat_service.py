@@ -16,8 +16,10 @@ from app.models.cv import Cv
 from app.services.chat_budget import (
     HISTORY_TRIMMED_NOTE,
     PROMPT_TOO_LARGE_DETAIL,
+    PROVIDER_NOT_CONFIGURED_DETAIL,
     RATE_LIMITED_DETAIL,
     ChatUserError,
+    chat_sizing,
     fixed_tokens,
     input_budget,
     message_tokens,
@@ -56,12 +58,13 @@ from app.services.cv_structure import (
     structure_warning,
     unrequested_problems,
 )
-from app.services.groq_client import (
+from app.services.gemini_client import stream_gemini_response
+from app.services.groq_client import build_system_prompt, stream_llm_response
+from app.services.llm_stream import (
+    ChatLlm,
     LlmRateLimitError,
     LlmRequestTooLargeError,
     LlmToolCall,
-    build_system_prompt,
-    stream_llm_response,
 )
 
 logger = structlog.get_logger()
@@ -415,12 +418,25 @@ class _Turn:
 
     def budget(self) -> int:
         """Max input estimate of a request at the current limit."""
-        settings = get_settings()
+        sizing = chat_sizing(get_settings())
         return input_budget(
-            self.limit,
-            min_reply=settings.CHAT_MIN_REPLY_TOKENS,
-            cap=settings.CHAT_INPUT_TOKEN_BUDGET,
+            self.limit, min_reply=sizing.min_reply, cap=sizing.input_cap
         )
+
+
+def get_chat_llm() -> ChatLlm:
+    """The chat's streaming call for `CHAT_PROVIDER` (read on every turn)."""
+    if get_settings().CHAT_PROVIDER == "gemini":
+        return stream_gemini_response
+    return stream_llm_response
+
+
+def chat_provider_problem() -> str | None:
+    """Why the configured chat provider cannot work, or None when it can."""
+    settings = get_settings()
+    if settings.CHAT_PROVIDER == "gemini" and not settings.GEMINI_API_KEY:
+        return "gemini_api_key_missing"
+    return None
 
 
 async def _stream_sized(
@@ -440,7 +456,8 @@ async def _stream_sized(
     fit, raise `LlmRequestTooLargeError`. `on_sent` gets the messages of the
     request that went through.
     """
-    settings = get_settings()
+    sizing = chat_sizing(get_settings())
+    stream_llm = get_chat_llm()
     too_large: LlmRequestTooLargeError | None = None
     for _ in range(2):
         try:
@@ -454,12 +471,12 @@ async def _stream_sized(
         max_tokens = reply_tokens(
             estimated,
             limit=turn.limit,
-            max_tokens=settings.CHAT_MAX_TOKENS,
-            min_reply=settings.CHAT_MIN_REPLY_TOKENS,
+            max_tokens=sizing.max_tokens,
+            min_reply=sizing.min_reply,
         )
         started = False
         try:
-            async for item in stream_llm_response(
+            async for item in stream_llm(
                 turn.system_prompt,
                 messages,
                 tools=turn.tools,
@@ -679,8 +696,11 @@ async def _stream_reply(
     Any exception it raises comes before the assistant reply is committed: the
     commit is its last step before the final `CardsReady`.
     """
-    system_prompt, _, cv = await get_application_context(db, application)
     language = reply_language(user_content)
+    if (problem := chat_provider_problem()) is not None:
+        logger.error("chat_provider_not_configured", reason=problem)
+        raise ChatUserError(PROVIDER_NOT_CONFIGURED_DETAIL[language], reason=problem)
+    system_prompt, _, cv = await get_application_context(db, application)
 
     history = await get_chat_history(db, application.id)
     cards = await cards_by_message(db, application.id)
@@ -688,7 +708,7 @@ async def _stream_reply(
     turn = _Turn(
         system_prompt=system_prompt,
         tools=tools,
-        limit=get_settings().CHAT_REQUEST_TOKEN_LIMIT,
+        limit=chat_sizing(get_settings()).request_limit,
     )
 
     def fit(budget: int) -> list[dict[str, str]]:

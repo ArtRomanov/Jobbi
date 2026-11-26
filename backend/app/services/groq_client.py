@@ -1,7 +1,6 @@
 import re
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
 import groq
 import structlog
@@ -11,79 +10,22 @@ from app.core.llm_options import reasoning_options
 from app.core.prompt_fence import fence
 from app.models.application import Application
 from app.models.cv import Cv
+from app.services.llm_stream import (
+    NO_LIMIT_NUMBERS,
+    CallAssembler,
+    LlmLimit,
+    LlmRateLimitError,
+    LlmRequestTooLargeError,
+    LlmToolCall,
+    ToolChoice,
+    tool_kwargs,
+)
 
 logger = structlog.get_logger()
 
 
-@dataclass(frozen=True, slots=True)
-class LlmToolCall:
-    """One tool call from the model, its JSON arguments not yet validated.
-
-    When Groq rejected the model's tool calls (`tool_use_failed`), one call
-    with `name` "" stands for them all and `rejected` holds Groq's error
-    message (the schema error, e.g. "`/position`: value must be one of ...").
-    """
-
-    name: str
-    arguments: str
-    rejected: str | None = None
-
-
-@dataclass(slots=True)
-class _CallParts:
-    """One tool call being assembled from stream deltas."""
-
-    call_id: str | None
-    name: str = ""
-    arguments: list[str] = field(default_factory=list)
-
-
-def _starts_new_call(current: _CallParts, call_id: str | None, name: str) -> bool:
-    """A delta at an index already in use begins another call.
-
-    gpt-oss on Groq may send several complete calls under one index; they
-    are told apart by a new call id, or (without ids) by a name arriving
-    after the current call already has its name and arguments.
-    """
-    if call_id and current.call_id:
-        return call_id != current.call_id
-    return bool(name and current.name and "".join(current.arguments))
-
-
-class _CallAssembler:
-    """Tool-call deltas keyed by `index`, assembled into calls in order."""
-
-    def __init__(self) -> None:
-        self.calls: list[_CallParts] = []
-        self._current: dict[int, _CallParts] = {}
-
-    def add(self, index: int, call_id: str | None, name: str, arguments: str) -> None:
-        current = self._current.get(index)
-        if current is None or _starts_new_call(current, call_id, name):
-            current = _CallParts(call_id=call_id)
-            self._current[index] = current
-            self.calls.append(current)
-        current.call_id = current.call_id or call_id
-        # Some servers repeat the whole name on every delta of a call;
-        # OpenAI-style streams send it once (or split, which we join).
-        if name and name != current.name:
-            current.name += name
-        if arguments:
-            current.arguments.append(arguments)
-
-
-@dataclass(frozen=True, slots=True)
-class GroqLimit:
-    """The numbers in Groq's 413/429 message; None for any it does not name.
-
-    E.g. "... on tokens per minute (TPM): Limit 8000, Requested 9500, ...":
-    kind "TPM" (or ITPM, TPD, RPM ...), limit 8000, requested 9500.
-    """
-
-    kind: str | None
-    limit: int | None
-    requested: int | None
-
+# Kept under its old name: Groq's limit numbers are the shared `LlmLimit`.
+GroqLimit = LlmLimit
 
 _LIMIT_KIND = re.compile(r"\(([A-Z]{2,5})\)")
 _LIMIT = re.compile(r"\bLimit (\d+)")
@@ -98,7 +40,7 @@ def parse_groq_limit(body: object) -> GroqLimit:
     error = body.get("error", body) if isinstance(body, Mapping) else None
     message = error.get("message") if isinstance(error, Mapping) else None
     if not isinstance(message, str):
-        return GroqLimit(kind=None, limit=None, requested=None)
+        return NO_LIMIT_NUMBERS
 
     def number(pattern: re.Pattern[str]) -> int | None:
         found = pattern.search(message)
@@ -110,23 +52,6 @@ def parse_groq_limit(body: object) -> GroqLimit:
         limit=number(_LIMIT),
         requested=number(_REQUESTED),
     )
-
-
-class LlmRateLimitError(RuntimeError):
-    """Groq 429: the model's per-minute (or per-day) token quota is used up."""
-
-    def __init__(self, message: str, *, limit: GroqLimit) -> None:
-        super().__init__(message)
-        self.limit = limit
-
-
-class LlmRequestTooLargeError(RuntimeError):
-    """Groq 413: this one request (input + max_tokens) is over the model's
-    per-minute token limit."""
-
-    def __init__(self, message: str, *, limit: GroqLimit) -> None:
-        super().__init__(message)
-        self.limit = limit
 
 
 def _get_client() -> groq.AsyncGroq:
@@ -325,7 +250,7 @@ async def stream_llm_response(
     messages: list[dict[str, str]],
     tools: list[dict[str, Any]] | None = None,
     *,
-    tool_choice: Literal["auto", "required"] = "auto",
+    tool_choice: ToolChoice = "auto",
     max_tokens: int | None = None,
     estimated_tokens: int | None = None,
 ) -> AsyncIterator[str | LlmToolCall]:
@@ -348,13 +273,7 @@ async def stream_llm_response(
         {"role": "system", "content": system_prompt},
         *messages,
     ]
-    # Several edit calls in one reply are expected (one card per change).
-    tool_kwargs: dict[str, Any] = (
-        {"tools": tools, "tool_choice": tool_choice, "parallel_tool_calls": True}
-        if tools
-        else {}
-    )
-    assembler = _CallAssembler()
+    assembler = CallAssembler()
 
     try:
         stream = await client.chat.completions.create(
@@ -364,7 +283,8 @@ async def stream_llm_response(
             messages=full_messages,
             stream=True,
             **reasoning_options(settings.GROQ_MODEL, settings.CHAT_REASONING_EFFORT),
-            **tool_kwargs,
+            # Several edit calls in one reply are expected (one card per change).
+            **tool_kwargs(tools, tool_choice, parallel_tool_calls=True),
         )
         async for chunk in stream:
             if not chunk.choices:
@@ -372,14 +292,7 @@ async def stream_llm_response(
             delta = chunk.choices[0].delta
             if delta.content:
                 yield delta.content
-            for call in delta.tool_calls or []:
-                function = call.function
-                assembler.add(
-                    call.index,
-                    getattr(call, "id", None),
-                    (function.name or "") if function else "",
-                    (function.arguments or "") if function else "",
-                )
+            assembler.add_delta(delta)
     except groq.AuthenticationError as e:
         logger.error("Groq authentication error", error=str(e))
         raise RuntimeError(
@@ -413,5 +326,5 @@ async def stream_llm_response(
         yield LlmToolCall(name="", arguments="", rejected=rejection)
         return
 
-    for parts in assembler.calls:
-        yield LlmToolCall(name=parts.name, arguments="".join(parts.arguments))
+    for call in assembler.tool_calls():
+        yield call

@@ -32,6 +32,7 @@ dependencies = [
     # Calendar-versioned (YYYYMMDD); bound to releases up to end of 2026.
     "pdfminer.six>=20251107,<20270101",
     "python-docx>=1.2,<2",
+    "openai>=1.60,<3",
 ]
 
 [project.optional-dependencies]

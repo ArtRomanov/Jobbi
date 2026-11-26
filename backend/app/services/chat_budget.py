@@ -16,8 +16,10 @@ high on English prose. `with_margin` adds 15% to cover the low end.
 
 import json
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Protocol
 
+from app.core.config import Settings
 from app.services.chat_guard_notes import Language
 
 ASCII_CHARS_PER_TOKEN = 4
@@ -50,6 +52,44 @@ RATE_LIMITED_DETAIL: dict[Language, str] = {
     "en": "The AI model's per-minute limit is used up. Wait a minute and try again.",
     "ru": "Минутный лимит AI-модели исчерпан. Подождите минуту и попробуйте снова.",
 }
+
+PROVIDER_NOT_CONFIGURED_DETAIL: dict[Language, str] = {
+    "en": (
+        "The AI chat is not set up: CHAT_PROVIDER is gemini but GEMINI_API_KEY "
+        "is missing. Ask the operator to add the key or switch back to groq."
+    ),
+    "ru": (
+        "AI-чат не настроен: CHAT_PROVIDER=gemini, но GEMINI_API_KEY не задан. "
+        "Попросите администратора добавить ключ или вернуть groq."
+    ),
+}
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ChatSizing:
+    """The request sizing of the chat provider in use (see `chat_sizing`)."""
+
+    request_limit: int
+    max_tokens: int
+    min_reply: int
+    input_cap: int
+
+
+def chat_sizing(settings: Settings) -> ChatSizing:
+    """CHAT_* sizing for Groq, GEMINI_CHAT_* sizing for Gemini."""
+    if settings.CHAT_PROVIDER == "gemini":
+        return ChatSizing(
+            request_limit=settings.GEMINI_CHAT_REQUEST_TOKEN_LIMIT,
+            max_tokens=settings.GEMINI_CHAT_MAX_TOKENS,
+            min_reply=settings.GEMINI_CHAT_MIN_REPLY_TOKENS,
+            input_cap=settings.GEMINI_CHAT_INPUT_TOKEN_BUDGET,
+        )
+    return ChatSizing(
+        request_limit=settings.CHAT_REQUEST_TOKEN_LIMIT,
+        max_tokens=settings.CHAT_MAX_TOKENS,
+        min_reply=settings.CHAT_MIN_REPLY_TOKENS,
+        input_cap=settings.CHAT_INPUT_TOKEN_BUDGET,
+    )
 
 
 class GroqLimitLike(Protocol):
