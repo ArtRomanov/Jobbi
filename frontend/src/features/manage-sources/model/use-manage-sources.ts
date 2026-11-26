@@ -198,14 +198,17 @@ export function useManageSources(
 
   // Runs when a removal's Undo window ends (or it is flushed): the real DELETE
   const sendRemove = useCallback(
-    async (id: string, { keepalive }: { keepalive: boolean }): Promise<void> => {
+    async (
+      id: string,
+      { keepalive, authToken }: { keepalive: boolean; authToken: string | null },
+    ): Promise<void> => {
       const dropSource = (): void => {
         setSources((prev) => prev.filter((source) => source.id !== id));
         // Its cards now belong to a removed source; the server knows which remain
         if (isMountedRef.current) void refreshRemovedSources();
       };
       try {
-        await deleteVacancySource(id, { keepalive });
+        await deleteVacancySource(id, { keepalive, authToken });
         dropSource();
       } catch (error: unknown) {
         // Already gone (e.g. removed in another tab): same as removed here

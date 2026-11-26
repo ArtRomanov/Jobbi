@@ -13,7 +13,7 @@ import type { AddSourceAction, AddSubmitOutcome, UseAddSourceResult, WebPreview 
  * One ref blocks every overlapping request (submit, re-check, save), so a
  * second Enter before React re-renders cannot send a duplicate.
  *
- * `beforeAdd` runs (awaited) before Add / Save / "Add the board" talk to the
+ * `beforeAdd` runs (awaited) before Add / Re-check / Save / "Add the board" talk to the
  * server: the panel sends pending removals there, so re-adding a source whose
  * Undo window is still open is not a duplicate and a hidden row does not
  * count toward the source limit.
@@ -91,6 +91,7 @@ export function useAddSource(
       await runExclusive("recheck", async () => {
         setPreviewError(null);
         try {
+          await beforeAdd?.();
           const result = await previewVacancySource({
             input: current.input,
             job_link_contains: jobLinkContains,
@@ -102,7 +103,7 @@ export function useAddSource(
         }
       });
     },
-    [preview, runExclusive],
+    [preview, beforeAdd, runExclusive],
   );
 
   const save = useCallback(

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { getAuthToken } from "@/shared/api";
 import { useToast } from "@/shared/ui";
 import { REMOVE_UNDO_WINDOW_MS, SOURCE_REMOVED_MESSAGE, UNDO_LABEL } from "../lib/constants";
 import type { SendRemove, UseDeferredRemoveResult } from "./types";
@@ -6,6 +7,8 @@ import type { SendRemove, UseDeferredRemoveResult } from "./types";
 interface PendingRemoval {
   toastId: number;
   onUndo?: () => void;
+  /** Token at Remove time: logout clears it before the panel unmounts and flushes. */
+  authToken: string | null;
 }
 
 /**
@@ -16,7 +19,9 @@ interface PendingRemoval {
  *
  * Pending removals are sent at once (toasts closed) by `flushRemovals`, on
  * `pagehide` (with `keepalive`, so the request outlives the tab) and on unmount.
- * Each removal has its own toast and timer.
+ * Each removal has its own toast and timer. The DELETE carries the auth token
+ * captured at Remove time, so logging out inside the window (token cleared,
+ * then the panel unmounts and flushes) still sends it authorized.
  */
 export function useDeferredRemove(sendRemove: SendRemove): UseDeferredRemoveResult {
   const { showToast, dismissToast } = useToast();
@@ -44,7 +49,7 @@ export function useDeferredRemove(sendRemove: SendRemove): UseDeferredRemoveResu
       pendingRef.current.delete(id);
       dismissToast(pending.toastId);
       try {
-        await sendRemoveRef.current(id, { keepalive });
+        await sendRemoveRef.current(id, { keepalive, authToken: pending.authToken });
       } finally {
         // Success already dropped the row; failure shows it again
         unhide(id);
@@ -82,7 +87,7 @@ export function useDeferredRemove(sendRemove: SendRemove): UseDeferredRemoveResu
         action: { label: UNDO_LABEL, onClick: () => undo(id) },
         onTimeout: () => void commit(id, false),
       });
-      pendingRef.current.set(id, { toastId, onUndo });
+      pendingRef.current.set(id, { toastId, onUndo, authToken: getAuthToken() });
     },
     [commit, showToast, undo],
   );

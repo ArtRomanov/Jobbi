@@ -100,6 +100,7 @@ export function useEditSource(
       await runExclusive("recheck", async () => {
         setPreviewError(null);
         try {
+          await beforeLinkChange?.();
           const result = await previewVacancySource({
             input: current.input,
             job_link_contains: jobLinkContains,
@@ -112,7 +113,7 @@ export function useEditSource(
         }
       });
     },
-    [preview, sourceId, runExclusive],
+    [preview, sourceId, beforeLinkChange, runExclusive],
   );
 
   const savePreview = useCallback(

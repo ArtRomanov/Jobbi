@@ -20,10 +20,22 @@ function serializeJson(body: unknown): string | undefined {
   return body !== undefined ? JSON.stringify(body) : undefined;
 }
 
+const AUTH_TOKEN_KEY = "jobbi_token";
+
+/** The bearer token requests are sent with right now (null when logged out). */
+export function getAuthToken(): string | null {
+  return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
 /** Extra fetch options a caller may need. */
 export interface RequestOptions {
   /** Let the request outlive the page (e.g. sent from `pagehide`). */
   keepalive?: boolean;
+  /**
+   * Send with this bearer token instead of the current one: a request queued
+   * earlier (e.g. a delayed DELETE) still goes out after logout cleared it.
+   */
+  authToken?: string | null;
 }
 
 async function request<T>(
@@ -38,7 +50,7 @@ async function request<T>(
     ? {}
     : { "Content-Type": "application/json" };
 
-  const token = localStorage.getItem("jobbi_token");
+  const token = options.authToken ?? getAuthToken();
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }

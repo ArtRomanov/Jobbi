@@ -1,11 +1,12 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { useState } from "react";
 import type { RemovedVacancySource, VacancySource } from "@/entities/vacancy-source";
 import { InboxPage } from "@/pages/inbox";
 import { renderWithProviders } from "./utils";
-import { mockVacancySource, mockVacancySourcesEmpty } from "./mocks/handlers";
+import { useEditSource } from "@/features/manage-sources/model/use-edit-source";
+import { mockVacancySource, mockVacancySourcesEmpty, mockWebPreview, mockWebSource } from "./mocks/handlers";
 import { server } from "./setup";
 
 // Source names also appear as options of the Inbox source filter
@@ -392,5 +393,82 @@ describe("Remove source with Undo (backlog #10)", () => {
     expect(log.calls.indexOf("PREVIEW")).toBeLessThan(log.calls.indexOf("PATCH two"));
     expect(screen.queryByText("Source removed")).not.toBeInTheDocument();
     expect(sourceRowNames()).toEqual(["@first_one"]);
+  });
+
+  it("logging out within the Undo window still sends ONE DELETE with the token from Remove time", async () => {
+    localStorage.setItem("jobbi_token", "token-at-remove");
+    const user = useFakeTimers();
+    const log = serveSources([FIRST, SECOND]);
+    const authHeaders: (string | null)[] = [];
+    server.use(
+      http.delete(SOURCE_URL, ({ params, request }) => {
+        log.deleted.push(String(params.id));
+        authHeaders.push(request.headers.get("Authorization"));
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    renderWithProviders(<LeavableInbox />);
+    await screen.findByRole("button", { name: "Remove @first_one" });
+
+    await user.click(screen.getByRole("button", { name: "Remove @first_one" }));
+    // Logout: the token goes first, then the protected page unmounts
+    localStorage.removeItem("jobbi_token");
+    await user.click(screen.getByRole("button", { name: "Leave inbox" }));
+
+    await waitFor(() => expect(log.deleted).toEqual(["one"]));
+    expect(authHeaders).toEqual(["Bearer token-at-remove"]);
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
+    expect(log.deleted).toEqual(["one"]);
+  });
+
+  it("Re-check in the add flow's web preview sends a pending DELETE first", async () => {
+    const user = useFakeTimers();
+    const log = serveSources([FIRST, SECOND]);
+    server.use(
+      http.post(PREVIEW_URL, () => {
+        log.calls.push("PREVIEW");
+        return HttpResponse.json(mockWebPreview);
+      }),
+    );
+    await renderPanel();
+
+    await user.type(getInput(), "https://jobs.example.com/list");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    const preview = await screen.findByRole("region", { name: /Found/ });
+    await user.click(screen.getByRole("button", { name: "Remove @first_one" }));
+    expect(log.deleted).toEqual([]);
+
+    await user.click(within(preview).getByRole("button", { name: "Re-check" }));
+
+    await waitFor(() => expect(log.calls.filter((call) => call === "PREVIEW")).toHaveLength(2));
+    expect(log.calls.indexOf("DELETE one")).toBeGreaterThan(-1);
+    expect(log.calls.indexOf("DELETE one")).toBeLessThan(log.calls.lastIndexOf("PREVIEW"));
+    expect(screen.queryByText("Source removed")).not.toBeInTheDocument();
+  });
+
+  it("Re-check in the Edit dialog's preview runs beforeLinkChange first", async () => {
+    const calls: string[] = [];
+    server.use(
+      http.post(PREVIEW_URL, () => {
+        calls.push("PREVIEW");
+        return HttpResponse.json(mockWebPreview);
+      }),
+    );
+    const beforeLinkChange = vi.fn(async (): Promise<void> => {
+      calls.push("FLUSH");
+    });
+    const { result } = renderHook(() =>
+      useEditSource(mockWebSource as unknown as VacancySource, vi.fn(), beforeLinkChange),
+    );
+
+    await act(async () => {
+      await result.current.submit({ name: null, link: "https://other.example.com/jobs", jobLinkContains: null });
+    });
+    expect(result.current.preview).not.toBeNull();
+    await act(async () => {
+      await result.current.recheck("/vacancy/");
+    });
+
+    expect(calls).toEqual(["FLUSH", "PREVIEW", "FLUSH", "PREVIEW"]);
   });
 });

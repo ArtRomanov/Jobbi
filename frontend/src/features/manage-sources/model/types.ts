@@ -19,7 +19,10 @@ export type SourcesChangeHandler = (
 ) => void;
 
 /** Sends a removal's DELETE and applies the result; never rejects. */
-export type SendRemove = (id: string, options: { keepalive: boolean }) => Promise<void>;
+export type SendRemove = (
+  id: string,
+  options: { keepalive: boolean; authToken: string | null },
+) => Promise<void>;
 
 export interface UseDeferredRemoveResult {
   /** Rows hidden by a removal that is waiting for its Undo window or its DELETE. */
