@@ -32,8 +32,11 @@ function pySplit(value: string): string[] {
   return value.split(PY_WHITESPACE_RUN).filter(Boolean);
 }
 
-/** Trimmed description; blank and null are both "no description" (""). */
-function normalizeDescription(value: string | null | undefined): string {
+/**
+ * Description as the server's `str.strip()` leaves it; blank and null are both
+ * "no description" (""). Use it for any "is it blank?" check.
+ */
+export function normalizeDescription(value: string | null | undefined): string {
   return pyStrip(value ?? "");
 }
 
