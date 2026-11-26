@@ -40,8 +40,6 @@ export interface UseManageSourcesResult {
   /** Daily limit / AI availability; null until the initial load succeeds. */
   status: DiscoveryStatus | null;
   loadState: SourcesLoadState;
-  /** Ids of sources with a delete request in flight. */
-  removingIds: ReadonlySet<string>;
   /** True until the initial list has loaded; adding is blocked meanwhile. */
   isAddDisabled: boolean;
   /** Append a just-created source to the local list. */
@@ -59,6 +57,25 @@ export interface UseManageSourcesResult {
   /** Send pending removals now (e.g. before an add, so the server sees them gone). */
   flushRemovals: () => Promise<void>;
   retryLoad: () => void;
+}
+
+/** A finished Remove waiting for its focus target (picked after the list updates). */
+export interface RemoveFocusRequest {
+  /** Full-list order when Remove was pressed. */
+  orderedIds: readonly string[];
+  removedId: string;
+}
+
+export interface UseSourcePagesResult {
+  /** Current page (0-based), always valid for the list. */
+  page: number;
+  pageCount: number;
+  /** The sources shown on the current page. */
+  pageSources: readonly VacancySource[];
+  /** Go to a page (clamped). */
+  setPage: (page: number) => void;
+  /** Open the page that shows this source once it is in the list (e.g. right after adding it). */
+  revealSource: (id: string) => void;
 }
 
 export interface UseSearchSettingsFormResult {

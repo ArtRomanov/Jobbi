@@ -47,7 +47,6 @@ export function useManageSources(
   const [status, setStatus] = useState<DiscoveryStatus | null>(null);
   const [loadState, setLoadState] = useState<SourcesLoadState>("loading");
   const [reloadKey, setReloadKey] = useState(0);
-  const [removingIds, setRemovingIds] = useState<ReadonlySet<string>>(() => new Set());
   const isReady = loadState === "ready";
   const isAddDisabled = !isReady;
   const isAnyScanning = sources.some((source) => source.scanning);
@@ -205,7 +204,6 @@ export function useManageSources(
         // Its cards now belong to a removed source; the server knows which remain
         if (isMountedRef.current) void refreshRemovedSources();
       };
-      setRemovingIds((prev) => new Set(prev).add(id));
       try {
         await deleteVacancySource(id, { keepalive });
         dropSource();
@@ -213,12 +211,6 @@ export function useManageSources(
         // Already gone (e.g. removed in another tab): same as removed here
         if (isApiError(error) && error.status === 404) dropSource();
         else handleApiError(error, showToast);
-      } finally {
-        setRemovingIds((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
       }
     },
     [showToast, refreshRemovedSources],
@@ -245,7 +237,6 @@ export function useManageSources(
     setSettings,
     status,
     loadState,
-    removingIds,
     isAddDisabled,
     appendSource,
     replaceSource,

@@ -359,4 +359,38 @@ describe("Remove source with Undo (backlog #10)", () => {
     expect(screen.getByText("@first_one", { selector: "option" })).toBeInTheDocument();
     expect(screen.queryByText("@first_one", OUTSIDE_SOURCE_FILTER)).not.toBeInTheDocument();
   });
+
+  it("an Edit link change to a source whose delete is pending sends the DELETE first", async () => {
+    const user = useFakeTimers();
+    const log = serveSources([FIRST, SECOND]);
+    server.use(
+      http.patch(SOURCE_URL, async ({ params, request }) => {
+        log.calls.push(`PATCH ${String(params.id)}`);
+        const body = (await request.json()) as { input: string };
+        const handle = body.input.replace(/^@/, "");
+        return HttpResponse.json({
+          ...SECOND,
+          id: `new-${handle}`,
+          key: `telegram:${handle}`,
+          display_name: `@${handle}`,
+        });
+      }),
+    );
+    await renderPanel();
+
+    await user.click(screen.getByRole("button", { name: "Remove @first_one" }));
+    await user.click(screen.getByRole("button", { name: "Edit @second_one" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit source" });
+    const link = within(dialog).getByLabelText("Link");
+    await user.clear(link);
+    await user.type(link, "@first_one");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(log.calls.indexOf("DELETE one")).toBeGreaterThan(0);
+    expect(log.calls.indexOf("DELETE one")).toBeLessThan(log.calls.indexOf("PREVIEW"));
+    expect(log.calls.indexOf("PREVIEW")).toBeLessThan(log.calls.indexOf("PATCH two"));
+    expect(screen.queryByText("Source removed")).not.toBeInTheDocument();
+    expect(sourceRowNames()).toEqual(["@first_one"]);
+  });
 });

@@ -28,6 +28,9 @@ export const AI_UNAVAILABLE_NOTICE =
   "Vacancy search is temporarily unavailable — new posts will be checked when it's back";
 export const LOAD_ERROR_MESSAGE = "Could not load your sources.";
 export const NO_SOURCES_MESSAGE = "You are not watching any sources yet.";
+/** Sources per page in the panel; the pager shows only above this. */
+export const SOURCES_PAGE_SIZE = 7;
+export const SOURCES_PAGER_LABEL = "Sources pages";
 export const SOURCE_INPUT_PLACEHOLDER =
   "@channel, t.me/channel, a job board or a job page link";
 export const SOURCE_INPUT_LABEL = "Add a channel, job board or page";

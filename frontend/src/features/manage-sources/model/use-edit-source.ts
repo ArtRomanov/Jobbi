@@ -21,6 +21,8 @@ import type { EditPreview, EditSourceAction, EditSourceField, UseEditSourceResul
 export function useEditSource(
   source: VacancySource,
   onSaved: (source: VacancySource) => void,
+  // A removal still in its Undo window would make the changed link a 409 duplicate
+  beforeLinkChange?: () => Promise<void>,
 ): UseEditSourceResult {
   const [busyAction, setBusyAction] = useState<EditSourceAction | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +61,7 @@ export function useEditSource(
             onSaved(await updateVacancySource(sourceId, { name: values.name }));
             return;
           }
+          await beforeLinkChange?.();
           // The pattern field only exists for a web source
           const jobLinkContains = kind === "web" ? values.jobLinkContains : null;
           const result = await previewVacancySource({
@@ -87,7 +90,7 @@ export function useEditSource(
       // Send the user back to what they changed (the link, else the name)
       return isLinkChanged || isPatternChanged ? "link" : "name";
     },
-    [kind, sourceId, onSaved, runExclusive],
+    [kind, sourceId, onSaved, beforeLinkChange, runExclusive],
   );
 
   const recheck = useCallback(

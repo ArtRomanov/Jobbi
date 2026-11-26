@@ -7,11 +7,13 @@ import { pickFocusAfterRemove } from "../lib/helpers";
 import type { WebSourceOptions } from "../model/schemas";
 import { useAddSource } from "../model/use-add-source";
 import { useManageSources } from "../model/use-manage-sources";
-import type { SourceEditedHandler, SourcesChangeHandler } from "../model/types";
+import { useSourcePages } from "../model/use-source-pages";
+import type { RemoveFocusRequest, SourceEditedHandler, SourcesChangeHandler } from "../model/types";
 import { AddSourceForm } from "./add-source-form";
 import { SearchSettingsForm } from "./search-settings-form";
 import { SourcePreview } from "./source-preview";
 import { SourceList } from "./source-list";
+import { SourcesPager } from "./sources-pager";
 import { SourcesNotices } from "./sources-notices";
 
 interface SourcesPanelProps {
@@ -36,7 +38,9 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
   const editButtonsRef = useRef(new Map<string, HTMLButtonElement>());
   // A replaced source gets a new row, so the Modal can't return focus to its Edit
   const [focusEditId, setFocusEditId] = useState<string | null>(null);
-  // Undo shows a removed row again; its Remove takes focus once it is rendered
+  // A Remove: its focus target is picked once the list without the row is committed
+  const [removeFocus, setRemoveFocus] = useState<RemoveFocusRequest | null>(null);
+  // Remove to focus once its page renders: the picked target, or a row Undo brought back
   const [focusRemoveId, setFocusRemoveId] = useState<string | null>(null);
   const {
     sources,
@@ -44,7 +48,6 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
     setSettings,
     status,
     loadState,
-    removingIds,
     isAddDisabled,
     appendSource,
     replaceSource,
@@ -52,6 +55,16 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
     flushRemovals,
     retryLoad,
   } = useManageSources(onScanFinished, onSourcesChange);
+  // Paging is view-only: `onSourcesChange` above still gets the FULL list
+  const { page, pageCount, pageSources, setPage, revealSource } = useSourcePages(sources);
+  // A new source is appended at the end: open the page that shows it
+  const appendAndReveal = useCallback(
+    (source: VacancySource): void => {
+      appendSource(source);
+      revealSource(source.id);
+    },
+    [appendSource, revealSource],
+  );
   const {
     input,
     setInput,
@@ -65,7 +78,7 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
     save,
     addBoard,
     cancelPreview,
-  } = useAddSource(isAddDisabled, appendSource, flushRemovals);
+  } = useAddSource(isAddDisabled, appendAndReveal, flushRemovals);
 
   const registerRemoveButton = useCallback(
     (id: string, element: HTMLButtonElement | null): void => {
@@ -92,9 +105,29 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
     setFocusEditId(null);
   }, [focusEditId]);
 
+  // Against the CURRENT visible list (other removes may have hidden rows
+  // meanwhile): the next row in full-list order (it slides into the removed
+  // row's place), else the previous one (maybe on the previous page), else the input
+  useEffect(() => {
+    if (removeFocus === null) return;
+    const currentIds = new Set(sources.map((source) => source.id));
+    if (currentIds.has(removeFocus.removedId)) return;
+    setRemoveFocus(null);
+    const targetId = pickFocusAfterRemove(removeFocus.orderedIds, removeFocus.removedId, (candidate) =>
+      currentIds.has(candidate),
+    );
+    if (targetId === null) {
+      inputRef.current?.focus();
+      return;
+    }
+    revealSource(targetId);
+    setFocusRemoveId(targetId);
+  }, [removeFocus, sources, revealSource]);
+
   useEffect(() => {
     if (focusRemoveId === null) return;
-    removeButtonsRef.current.get(focusRemoveId)?.focus();
+    // Gone meanwhile (e.g. removed concurrently): fall back to the input
+    (removeButtonsRef.current.get(focusRemoveId) ?? inputRef.current)?.focus();
     setFocusRemoveId(null);
   }, [focusRemoveId]);
 
@@ -136,18 +169,23 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
     [replaceSource, onSourceEdited],
   );
 
-  // The row hides at once (Undo toast): focus the next Remove button, else the
-  // previous one, else the input. Undo focuses the restored row's Remove.
+  // The row hides at once (Undo toast; the DELETE goes when it ends) and focus
+  // moves (see the `removeFocus` effect) unless the user has moved on: focus is
+  // neither on this row's Remove nor nowhere (<body>). Undo shows the row again
+  // on its page and focuses its Remove.
   const handleRemove = useCallback(
     (id: string): void => {
       const orderedIds = sources.map((source) => source.id);
-      removeSource(id, () => setFocusRemoveId(id));
-      const buttons = removeButtonsRef.current;
-      const nextId = pickFocusAfterRemove(orderedIds, id, (candidate) => buttons.has(candidate));
-      const target = nextId === null ? inputRef.current : buttons.get(nextId);
-      target?.focus();
+      const removeButton = removeButtonsRef.current.get(id);
+      const active = document.activeElement;
+      const isFocusHere = active === null || active === document.body || active === removeButton;
+      removeSource(id, () => {
+        revealSource(id);
+        setFocusRemoveId(id);
+      });
+      if (isFocusHere) setRemoveFocus({ orderedIds, removedId: id });
     },
-    [sources, removeSource],
+    [sources, removeSource, revealSource],
   );
 
   let list: ReactNode;
@@ -173,14 +211,17 @@ export function SourcesPanel({ onScanFinished, onSourcesChange, onSourceEdited }
       break;
     case "ready":
       list = (
-        <SourceList
-          sources={sources}
-          removingIds={removingIds}
-          onRemove={handleRemove}
-          onEdited={handleEdited}
-          onRegisterRemoveButton={registerRemoveButton}
-          onRegisterEditButton={registerEditButton}
-        />
+        <>
+          <SourceList
+            sources={pageSources}
+            onRemove={handleRemove}
+            onEdited={handleEdited}
+            onBeforeLinkChange={flushRemovals}
+            onRegisterRemoveButton={registerRemoveButton}
+            onRegisterEditButton={registerEditButton}
+          />
+          <SourcesPager page={page} pageCount={pageCount} onPageChange={setPage} />
+        </>
       );
       break;
   }
