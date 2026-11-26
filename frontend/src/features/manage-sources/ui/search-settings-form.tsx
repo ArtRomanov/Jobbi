@@ -45,6 +45,7 @@ export function SearchSettingsForm({
     setKeywords,
     keywordFilter,
     setKeywordFilter,
+    isDirty,
     saveError,
     isSaving,
     save,
@@ -53,7 +54,8 @@ export function SearchSettingsForm({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault();
-    if (isDisabled) return;
+    // The soft-disabled Save swallows clicks; this also covers any other submit
+    if (isDisabled || !isDirty) return;
     await save();
     // The button is disabled while saving, which drops focus; put it back
     saveButtonRef.current?.focus();
@@ -117,7 +119,15 @@ export function SearchSettingsForm({
             {FILTERED_LAST_24H_PREFIX} {filteredLast24h}
           </p>
         ) : null}
-        <Button ref={saveButtonRef} type="submit" loading={isSaving} disabled={isDisabled}>
+        {/* Off until something really changed. Once loaded it stays focusable
+            (aria-disabled) so focus is not lost after a save */}
+        <Button
+          ref={saveButtonRef}
+          type="submit"
+          loading={isSaving}
+          disabled={isDisabled || !isDirty}
+          keepFocusable={!isDisabled}
+        >
           Save
         </Button>
         {saveError ? (
