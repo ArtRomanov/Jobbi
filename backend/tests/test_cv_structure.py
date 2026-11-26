@@ -225,6 +225,24 @@ def test_edit_that_cannot_apply_has_no_problems(before: str) -> None:
     assert edit_problems(CV, _replace(before, "x")) == []
 
 
+def test_edit_problems_sees_what_accept_applies_through_a_rebase() -> None:
+    """A one-letter misquote is re-aimed at Accept, so its loss must be seen too."""
+    cv = (
+        "# Jane Doe\nEngineer\n\n## EXPERIENCE\n### Dev — Acme\n"
+        "- Built a thing for the team over many years of work.\n\n"
+        "## CERTIFICATIONS\n- AWS Certified Developer Associate 2021\n"
+    )
+    misquoted = _replace(
+        "- built a thing for the team over many years of work.\n\n"
+        "## CERTIFICATIONS\n- AWS Certified Developer Associate 2021",
+        "- built a thing for the team over many years of work.\n"
+        "- AWS Certified Developer Associate 2021",
+    )
+    assert edit_problems(cv, misquoted) == [
+        Problem("section_removed", "CERTIFICATIONS")
+    ]
+
+
 def test_edit_problems_works_on_crlf_cv() -> None:
     crlf = CV.replace("\n", "\r\n")
     assert edit_problems(crlf, _remove(CERTS)) == [

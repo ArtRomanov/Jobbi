@@ -21,7 +21,7 @@ from typing import Literal
 from app.services.chat_card_service import (
     _PassageMissing,
     _PassageNotUnique,
-    apply_card_edit,
+    apply_card_edit_rebased,
 )
 from app.services.chat_guard_notes import Language
 from app.services.chat_tools import CvEdit
@@ -130,11 +130,13 @@ def outline_problems(before: str, after: str) -> list[Problem]:
 def edit_problems(cv: str, edit: CvEdit) -> list[Problem]:
     """Dry-run `edit` on `cv` (nothing is saved) and list what it breaks.
 
-    An edit that cannot be applied (its passage is missing or not unique)
-    breaks nothing here: Accept rejects it anyway.
+    Applied the way Accept applies it (re-aimed when the quote is slightly
+    off), so a loss Accept would cause is seen here. An edit that cannot be
+    applied even so (passage missing or not unique) breaks nothing here:
+    Accept rejects it anyway.
     """
     try:
-        after = apply_card_edit(
+        after = apply_card_edit_rebased(
             cv,
             op=edit.op,
             before_text=edit.before_text,
