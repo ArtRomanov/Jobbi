@@ -621,7 +621,17 @@ async def _stream_reply(
                     repair_calls, cv, user_texts=user_texts, job_post=job_post
                 )
                 if repaired.edits:
-                    outcome = repaired
+                    # The repair's edits replace the first ones, but what the
+                    # first reply's text already announced (left-out edits,
+                    # rejected or malformed calls) keeps its note and marker.
+                    left_out = [*outcome.left_out]
+                    left_out += [n for n in repaired.left_out if n not in left_out]
+                    outcome = _CallOutcome(
+                        edits=repaired.edits,
+                        rejected=outcome.rejected or repaired.rejected,
+                        failed=outcome.failed + repaired.failed,
+                        left_out=left_out,
+                    )
                     problems = structure_problems(
                         cv.content, outcome.edits, user_content
                     )

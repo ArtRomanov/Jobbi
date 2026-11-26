@@ -13,6 +13,7 @@ import pytest
 
 from app.core.config import get_settings
 from app.services.chat_budget import estimate_tokens, fixed_tokens
+from app.services.chat_guard_notes import NOT_PROPOSED_MARKER, unsupported_names_note
 from app.services.chat_service import repair_nudge
 from app.services.chat_tools import PROPOSE_CV_EDIT_TOOL
 from app.services.cv_structure import Problem
@@ -122,6 +123,33 @@ async def test_repair_with_no_usable_edit_keeps_the_first_cards_warned(
     assert len(fake.calls) == 2
     cards = _cards(events)
     assert [(c["before_text"], c["warning"]) for c in cards] == [(_SKILLS, _EN_WARNING)]
+
+
+async def test_repair_keeps_the_first_reply_left_out_note(
+    client: httpx.AsyncClient, setup: dict[str, str]
+) -> None:
+    # The first reply also announced an edit the fact guard left out; the
+    # repair only fixes the broken one. Its note and marker must stay.
+    invented = {"op": "insert", "after": "- TanStack Query", "position": "end"}
+    fake = _SequenceGroq(
+        [
+            _chunk("1. Shortened the skills.\n2. Added TanStack Query."),
+            *_call_chunks(0, _DROP_SKILLS),
+            *_call_chunks(1, invented),
+        ],
+        [*_call_chunks(0, _FIXED)],
+    )
+
+    events = await _send_seq(client, setup, fake, "Make it shorter")
+
+    assert len(fake.calls) == 2
+    assert [c["before_text"] for c in _cards(events)] == ["- jQuery"]
+    history = await client.get(
+        f"{APPS}/{setup['app_id']}/chat", headers=_h(setup["token"])
+    )
+    reply = history.json()[-1]["content"]
+    assert unsupported_names_note(["TanStack"], "en") in reply
+    assert NOT_PROPOSED_MARKER["en"] in reply
 
 
 async def test_explicit_removal_gets_no_repair_and_no_warning(
