@@ -2,6 +2,7 @@
 nothing here calls Google or Groq."""
 
 import json
+import time
 from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from types import SimpleNamespace
@@ -279,6 +280,21 @@ def test_later_system_messages_become_marked_user_notes() -> None:
 )
 def test_parse_too_long(body: object, expected: LlmLimit | None) -> None:
     assert parse_too_long(body) == expected
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "The input token count (5) " + "x" * 20_000,  # no "allowed": no numbers
+        "input token count 1" + " x" * 10_000,
+        "input token count " + "1" * 20_000,
+    ],
+    ids=["no-allowed", "spaced", "digits"],
+)
+def test_parse_too_long_is_linear_on_a_long_message(message: str) -> None:
+    started = time.perf_counter()
+    assert parse_too_long({"error": {"message": message}}) == NO_LIMIT_NUMBERS
+    assert time.perf_counter() - started < 0.1
 
 
 async def test_429_maps_to_rate_limit_and_logs_no_text(

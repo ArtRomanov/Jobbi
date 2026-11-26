@@ -36,8 +36,9 @@ APP_NOTE_PREFIX = "[Note from the Jobbi app, not typed by the user]\n"
 
 # Gemini's 400 for an over-long input: "The input token count (1048577)
 # exceeds the maximum number of tokens allowed (1048576)."
+# Possessive and atomic parts: no backtracking, linear on a long message.
 _TOO_LONG = re.compile(
-    r"input token count[^\d]*(\d+)[^\d]+.*?allowed[^\d]*(\d+)", re.IGNORECASE
+    r"input token count\D*+(\d++)(?>.*?allowed)\D*+(\d++)", re.IGNORECASE
 )
 _TOO_LONG_HINT = re.compile(r"token count|exceeds the maximum|too long", re.IGNORECASE)
 
