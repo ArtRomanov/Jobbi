@@ -471,13 +471,40 @@ def apply_card_edit_rebased(
     return apply_card_edit(content, **edit)
 
 
+def _drop_quote_marker(quote: str, exact: str, after: str) -> str:
+    """`after` without the line marker the model's quote had and the CV has not.
+
+    The model may quote a plain CV line as the list item it displayed
+    (`> - Led …`) and write `after` the same way; the CV's own marker stays
+    outside the replaced span, so `after` keeping the model's marker would
+    add it (`1. - Led …`). Dropped from every `after` line when every quote
+    line has it, else from the first line only.
+    """
+    lines = quote.split("\n")
+    spans, bold_pairs = _line_markers(lines[0])
+    # A bold wrapper is not a line marker: cutting its opening would leave
+    # the closing `**`.
+    if not spans or spans[0][0] != 0 or any(o == spans[0] for o, _ in bold_pairs):
+        return after
+    marker = lines[0][: spans[0][1]]
+    if not marker.strip() or exact.startswith(marker):
+        return after
+    after_lines = after.split("\n")
+    every = all(line.startswith(marker) for line in lines if line.strip())
+    for i, line in enumerate(after_lines if every else after_lines[:1]):
+        if line.startswith(marker):
+            after_lines[i] = line[len(marker) :]
+    return "\n".join(after_lines)
+
+
 def place_edit(content: str, edit: CvEdit) -> CvEdit | None:
     """The edit as a card can store it, or None when Accept could never apply it.
 
     A quote (`before_text`, or an insert's `anchor_text`) that matches the CV
     only with different whitespace is replaced by the exact CV text, so the
     card shows and applies the real passage; `after_text` stays as the model
-    wrote it. The edit is then dry-run the way Accept runs it: a passage that
+    wrote it, less a Markdown line marker its quote had and the CV has not
+    (`_drop_quote_marker`). The edit is then dry-run the way Accept runs it: a passage that
     cannot be found even so (nor re-aimed) means None. A passage found more
     than once is kept, as before: Accept answers PASSAGE_NOT_UNIQUE.
     """
@@ -490,7 +517,13 @@ def place_edit(content: str, edit: CvEdit) -> CvEdit | None:
         except (_PassageMissing, _PassageNotUnique):
             pass
         else:
-            edit = replace(edit, **{field: content[start:end]})
+            exact = content[start:end]
+            edit = replace(edit, **{field: exact})
+            if edit.op == "replace" and edit.after_text:
+                after = _drop_quote_marker(
+                    normalize_newlines(quote), exact, edit.after_text
+                )
+                edit = replace(edit, after_text=after)
     try:
         apply_card_edit_rebased(
             content,

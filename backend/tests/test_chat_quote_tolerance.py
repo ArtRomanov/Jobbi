@@ -587,3 +587,81 @@ async def test_dropped_quote_is_logged_without_text(
     assert "Made the app" not in every
     assert "configurable" not in every  # no CV text either
     assert any(e["event"] == "chat_quote_retry" for e in logs)
+
+
+@pytest.mark.parametrize(
+    ("cv_line", "quote", "after", "expected_line"),
+    [
+        # The model quoted a numbered item as a bullet and kept its bullet in
+        # `after`: the CV's own "1. " stays, the model's "- " is not added.
+        (
+            "1. Led team of 5 engineers",
+            "- Led team of 5 engineers",
+            "- Led team of 8 engineers",
+            "1. Led team of 8 engineers",
+        ),
+        # A plain paragraph shown as a quoted list item.
+        (
+            "Led team of 5 engineers",
+            "> - Led team of 5 engineers",
+            "> - Led team of 8 engineers",
+            "Led team of 8 engineers",
+        ),
+        # Without its marker in `after`, nothing changes.
+        (
+            "1. Led team of 5 engineers",
+            "- Led team of 5 engineers",
+            "Led team of 8 engineers",
+            "1. Led team of 8 engineers",
+        ),
+    ],
+)
+def test_the_quotes_own_marker_is_not_added_by_after(
+    cv_line: str, quote: str, after: str, expected_line: str
+) -> None:
+    cv = f"# Jane\n\n### Dev\n\n{cv_line}\n2. Shipped X\n"
+
+    placed = place_edit(cv, _edit(before_text=quote, after_text=after))
+
+    assert placed is not None
+    assert _apply(cv, placed) == cv.replace(cv_line, expected_line)
+
+
+def test_a_marker_the_quote_did_not_have_stays_in_after() -> None:
+    cv = "# Jane\n\n### Dev\n\nLed team of 5 engineers\n"
+
+    placed = place_edit(
+        cv, _edit(before_text="Led team of 5", after_text="- Led team of 8")
+    )
+
+    assert placed is not None and placed.after_text == "- Led team of 8"
+
+
+def test_a_multi_line_quotes_marker_is_dropped_from_every_after_line() -> None:
+    cv = "# Jane\n\n### Dev\n\nLed team of 5.\nShipped X.\n"
+
+    placed = place_edit(
+        cv,
+        _edit(
+            before_text="> Led team of 5.\n> Shipped X.",
+            after_text="> Led team of 8.\n> Shipped X and Y.",
+        ),
+    )
+
+    assert placed is not None
+    assert placed.after_text == "Led team of 8.\nShipped X and Y."
+
+
+def test_a_bold_wrapper_in_the_quote_is_not_cut_from_after() -> None:
+    cv = "# Jane\n\n### Dev\n\nLed team of 5 engineers\n"
+
+    placed = place_edit(
+        cv,
+        _edit(
+            before_text="**Led team of 5 engineers**",
+            after_text="**Led team of 8 engineers**",
+        ),
+    )
+
+    assert placed is not None
+    assert placed.after_text == "**Led team of 8 engineers**"
