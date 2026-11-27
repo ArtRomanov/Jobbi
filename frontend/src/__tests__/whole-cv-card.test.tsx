@@ -99,6 +99,13 @@ describe("buildSectionDiff: section order", () => {
     expect(screen.queryByText("No changes to the CV text.")).not.toBeInTheDocument();
     expect(screen.getByText(/Experience — moved/)).toBeInTheDocument();
   });
+
+  it("reads a heading with a long run of spaces in linear time", () => {
+    const heading = `## a${" ".repeat(20_000)}x`;
+    const start = performance.now();
+    buildSectionDiff(heading, heading);
+    expect(performance.now() - start).toBeLessThan(100);
+  });
 });
 
 describe("whole-CV card", () => {

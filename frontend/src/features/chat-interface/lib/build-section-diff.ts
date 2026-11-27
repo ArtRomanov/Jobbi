@@ -22,8 +22,13 @@ export const HEADER_SECTION_TITLE = "Header";
 const SECTION_HEADING = /^ {0,3}##[ \t]+(.+)$/;
 
 function headingTitle(raw: string): string {
-  // "## Skills ##" -> "Skills" (an optional closing run of #)
-  return raw.replace(/[ \t]+#+[ \t]*$/, "").trim();
+  // "## Skills ##" -> "Skills" (an optional closing run of #). Done by hand:
+  // /[ \t]+#+[ \t]*$/ is quadratic on a long space run in model text.
+  const text = raw.trimEnd();
+  const hashes = text.length - text.replace(/#+$/, "").length;
+  const rest = text.slice(0, text.length - hashes);
+  if (hashes > 0 && rest !== rest.trimEnd()) return rest.trim();
+  return text.trim();
 }
 
 /** Split a Markdown CV at its `## ` headings; blank text before the first is dropped. */
