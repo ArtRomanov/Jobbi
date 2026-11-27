@@ -296,10 +296,40 @@ def test_system_prompt_has_the_request_following_rules() -> None:
         "say plainly why",
         "Never invent facts",
         "explicit instruction wins",
-        "describe only the edits you actually propose",
+        "lists the edits you propose in it, one short line each",
+        "Never describe an edit you do not propose",
         "propose_cv_edit is your only tool",
         "never say you will fetch",
         "Reply in the language of the user's latest message",
+    ):
+        assert phrase in prompt, phrase
+
+
+def test_system_prompt_answers_non_edit_requests_in_the_reply() -> None:
+    """Live 2026-11-27: "fit 2 pages and write a cover message" got one card
+    and no text. A request that is not a CV edit is answered in the text."""
+
+    class _App:
+        company_name = "Acme"
+        role_title = "SRE"
+        job_url = None
+        status = "researching"
+        notes = None
+
+    class _Cv:
+        content = CV_TEXT
+
+    prompt = build_system_prompt(_App(), _Cv())  # type: ignore[arg-type]
+
+    for phrase in (
+        "A request that is not a CV edit",
+        "cover letter",
+        "answer it in full in your reply text",
+        "in the same reply as any edits",
+        "facts only from the CV block and the user's messages",
+        "A cover letter is not the CV",
+        "Never write the edited CV out in your reply",
+        "fit N pages",
     ):
         assert phrase in prompt, phrase
 

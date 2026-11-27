@@ -98,9 +98,13 @@ _CV_EDIT_RULES = (
     "4. The user's explicit instruction wins: when they give exact wording, use "
     "it word for word; when they ask to remove something, remove it; when they "
     "ask for a shorter CV, cut text rather than add it.\n"
-    "5. In your reply, describe only the edits you actually propose in it, one "
-    "short line each, in the same order. Never describe an edit you do not "
-    "propose, and never say you will do something later.\n"
+    "5. Your reply text lists the edits you propose in it, one short line each, "
+    "in the same order. Never describe an edit you do not propose, and never "
+    "say you will do something later. A request that is not a CV edit (a cover "
+    "letter, a message to the employer, a question, advice): answer it in full "
+    "in your reply text, in the same reply as any edits, with facts only from "
+    "the CV block and the user's messages. A cover letter is not the "
+    "CV.\n"
     "6. propose_cv_edit is your only tool. Never mention or pretend to use any "
     "other tool or action: the CV block above is always the current CV, with "
     "every edit the user accepted already in it, so never say you will fetch, "
@@ -116,10 +120,10 @@ _CV_EDIT_RULES = (
     "9. The user accepts or rejects each proposed edit; nothing changes before "
     "that. Reply in the language of the user's latest message, but write CV "
     "text in the language the CV is written in.\n"
-    '10. To apply a whole draft ("переносим целиком"), rewrite the entire CV, '
-    'or fit N pages, make ONE call with op "replace_all", the whole new CV in '
-    "`after` and no other call. Write it in the CV Markdown shape of the "
-    "structure rules, even if the CV block is plain text."
+    "10. To apply a whole draft, rewrite the entire CV or fit N pages, make "
+    'ONE call with op "replace_all", the whole new CV in `after` and no other '
+    "call. Write it in the CV Markdown shape of the structure rules, even if "
+    "the CV block is plain text."
 )
 # Backlog #27: tailoring must keep the CV's Markdown shape (the CV page and
 # export parse it) and its sections. `cv_structure` checks rule 1 after the

@@ -258,8 +258,10 @@ def test_no_structure_rules_without_a_cv() -> None:
 
 # The fixed part of every CV chat request (rules + tool schema, tiny CV). The
 # Groq chat model's input cap is 7 000 tokens a minute; the CV, the vacancy
-# and the history need the rest.
-FIXED_PROMPT_TOKEN_CAP = 1_600
+# and the history need the rest (`test_a_typical_cv_and_vacancy_leave_room_
+# for_the_chat`). Raised from 1 600 for edit rules 5 (non-edit requests
+# answered in the text) and 10 (replace_all), backlog #34.
+FIXED_PROMPT_TOKEN_CAP = 1_650
 
 
 def test_fixed_prompt_part_stays_under_its_cap() -> None:
