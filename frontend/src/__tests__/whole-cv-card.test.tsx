@@ -82,6 +82,25 @@ describe("buildSectionDiff", () => {
   });
 });
 
+describe("buildSectionDiff: section order", () => {
+  const BEFORE = "# Ann\n\n## Experience\n- A\n\n## Education\n- B\n";
+  const SWAPPED = "# Ann\n\n## Education\n- B\n\n## Experience\n- A\n";
+
+  it("marks a section that only moved as moved, not unchanged", () => {
+    expect(buildSectionDiff(BEFORE, SWAPPED).map((s) => [s.title, s.kind])).toEqual([
+      ["Header", "unchanged"],
+      ["Education", "unchanged"],
+      ["Experience", "moved"],
+    ]);
+  });
+
+  it("shows a reorder-only card as a change, never as no change", () => {
+    renderCard({ ...WHOLE, before_text: BEFORE, after_text: SWAPPED });
+    expect(screen.queryByText("No changes to the CV text.")).not.toBeInTheDocument();
+    expect(screen.getByText(/Experience — moved/)).toBeInTheDocument();
+  });
+});
+
 describe("whole-CV card", () => {
   it("parses from the SSE cards event", () => {
     expect(parseCardsEvent(JSON.stringify([WHOLE]))).toHaveLength(1);

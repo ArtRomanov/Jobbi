@@ -1,6 +1,7 @@
 import { buildUnifiedDiff, markAllLines, type DiffRow } from "./build-diff-rows";
 
-export type SectionKind = "changed" | "added" | "removed" | "unchanged";
+/** moved: the same text, but out of its old order among the matched sections. */
+export type SectionKind = "changed" | "moved" | "added" | "removed" | "unchanged";
 
 export interface SectionDiff {
   /** The `## ` heading text, or "Header" for the text before the first one. */
@@ -49,14 +50,17 @@ function splitSections(text: string): Section[] {
 
 /**
  * Compare two whole CVs section by section (a `replace_all` card): the new
- * CV's sections in order, each changed / added / unchanged, then the removed
- * ones. Sections match by heading, ignoring case; leading and trailing blank
- * lines do not count as a change.
+ * CV's sections in order, each changed / moved / added / unchanged, then the
+ * removed ones. Sections match by heading, ignoring case; leading and trailing
+ * blank lines do not count as a change. A section with the same text that now
+ * comes before one it used to follow is "moved": Accept applies the new order,
+ * so the card must show it.
  */
 export function buildSectionDiff(beforeText: string, afterText: string): SectionDiff[] {
   const before = splitSections(beforeText);
   const used = new Set<number>();
   const result: SectionDiff[] = [];
+  let lastIndex = -1;
   for (const section of splitSections(afterText)) {
     const index = before.findIndex((old, i) => !used.has(i) && old.key === section.key);
     const old = before[index];
@@ -69,11 +73,21 @@ export function buildSectionDiff(beforeText: string, afterText: string): Section
       continue;
     }
     used.add(index);
-    result.push(
-      old.text === section.text
-        ? { title: section.title, kind: "unchanged", rows: markAllLines(section.text, "same") }
-        : { title: section.title, kind: "changed", rows: buildUnifiedDiff(old.text, section.text) },
-    );
+    const moved = index < lastIndex;
+    lastIndex = Math.max(lastIndex, index);
+    if (old.text !== section.text) {
+      result.push({
+        title: section.title,
+        kind: "changed",
+        rows: buildUnifiedDiff(old.text, section.text),
+      });
+      continue;
+    }
+    result.push({
+      title: section.title,
+      kind: moved ? "moved" : "unchanged",
+      rows: markAllLines(section.text, "same"),
+    });
   }
   before.forEach((old, i) => {
     if (!used.has(i)) {
