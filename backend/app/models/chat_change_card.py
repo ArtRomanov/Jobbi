@@ -6,7 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 
-CARD_OPS = ("replace", "insert", "remove")
+CARD_OPS = ("replace", "insert", "remove", "replace_all")
 CARD_POSITIONS = ("start", "end", "after_line")
 CARD_STATES = ("pending", "accepted", "rejected", "stale")
 
@@ -38,7 +38,9 @@ class ChatChangeCard(Base):
         nullable=False,
     )
     cv_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    op: Mapped[str] = mapped_column(String(10), nullable=False)
+    # replace_all: `before_text` is the whole CV the model saw, `after_text`
+    # the whole new CV (backlog #34).
+    op: Mapped[str] = mapped_column(String(16), nullable=False)
     before_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     after_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     # Insert only: start / end / after_line.
