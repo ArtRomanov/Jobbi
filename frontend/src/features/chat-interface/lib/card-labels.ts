@@ -40,9 +40,13 @@ export function getInsertLabel(
  */
 export const CARD_OUTDATED_LABEL = "Outdated — newer messages below";
 
-/** The card's title, numbered within its message: "CV text — change 2". */
-export function getCardTitle(number: number): string {
-  return `CV text — change ${number}`;
+/**
+ * The card's title, numbered within its message: "CV text — change 2", or
+ * "Whole CV — change 1" for a card that replaces the whole CV.
+ */
+export function getCardTitle(number: number, op?: ChangeCard["op"]): string {
+  const subject = op === "replace_all" ? "Whole CV" : "CV text";
+  return `${subject} — change ${number}`;
 }
 
 /** Accessible name of a card action, e.g. "Accept change 2". */

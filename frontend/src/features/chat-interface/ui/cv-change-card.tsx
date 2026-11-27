@@ -93,7 +93,7 @@ export const CvChangeCard = memo(function CvChangeCard({
           tabIndex={-1}
           style={{ fontWeight: 600, color: colors.textPrimary }}
         >
-          {getCardTitle(number)}
+          {getCardTitle(number, card.op)}
         </span>
         {/* Always mounted, so screen readers announce the new state */}
         <span role="status">
