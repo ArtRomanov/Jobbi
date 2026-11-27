@@ -26,6 +26,16 @@ export function markAllLines(text: string, kind: DiffRowKind): DiffRow[] {
   return splitLines(text).map((line) => ({ kind, text: line }));
 }
 
+/** Line-level diff in one column: unchanged, removed and added lines in order. */
+export function buildUnifiedDiff(beforeText: string, afterText: string): DiffRow[] {
+  const rows: DiffRow[] = [];
+  for (const change of diffLines(beforeText, afterText)) {
+    const kind: DiffRowKind = change.removed ? "removed" : change.added ? "added" : "same";
+    rows.push(...markAllLines(change.value, kind));
+  }
+  return rows;
+}
+
 /** Line-level diff of a replace card, split into a "before" and an "after" column. */
 export function buildCardDiff(beforeText: string, afterText: string): CardDiff {
   const before: DiffRow[] = [];

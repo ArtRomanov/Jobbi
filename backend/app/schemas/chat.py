@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-CardOp = Literal["replace", "insert", "remove"]
+CardOp = Literal["replace", "insert", "remove", "replace_all"]
 CardPosition = Literal["start", "end", "after_line"]
 CardState = Literal["pending", "accepted", "rejected", "stale"]
 

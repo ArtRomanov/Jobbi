@@ -153,6 +153,20 @@ SCENARIOS: tuple[Scenario, ...] = (
             Request("CV stays English", (Check("cv_no_cyrillic"),)),
         ),
     ),
+    # Backlog #34: a whole draft from the reply text goes in as one
+    # replace_all card.
+    Scenario(
+        id="whole_draft",
+        turns=(
+            Turn(
+                "Write a shorter, 2-page version of my CV here as text. Do not "
+                "change the CV yet.",
+                expects_change=False,
+            ),
+            Turn("Apply the whole draft to the CV."),
+        ),
+        requests=(Request("shorter", (Check("shorter"),)), *_STRUCTURE),
+    ),
     Scenario(
         id="russian_adapt",
         turns=(Turn("Адаптируй моё CV под эту вакансию"),),

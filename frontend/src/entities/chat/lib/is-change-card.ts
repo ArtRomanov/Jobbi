@@ -1,6 +1,11 @@
 import type { ChangeCard } from "../model/types";
 
-const OPS: ReadonlySet<unknown> = new Set(["replace", "insert", "remove"]);
+const OPS: ReadonlySet<unknown> = new Set([
+  "replace",
+  "insert",
+  "remove",
+  "replace_all",
+]);
 const STATES: ReadonlySet<unknown> = new Set([
   "pending",
   "accepted",

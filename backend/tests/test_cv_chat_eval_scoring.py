@@ -258,7 +258,7 @@ def test_score_scenario_on_the_live_failure() -> None:
 
 def test_scenarios_have_unique_ids_and_requests() -> None:
     ids = [s.id for s in SCENARIOS]
-    assert len(ids) == len(set(ids)) == 11
+    assert len(ids) == len(set(ids)) == 12
     assert all(s.requests and s.turns for s in SCENARIOS)
     assert set(STRUCTURE_SCENARIO_IDS) <= set(ids)
 

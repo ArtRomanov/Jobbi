@@ -426,6 +426,12 @@ def apply_card_edit(
     if anchor_text is not None:
         anchor_text = normalize_newlines(anchor_text)
     match op:
+        case "replace_all":
+            # The whole CV, rewritten from the text the model saw: any change
+            # since (an accepted card, an edit in the CV editor) makes it stale.
+            if content != before_text:
+                raise _PassageMissing
+            return after_text
         case "replace":
             start, end = _locate_once(content, before_text)
             return content[:start] + after_text + content[end:]
@@ -543,6 +549,9 @@ def place_edit(content: str, edit: CvEdit) -> CvEdit | None:
     than once is kept, as before: Accept answers PASSAGE_NOT_UNIQUE.
     """
     content = normalize_newlines(content)
+    if edit.op == "replace_all":
+        # The card keeps the CV the model saw: Accept applies only to it.
+        return replace(edit, before_text=content)
     field = "anchor_text" if edit.op == "insert" else "before_text"
     quote = getattr(edit, field)
     if quote is not None and (edit.op != "insert" or edit.position == "after_line"):
@@ -644,6 +653,9 @@ def card_history_line(card: ChatChangeCard, *, quote_removed: bool = False) -> s
     restore it. The quotes are model-produced text: `card_history_note`
     fences (and so defangs) them.
     """
+    if card.op == "replace_all":
+        # Never the whole CV: the new text is the CV block once accepted.
+        return f"- {card.state}: replace_all (the whole CV text, rewritten)"
     quoted = card.after_text if card.op == "insert" else card.before_text
     quoted = " ".join(quoted.split())
     if len(quoted) > HISTORY_QUOTE_CHARS:
@@ -688,6 +700,23 @@ async def mark_cv_cards_stale(db: AsyncSession, cv_id: str) -> None:
         update(ChatChangeCard)
         .where(ChatChangeCard.cv_id == cv_id, ChatChangeCard.state == "pending")
         .values(state="stale")
+    )
+
+
+async def _mark_other_cards_stale(db: AsyncSession, cv_id: str, *, keep: str) -> None:
+    """Make every other pending card on a CV stale (a replace_all was accepted).
+
+    Does not commit.
+    """
+    await db.execute(
+        update(ChatChangeCard)
+        .where(
+            ChatChangeCard.cv_id == cv_id,
+            ChatChangeCard.state == "pending",
+            ChatChangeCard.id != keep,
+        )
+        .values(state="stale")
+        .execution_options(synchronize_session=False)
     )
 
 
@@ -868,6 +897,9 @@ async def accept_card(
         # there first makes this one roll back its CV write.
         if not await _move_card(db, card_id, "accepted", from_states=("pending",)):
             await _raise_lost_race(db, card_id)
+        if card.op == "replace_all":
+            # The CV text they quote is gone: same transaction as the write.
+            await _mark_other_cards_stale(db, card.cv_id, keep=card_id)
         return await _finish(db, card)
 
     await db.rollback()

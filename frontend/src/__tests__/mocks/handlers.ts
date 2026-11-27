@@ -165,6 +165,23 @@ export const mockChangeCards = {
     decided_at: null,
     warning: "This change rewrites your wording, not only the formatting.",
   },
+  // The whole CV at once (backlog #34): before = the CV the model saw
+  replaceAll: {
+    id: "card-replace-all",
+    op: "replace_all",
+    before_text:
+      "# Jane Doe\njane@example.com\n\n## Summary\nExperienced engineer.\n\n## Skills\n- React\n- Vue\n\n## Hobbies\nChess",
+    after_text:
+      "# Jane Doe\njane@example.com\n\n## Summary\nSenior engineer.\n\n## Skills\n- React\n- Vue\n\n## Languages\nEnglish",
+    position: null,
+    anchor_text: null,
+    state: "pending",
+    cv_id: "cv-1",
+    message_id: "msg-2",
+    created_at: "2026-03-01T10:01:00Z",
+    decided_at: null,
+    warning: null,
+  },
 } as const satisfies Record<string, ChangeCard>;
 
 // ---------------------------------------------------------------------------
