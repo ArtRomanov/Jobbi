@@ -115,7 +115,11 @@ _CV_EDIT_RULES = (
     "overlapping text.\n"
     "9. The user accepts or rejects each proposed edit; nothing changes before "
     "that. Reply in the language of the user's latest message, but write CV "
-    "text in the language the CV is written in."
+    "text in the language the CV is written in.\n"
+    '10. To apply a whole draft ("переносим целиком"), rewrite the entire CV, '
+    'or fit N pages, make ONE call with op "replace_all", the whole new CV in '
+    "`after` and no other call. Write it in the CV Markdown shape of the "
+    "structure rules, even if the CV block is plain text."
 )
 # Backlog #27: tailoring must keep the CV's Markdown shape (the CV page and
 # export parse it) and its sections. `cv_structure` checks rule 1 after the

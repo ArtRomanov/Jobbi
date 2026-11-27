@@ -283,9 +283,11 @@ _RETRY_NUDGE = (
     "Your propose_cv_edit calls above were rejected, so none of them reached "
     "the user. The error was: {error}\n"
     "Make the same edits again, one propose_cv_edit call per edit, with valid "
-    'arguments: `op` is exactly "replace", "insert" or "remove". replace: '
-    "`before` and `after`. remove: `before`. insert: `after` and `position`, "
-    'exactly "start", "end" or "after_line" (with after_line also `anchor`). '
+    'arguments: `op` is exactly "replace", "insert", "remove" or '
+    '"replace_all". replace: `before` and `after`. remove: `before`. insert: '
+    '`after` and `position`, exactly "start", "end" or "after_line" (with '
+    "after_line also `anchor`). replace_all: `after` only, the whole new CV in "
+    'Markdown ("# Name", "## " sections), and no other call in the reply. '
     "Leave out the fields an op does not use. Do not repeat your earlier text."
 )
 
@@ -388,7 +390,25 @@ def _validate_calls(
             continue
         _log_rejection(result)
         rejections.append(result)
-    return edits, rejections
+    return _only_replace_all(edits, rejections)
+
+
+def _only_replace_all(
+    edits: list[CvEdit], rejections: list[CallRejection]
+) -> tuple[list[CvEdit], list[CallRejection]]:
+    """A replace_all rewrites the whole CV: it is the reply's only edit.
+
+    Its first replace_all is kept; every other edit of the reply would apply
+    to a CV text that Accept replaces, so each is rejected (and noted).
+    """
+    whole = next((e for e in edits if e.op == "replace_all"), None)
+    if whole is None:
+        return edits, rejections
+    for _ in range(len(edits) - 1):
+        rejection = CallRejection(reason="beside_replace_all")
+        _log_rejection(rejection)
+        rejections.append(rejection)
+    return [whole], rejections
 
 
 def _log_rejection(rejection: CallRejection) -> None:

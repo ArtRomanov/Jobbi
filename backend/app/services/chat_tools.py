@@ -7,6 +7,7 @@ it. A call that does not validate is not a card: the chat shows
 """
 
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal, Self
 
@@ -75,9 +76,11 @@ PROPOSE_CV_EDIT_TOOL: dict[str, Any] = {
                 "op": {
                     "type": "string",
                     "description": (
-                        'Exactly one of "replace", "insert", "remove". replace: '
-                        "swap `before` for `after`. remove: delete `before`. "
-                        "insert: add `after` as new text at `position`."
+                        'Exactly one of "replace", "insert", "remove", '
+                        '"replace_all". replace: swap `before` for `after`. '
+                        "remove: delete `before`. insert: add `after` as new "
+                        "text at `position`. replace_all: `after` is the "
+                        "whole new CV; the reply's only call."
                     ),
                 },
                 "before": {
@@ -90,7 +93,8 @@ PROPOSE_CV_EDIT_TOOL: dict[str, Any] = {
                 "after": {
                     "type": ["string", "null"],
                     "description": (
-                        "replace/insert: the new text. Every fact in it (skill, "
+                        "replace/insert: the new text; replace_all: the whole "
+                        "new CV. Every fact in it (skill, "
                         "tool, employer, date, number, achievement) must already "
                         "be in the CV or come from the user's messages; never "
                         "take a skill or tool from the job post."
@@ -135,6 +139,9 @@ _OP_SYNONYMS = {
     "delete": "remove",
     "add": "insert",
     "append": "insert",
+    "replace_whole": "replace_all",
+    "rewrite_all": "replace_all",
+    "replace_cv": "replace_all",
 }
 _POSITION_SYNONYMS: dict[str, Position] = {
     "top": "start",
@@ -156,7 +163,7 @@ class _ProposeCvEditArgs(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    op: Literal["replace", "insert", "remove"]
+    op: Literal["replace", "insert", "remove", "replace_all"]
     before: str | None = _Text
     after: str | None = _Text
     # Any string: replace and remove ignore it, insert checks it below.
@@ -222,7 +229,22 @@ class _ProposeCvEditArgs(BaseModel):
                     raise PydanticCustomError(
                         "insert_anchor", "insert after_line needs an anchor"
                     )
+            case "replace_all":
+                if not _has_text(self.after):
+                    raise PydanticCustomError(
+                        "replace_all_fields", "replace_all needs the whole CV in after"
+                    )
+                if not _MARKDOWN_HEADING.search(self.after or ""):
+                    raise PydanticCustomError(
+                        "replace_all_shape",
+                        "replace_all needs the CV in Markdown (# / ## headings)",
+                    )
         return self
+
+
+# A whole-CV edit must be in the CV Markdown shape: at least one `#`/`##`
+# heading line. Keeps a stray plain-text draft (or a cut-off scrap) out.
+_MARKDOWN_HEADING = re.compile(r"^ {0,3}#{1,2}[ \t]+\S", re.MULTILINE)
 
 
 def _word(value: str) -> str:
@@ -235,9 +257,13 @@ def _has_text(value: str | None) -> bool:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CvEdit:
-    """A validated edit, shaped like a `chat_change_cards` row."""
+    """A validated edit, shaped like a `chat_change_cards` row.
 
-    op: Literal["replace", "insert", "remove"]
+    replace_all: `after_text` is the whole new CV; `before_text` is the CV the
+    model saw, filled in by `place_edit` (Accept checks the CV is unchanged).
+    """
+
+    op: Literal["replace", "insert", "remove", "replace_all"]
     before_text: str
     after_text: str
     position: Position | None
@@ -247,7 +273,9 @@ class CvEdit:
     warning: str | None = None
 
 
-RejectReason = Literal["wrong_name", "bad_json", "invalid_args", "over_card_limit"]
+RejectReason = Literal[
+    "wrong_name", "bad_json", "invalid_args", "over_card_limit", "beside_replace_all"
+]
 
 # Model output, not user data, but still capped in the log.
 _MAX_LOGGED_NAME = 64
@@ -283,6 +311,8 @@ class CallRejection:
                 return "invalid arguments (" + "; ".join(parts) + ")"
             case "over_card_limit":
                 return f"more than {MAX_CARDS_PER_REPLY} edits in one reply"
+            case "beside_replace_all":
+                return "an edit in the same reply as replace_all"
 
 
 def _canonical_name(name: str) -> str:
@@ -390,6 +420,14 @@ def _to_edit(args: _ProposeCvEditArgs) -> CvEdit:
                 op="remove",
                 before_text=args.before or "",
                 after_text="",
+                position=None,
+                anchor_text=None,
+            )
+        case "replace_all":
+            return CvEdit(
+                op="replace_all",
+                before_text="",
+                after_text=args.after or "",
                 position=None,
                 anchor_text=None,
             )
