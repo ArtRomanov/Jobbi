@@ -90,6 +90,55 @@ def test_needs_follow_up_promise_after_blank_lines(reply: str, expected: bool) -
     assert needs_follow_up(reply, []) is expected
 
 
+# Edit rule 5 (backlog #34): a non-edit request is answered in the reply text.
+# A cover letter says "I will …" / "Сейчас …" mid-letter; that is its content,
+# not an announced edit, so it must not trigger the follow-up nudge.
+_COVER_LETTER = (
+    "Here is a cover message you can send.\n\n"
+    "Dear Hiring Manager,\n\n"
+    "I am applying for the SRE role at Acme. I have five years of production "
+    "operations with Python and Kubernetes. I will bring the same focus on "
+    "reliability to your team.\n\n"
+    "Best regards,\nJane Doe"
+)
+_COVER_LETTER_RU = (
+    "Вот сопроводительное письмо.\n\n"
+    "Здравствуйте!\n\n"
+    "Меня заинтересовала позиция SRE в Acme.\n"
+    "Сейчас я отвечаю за продакшен-инфраструктуру на Python и Kubernetes.\n\n"
+    "С уважением,\nДжейн"
+)
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        (_COVER_LETTER, False),
+        (_COVER_LETTER_RU, False),
+        # A promise in the first or last paragraph is still an announcement.
+        ("I'll shorten the profile.\n\nIt is long for the role.", True),
+        ("The profile is long for the role.\n\nI'll shorten it.", True),
+    ],
+    ids=["cover-en", "cover-ru", "promise-first", "promise-last"],
+)
+def test_needs_follow_up_ignores_promises_inside_a_long_answer(
+    reply: str, expected: bool
+) -> None:
+    assert needs_follow_up(reply, []) is expected
+
+
+async def test_cover_letter_reply_gets_no_follow_up(
+    client: httpx.AsyncClient, setup: dict[str, str]
+) -> None:
+    unasked = {"op": "remove", "before": "- jQuery"}
+    fake = _SequenceGroq([_chunk(_COVER_LETTER)], [*_call_chunks(0, unasked)])
+
+    events = await _send_seq(client, setup, fake, "write a cover message")
+
+    assert len(fake.calls) == 1  # no nudged second call, no forced edit
+    assert next(data for name, data in events if name == "cards") == []
+
+
 @pytest.mark.parametrize(
     "reply",
     [

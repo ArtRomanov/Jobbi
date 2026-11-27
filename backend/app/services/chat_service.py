@@ -367,8 +367,23 @@ def needs_follow_up(reply: str, calls: list[LlmToolCall]) -> bool:
     return (
         not text
         or text.endswith(":")
-        or bool(_IMAGINED_ACTION.search(text) or _PROMISE.search(text))
+        or bool(_IMAGINED_ACTION.search(text))
+        or any(_PROMISE.search(part) for part in _edge_paragraphs(text))
     )
+
+
+_PARAGRAPH_BREAK = re.compile(r"\n[ \t]*\n")
+
+
+def _edge_paragraphs(text: str) -> list[str]:
+    """The first and the last paragraph of a reply (one, if it has one).
+
+    An announced edit opens or closes the reply. A promise in between is
+    the content of an answer (edit rule 5: a cover letter's "I will bring
+    …"), not an edit the model forgot to make.
+    """
+    paragraphs = [p.strip() for p in _PARAGRAPH_BREAK.split(text) if p.strip()]
+    return paragraphs[:1] + paragraphs[1:][-1:]
 
 
 def _validate_calls(
